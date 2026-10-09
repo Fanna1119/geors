@@ -1,0 +1,12 @@
+[package]
+name = "geors-ingest"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.104"
+geo = "0.33.1"
+geo-index = "0.4.0"
+geors-core = { version = "0.1.0", path = "../geors-core" }
+osmpbf = "0.3.8"
+tracing = "0.1.44"

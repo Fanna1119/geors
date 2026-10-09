@@ -1,0 +1,18 @@
+[package]
+name = "geors-index"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+geo-index = "0.4.0"
+geors-core = { version = "0.1.0", path = "../geors-core" }
+geors-rank = { version = "0.1.0", path = "../geors-rank" }
+memmap2 = "0.9.11"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+tantivy = { version = "0.26.2", default-features = false, features = ["mmap", "lz4-compression"] }
+thiserror = "2.0.21"
+tracing = "0.1.44"
+
+[dev-dependencies]
+tempfile = "3.27.0"

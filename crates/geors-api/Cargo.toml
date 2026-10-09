@@ -1,0 +1,18 @@
+[package]
+name = "geors-api"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+axum = "0.8.9"
+geojson = "1.0.0"
+geors-core = { version = "0.1.0", path = "../geors-core" }
+geors-index = { version = "0.1.0", path = "../geors-index" }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+tokio = { version = "1.53.2", features = ["full"] }
+tower-http = { version = "0.7.1", features = ["trace", "cors"] }
+tracing = "0.1.44"
+
+[dev-dependencies]
+serde_urlencoded = "0.7.1"

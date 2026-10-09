@@ -1,0 +1,27 @@
+# geors server configuration. Every key is optional; CLI flags override it.
+# Usage: geors serve --config geors.toml
+
+data_dir = "data"
+bind = "127.0.0.1:2322"
+# Only load these country partitions (ISO 3166-1 alpha-2). Empty = all.
+countries = []
+
+[api]
+default_limit = 10
+max_limit = 50
+# Default search radius for /reverse, metres.
+reverse_radius_m = 1000.0
+# Upper bound for any radius parameter, metres.
+max_radius_m = 500000.0
+cors = true
+
+[ranking]
+# How strongly importance (0..1: country > city > street > poi > house) boosts the text score.
+importance_weight = 1.0
+# Share of the score driven by proximity to lat/lon (0 = ignore location, 1 = only nearby counts).
+location_bias = 0.6
+# Distance at which the proximity factor has decayed to 1/e, km.
+location_bias_scale_km = 20.0
+# Multipliers when the place name equals / starts with the query.
+exact_match_boost = 1.6
+prefix_match_boost = 1.25
