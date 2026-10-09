@@ -1,12 +1,27 @@
 //! Hits -> GeoJSON.
 
-use geojson::{Feature, FeatureCollection, Geometry, JsonObject, JsonValue};
-use geors_index::Hit;
+use geojson::{
+    Feature, FeatureCollection, Geometry, GeometryValue, JsonObject, JsonValue, Position,
+};
+use geors_core::LonLat;
+use geors_index::{Hit, Shape};
 use serde_json::json;
+
+/// Response options shared by all endpoints.
+#[derive(Debug, Clone, Default)]
+pub struct Output {
+    pub lang: Option<String>,
+    /// `geometry=full`: return lines / polygons instead of the centre point.
+    pub full_geometry: bool,
+}
 
 fn round(v: f64, decimals: i32) -> f64 {
     let f = 10f64.powi(decimals);
     (v * f).round() / f
+}
+
+fn pos(p: &LonLat) -> Position {
+    Position::from([round(p.lon, 7), round(p.lat, 7)])
 }
 
 fn put(props: &mut JsonObject, key: &str, value: Option<impl Into<JsonValue>>) {
@@ -15,7 +30,20 @@ fn put(props: &mut JsonObject, key: &str, value: Option<impl Into<JsonValue>>) {
     }
 }
 
-pub fn feature(hit: &Hit, lang: Option<&str>) -> Feature {
+fn geometry(shape: Shape) -> Geometry {
+    let line = |l: &[LonLat]| l.iter().map(pos).collect::<Vec<_>>();
+    let poly = |rings: &[Vec<LonLat>]| rings.iter().map(|r| line(r)).collect::<Vec<_>>();
+    Geometry::new(match shape {
+        Shape::Point(p) => GeometryValue::new_point(pos(&p)),
+        Shape::Lines(lines) if lines.len() == 1 => GeometryValue::new_line_string(line(&lines[0])),
+        Shape::Lines(lines) => GeometryValue::new_multi_line_string(lines.iter().map(|l| line(l))),
+        Shape::Polygons(polys) if polys.len() == 1 => GeometryValue::new_polygon(poly(&polys[0])),
+        Shape::Polygons(polys) => GeometryValue::new_multi_polygon(polys.iter().map(|p| poly(p))),
+    })
+}
+
+pub fn feature(hit: &Hit, out: &Output) -> Feature {
+    let lang = out.lang.as_deref();
     let p = &hit.place;
     let addr = hit.address(lang);
     let mut props = JsonObject::new();
@@ -45,19 +73,25 @@ pub fn feature(hit: &Hit, lang: Option<&str>) -> Feature {
     props.insert("score".into(), round(hit.score as f64, 4).into());
     props.insert("importance".into(), round(p.importance as f64, 3).into());
 
+    let geometry = if out.full_geometry {
+        props.insert(
+            "center".into(),
+            json!([round(p.center.lon, 7), round(p.center.lat, 7)]),
+        );
+        geometry(hit.shape())
+    } else {
+        geometry(Shape::Point(p.center))
+    };
     Feature {
-        geometry: Some(Geometry::new_point([
-            round(p.center.lon, 7),
-            round(p.center.lat, 7),
-        ])),
+        geometry: Some(geometry),
         properties: Some(props),
         ..Default::default()
     }
 }
 
-pub fn collection(hits: &[Hit], lang: Option<&str>) -> FeatureCollection {
+pub fn collection(hits: &[Hit], out: &Output) -> FeatureCollection {
     FeatureCollection {
-        features: hits.iter().map(|h| feature(h, lang)).collect(),
+        features: hits.iter().map(|h| feature(h, out)).collect(),
         ..Default::default()
     }
 }

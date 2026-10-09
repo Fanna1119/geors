@@ -105,6 +105,8 @@ fn merge_cluster(mut parts: Vec<Place>) -> Place {
     let center = bbox.center();
     let mut merged = parts.remove(0);
     for p in parts {
+        merged.merged_ids.push(p.osm_id);
+        merged.merged_ids.extend(p.merged_ids);
         merged.lines.extend(p.lines);
         for (lang, n) in p.names {
             merged.names.entry(lang).or_insert(n);
@@ -154,6 +156,8 @@ mod tests {
             extent: None,
             importance: 0.25,
             lines: vec![line],
+            polygons: Vec::new(),
+            merged_ids: Vec::new(),
         }
     }
 
@@ -186,6 +190,7 @@ mod tests {
             .find(|p| p.lines.len() == 2)
             .expect("merged street");
         assert!(merged.extent.is_some());
+        assert_eq!(merged.merged_ids.len(), 1);
     }
 
     #[test]

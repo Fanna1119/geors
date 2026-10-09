@@ -55,6 +55,7 @@ const KEEP_KEYS: &[&str] = &[
     "ISO3166-1:alpha2",
     "country_code",
     "area",
+    "postal_code",
 ];
 
 /// Highway values that represent addressable streets (ways only).

@@ -8,7 +8,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use geo_index::rtree::sort::HilbertSort;
 use geo_index::rtree::{RTreeBuilder, RTreeIndex};
-use geors_core::storage::{self, FORMAT_VERSION, PartitionMeta, PlaceRecord};
+use geors_core::storage::{self, FORMAT_VERSION, GeomKind, PartitionMeta, PlaceRecord};
 use geors_core::{AdminUnit, BBox, Layer, Place};
 use tracing::{info, warn};
 
@@ -81,7 +81,19 @@ pub fn write_partition(data_dir: &Path, mut input: PartitionInput) -> Result<Pat
         docs.write_all(&json)?;
 
         geom_buf.clear();
-        let geom_len = storage::encode_lines(&place.lines, &mut geom_buf);
+        let (geom_kind, geom_len) = if !place.lines.is_empty() {
+            (
+                GeomKind::Lines,
+                storage::encode_lines(&place.lines, &mut geom_buf),
+            )
+        } else if !place.polygons.is_empty() {
+            (
+                GeomKind::Polygons,
+                storage::encode_polygons(&place.polygons, &mut geom_buf),
+            )
+        } else {
+            (GeomKind::None, 0)
+        };
         geom.write_all(&geom_buf)?;
 
         let mut rec = PlaceRecord {
@@ -93,6 +105,7 @@ pub fn write_partition(data_dir: &Path, mut input: PartitionInput) -> Result<Pat
             geom_len,
             importance: place.importance,
             layer: place.layer,
+            geom_kind,
         };
         rec.set_center(place.center);
         places_out.write_all(&rec.encode())?;

@@ -4,9 +4,9 @@
 use geors_core::geom::{self, BBox, LonLat};
 use geors_core::{AdminUnit, Layer, OsmType, Place};
 use geors_index::{
-    Engine, EngineError, NearestRequest, PartitionInput, SearchRequest, write_partition,
+    Engine, EngineConfig, EngineError, NearestRequest, PartitionInput, SearchRequest, Shape,
+    write_partition,
 };
-use geors_rank::RankingConfig;
 
 fn place(id: i64, layer: Layer, name: Option<&str>, lon: f64, lat: f64) -> Place {
     Place {
@@ -28,6 +28,8 @@ fn place(id: i64, layer: Layer, name: Option<&str>, lon: f64, lat: f64) -> Place
         extent: None,
         importance: layer.base_importance(),
         lines: vec![],
+        polygons: Vec::new(),
+        merged_ids: Vec::new(),
     }
 }
 
@@ -50,7 +52,18 @@ fn fixture() -> (tempfile::TempDir, Engine, Vec<Place>) {
     let mut street = place(5, Layer::Street, Some("Landstrasse"), 9.50, 47.10);
     // A long street: its centre is far from (9.55, 47.10) but the line passes close.
     street.lines = vec![vec![LonLat::new(9.50, 47.10), LonLat::new(9.60, 47.10)]];
+    street.osm_type = OsmType::Way;
+    street.merged_ids = vec![77];
     places.push(street);
+    let mut park = place(6, Layer::Poi, Some("Hauptstrasse Park"), 9.53, 47.13);
+    park.osm_type = OsmType::Way;
+    park.polygons = vec![vec![vec![
+        LonLat::new(9.529, 47.129),
+        LonLat::new(9.531, 47.129),
+        LonLat::new(9.531, 47.131),
+        LonLat::new(9.529, 47.129),
+    ]]];
+    places.push(park);
     let mut seed = 42u64;
     for i in 0..2_000 {
         let lon = 9.45 + rng(&mut seed) * 0.2;
@@ -86,7 +99,7 @@ fn fixture() -> (tempfile::TempDir, Engine, Vec<Place>) {
         },
     )
     .unwrap();
-    let engine = Engine::open(dir.path(), &[], RankingConfig::default()).unwrap();
+    let engine = Engine::open(dir.path(), &[], EngineConfig::default()).unwrap();
     (dir, engine, places)
 }
 
@@ -258,4 +271,47 @@ fn spatial_only_search_needs_location() {
         .unwrap();
     assert_eq!(hits.len(), 1);
     assert_eq!(hits[0].place.name.as_deref(), Some("Vaduz"));
+}
+
+#[test]
+fn lookup_by_osm_id_including_merged_segments() {
+    let (_d, engine, _) = fixture();
+    let ids = [
+        (OsmType::Way, 77),
+        (OsmType::Node, 1),
+        (OsmType::Node, 999_999),
+        (OsmType::Way, 5),
+    ];
+    let hits = engine.lookup(&ids, &[]).unwrap();
+    let names: Vec<_> = hits.iter().map(|h| h.place.name.clone().unwrap()).collect();
+    // Request order, unknown ids skipped, merged id resolves to the street.
+    assert_eq!(names, vec!["Landstrasse", "Vaduz", "Landstrasse"]);
+}
+
+#[test]
+fn abbreviations_expand() {
+    let (_d, engine, _) = fixture();
+    let hits = engine
+        .search(&SearchRequest {
+            query: Some("hauptstr. park ".into()),
+            limit: 1,
+            autocomplete: false,
+            ..Default::default()
+        })
+        .unwrap();
+    assert_eq!(hits[0].place.name.as_deref(), Some("Hauptstrasse Park"));
+}
+
+#[test]
+fn shapes_are_stored() {
+    let (_d, engine, _) = fixture();
+    let hits = engine
+        .lookup(
+            &[(OsmType::Way, 6), (OsmType::Way, 5), (OsmType::Node, 1)],
+            &[],
+        )
+        .unwrap();
+    assert!(matches!(hits[0].shape(), Shape::Polygons(ref p) if p[0][0].len() == 4));
+    assert!(matches!(hits[1].shape(), Shape::Lines(ref l) if l[0].len() == 2));
+    assert!(matches!(hits[2].shape(), Shape::Point(_)));
 }

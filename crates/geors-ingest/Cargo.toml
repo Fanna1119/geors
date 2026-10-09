@@ -5,8 +5,11 @@ edition = "2024"
 
 [dependencies]
 anyhow = "1.0.104"
+flate2 = "1.1.10"
 geo = "0.33.1"
 geo-index = "0.4.0"
 geors-core = { version = "0.1.0", path = "../geors-core" }
 osmpbf = "0.3.8"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
 tracing = "0.1.44"

@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 
 use geo_index::rtree::{NeighborsOptions, RTreeIndex, RTreeRef, SimpleDistanceMetric};
 use geors_core::geom::{self, LonLat};
-use geors_core::storage::{self, FORMAT_VERSION, PartitionMeta, PlaceRecord};
+use geors_core::storage::{self, FORMAT_VERSION, GeomKind, PartitionMeta, PlaceRecord};
 use geors_core::{AdminUnit, BBox, Place};
 use memmap2::Mmap;
 
@@ -122,7 +122,8 @@ impl Partition {
         PlaceRecord::decode(self.records.bytes().get(start..start + PlaceRecord::SIZE)?)
     }
 
-    pub fn doc(&self, rec: &PlaceRecord) -> Result<Place, IndexError> {
+    /// Load the JSON document. Geometry is attached only if `with_geometry`.
+    pub fn doc(&self, rec: &PlaceRecord, with_geometry: bool) -> Result<Place, IndexError> {
         let start = rec.doc_offset as usize;
         let bytes = self
             .docs
@@ -130,27 +131,40 @@ impl Partition {
             .get(start..start + rec.doc_len as usize)
             .ok_or_else(|| IndexError::Format("document offset out of range".into()))?;
         let mut place: Place = serde_json::from_slice(bytes)?;
-        place.lines = self.lines(rec);
+        if with_geometry {
+            match rec.geom_kind {
+                GeomKind::Lines => place.lines = self.lines(rec),
+                GeomKind::Polygons => place.polygons = self.polygons(rec),
+                GeomKind::None => {}
+            }
+        }
         Ok(place)
     }
 
-    pub fn lines(&self, rec: &PlaceRecord) -> Vec<Vec<LonLat>> {
-        if rec.geom_len == 0 {
-            return Vec::new();
-        }
+    fn geom_bytes(&self, rec: &PlaceRecord) -> &[u8] {
         let start = rec.geom_offset as usize;
         let end = start + rec.geom_len as usize * 4;
-        self.geom
-            .bytes()
-            .get(start..end)
-            .map(storage::decode_lines)
-            .unwrap_or_default()
+        self.geom.bytes().get(start..end).unwrap_or_default()
+    }
+
+    pub fn lines(&self, rec: &PlaceRecord) -> Vec<Vec<LonLat>> {
+        if rec.geom_kind != GeomKind::Lines {
+            return Vec::new();
+        }
+        storage::decode_lines(self.geom_bytes(rec))
+    }
+
+    pub fn polygons(&self, rec: &PlaceRecord) -> Vec<storage::PolygonRings> {
+        if rec.geom_kind != GeomKind::Polygons {
+            return Vec::new();
+        }
+        storage::decode_polygons(self.geom_bytes(rec))
     }
 
     /// Exact distance from `p` to the place: to its line geometry when it has
     /// one (streets), otherwise to its centre.
     pub fn distance(&self, rec: &PlaceRecord, p: LonLat) -> f64 {
-        if rec.geom_len > 0 {
+        if rec.geom_kind == GeomKind::Lines {
             let d = self
                 .lines(rec)
                 .iter()

@@ -86,6 +86,13 @@ pub struct Place {
     /// Line geometry (streets, rivers) used for exact reverse distances.
     #[serde(skip)]
     pub lines: Vec<Vec<LonLat>>,
+    /// Area geometry (first ring exterior, then holes), for output only.
+    #[serde(skip)]
+    pub polygons: Vec<crate::storage::PolygonRings>,
+    /// Further OSM ids folded into this place (merged street segments),
+    /// findable through lookup.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub merged_ids: Vec<i64>,
 }
 
 impl Place {

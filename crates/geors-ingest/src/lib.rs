@@ -12,6 +12,7 @@
 //! 5. Places are partitioned by country code.
 
 pub mod areas;
+pub mod dump;
 pub mod reader;
 pub mod rings;
 pub mod streets;
@@ -23,6 +24,7 @@ use std::path::Path;
 use anyhow::Result;
 use geo::{BoundingRect, InteriorPoint, MultiPolygon, Simplify};
 use geors_core::geom::{BBox, LonLat};
+use geors_core::storage::PolygonRings;
 use geors_core::{AdminUnit, Layer, OsmType, Place};
 use tracing::{info, warn};
 
@@ -103,12 +105,42 @@ fn make_place(osm_type: OsmType, osm_id: i64, t: &Tags, c: &Class, center: LonLa
         extent: None,
         importance: tags::importance(c, t),
         lines: Vec::new(),
+        polygons: Vec::new(),
+        merged_ids: Vec::new(),
     }
 }
 
 fn bbox_of(mp: &MultiPolygon<f64>) -> Option<BBox> {
     mp.bounding_rect()
         .map(|r| BBox::new(r.min().x, r.min().y, r.max().x, r.max().y))
+}
+
+/// Polygon rings for output, simplified relative to the polygon's size
+/// (~1 m for buildings, tens of metres for countries).
+fn polygon_rings(mp: &MultiPolygon<f64>) -> Vec<PolygonRings> {
+    let Some(b) = bbox_of(mp) else {
+        return Vec::new();
+    };
+    let diag = ((b.max_lon - b.min_lon).powi(2) + (b.max_lat - b.min_lat).powi(2)).sqrt();
+    let eps = (diag * 5e-4).clamp(SIMPLIFY_DEG, 0.01);
+    let ring = |ls: &geo::LineString<f64>| -> Vec<LonLat> {
+        ls.simplify(eps)
+            .0
+            .iter()
+            .map(|c| LonLat::new(c.x, c.y))
+            .collect()
+    };
+    mp.iter()
+        .filter_map(|poly| {
+            let exterior = ring(poly.exterior());
+            if exterior.len() < 4 {
+                return None;
+            }
+            let mut rings = vec![exterior];
+            rings.extend(poly.interiors().iter().map(ring).filter(|r| r.len() >= 4));
+            Some(rings)
+        })
+        .collect()
 }
 
 fn simplify(line: &[LonLat]) -> Vec<LonLat> {
@@ -129,6 +161,8 @@ struct Builder {
     places: Vec<Place>,
     /// For each place, the admin unit it itself represents (excluded from its parents).
     self_unit: Vec<Option<u32>>,
+    postcodes: Vec<String>,
+    postcode_areas: Vec<Area>,
 }
 
 impl Builder {
@@ -234,6 +268,7 @@ fn build(raw: RawData, opts: &ImportOptions) -> Vec<CountryData> {
             }
             let mut p = make_place(OsmType::Way, w.id, t, c, center);
             p.extent = bbox_of(&mp);
+            p.polygons = polygon_rings(&mp);
             p
         };
         b.push(place, self_unit);
@@ -263,6 +298,20 @@ fn build(raw: RawData, opts: &ImportOptions) -> Vec<CountryData> {
         if let (Some((layer, rank)), Some(mp)) = (admin, &mp) {
             self_unit = b.area(&r.tags, layer, rank, mp);
         }
+        if let (Some(code), Some(mp)) = (r.postal_code(), &mp)
+            && let Some(bbox) = bbox_of(mp)
+        {
+            // Postcode areas reuse `Area`; `unit` indexes `b.postcodes`.
+            b.postcodes.push(code.to_string());
+            b.postcode_areas.push(Area {
+                unit: (b.postcodes.len() - 1) as u32,
+                layer: Layer::Locality,
+                rank: 0,
+                polygon: mp.clone(),
+                bbox,
+                country_code: None,
+            });
+        }
         let Some(class) = &r.class else { continue };
         let extent = mp.as_ref().and_then(bbox_of);
 
@@ -284,6 +333,11 @@ fn build(raw: RawData, opts: &ImportOptions) -> Vec<CountryData> {
         if let Some(i) = twin {
             if b.places[i].extent.is_none() {
                 b.places[i].extent = extent;
+            }
+            if b.places[i].polygons.is_empty()
+                && let Some(mp) = &mp
+            {
+                b.places[i].polygons = polygon_rings(mp);
             }
             continue;
         }
@@ -321,8 +375,11 @@ fn build(raw: RawData, opts: &ImportOptions) -> Vec<CountryData> {
         localities,
         mut places,
         self_unit,
+        postcodes,
+        postcode_areas,
     } = b;
     let mut area_index = AreaIndex::new(areas);
+    let mut postcode_index = AreaIndex::new(postcode_areas);
     let locality_index = LocalityIndex::new(localities);
     let mut country_names: HashMap<String, String> = HashMap::new();
     for a in &area_index.areas {
@@ -360,6 +417,15 @@ fn build(raw: RawData, opts: &ImportOptions) -> Vec<CountryData> {
         }
         place.parents = best.values().map(|(_, u)| *u).collect();
         place.country_code = country.or(place.country_code.take());
+        if place.postcode.is_none() && place.layer <= Layer::Street {
+            place.postcode = postcode_index
+                .containing(place.center)
+                .first()
+                .map(|&i| postcodes[postcode_index.areas[i].unit as usize].clone());
+        }
+    }
+    if !postcodes.is_empty() {
+        info!(postcode_areas = postcodes.len(), "postcode boundaries used");
     }
 
     let places = streets::merge(places, |p| {
@@ -372,7 +438,7 @@ fn build(raw: RawData, opts: &ImportOptions) -> Vec<CountryData> {
     partition(places, &units, &country_names, opts)
 }
 
-fn partition(
+pub(crate) fn partition(
     places: Vec<Place>,
     units: &[AdminUnit],
     country_names: &HashMap<String, String>,

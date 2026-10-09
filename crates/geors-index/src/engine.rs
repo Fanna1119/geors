@@ -14,13 +14,14 @@ use std::path::Path;
 use std::sync::Arc;
 
 use geors_core::geom::{BBox, LonLat};
-use geors_core::{AdminUnit, Layer, Place};
+use geors_core::{AdminUnit, Layer, OsmType, Place};
 use geors_rank::RankingConfig;
 use tantivy::tokenizer::TextAnalyzer;
 use tracing::{debug, info};
 
 use crate::bitset::BitSet;
 use crate::partition::Partition;
+use crate::synonyms::Synonyms;
 use crate::text::{self, ParsedQuery};
 use crate::{EngineError, IndexError};
 
@@ -54,6 +55,7 @@ pub struct NearestRequest {
 }
 
 /// A ranked result with its document loaded.
+#[derive(Clone)]
 pub struct Hit {
     pub partition: Arc<Partition>,
     pub place_id: u32,
@@ -73,7 +75,30 @@ pub struct Address {
     pub country_code: String,
 }
 
+/// Full geometry of a hit.
+pub enum Shape {
+    Point(LonLat),
+    Lines(Vec<Vec<LonLat>>),
+    Polygons(Vec<geors_core::storage::PolygonRings>),
+}
+
 impl Hit {
+    /// Load the stored line / polygon geometry (or the centre point).
+    pub fn shape(&self) -> Shape {
+        let Some(rec) = self.partition.record(self.place_id) else {
+            return Shape::Point(self.place.center);
+        };
+        let lines = self.partition.lines(&rec);
+        if !lines.is_empty() {
+            return Shape::Lines(lines);
+        }
+        let polygons = self.partition.polygons(&rec);
+        if !polygons.is_empty() {
+            return Shape::Polygons(polygons);
+        }
+        Shape::Point(self.place.center)
+    }
+
     pub fn address(&self, lang: Option<&str>) -> Address {
         let mut a = Address {
             country_code: self
@@ -118,9 +143,26 @@ struct Candidate {
     distance_m: Option<f64>,
 }
 
+/// Query-time settings.
+#[derive(Debug, Clone)]
+pub struct EngineConfig {
+    pub ranking: RankingConfig,
+    pub synonyms: Synonyms,
+}
+
+impl Default for EngineConfig {
+    fn default() -> Self {
+        Self {
+            ranking: RankingConfig::default(),
+            synonyms: Synonyms::builtin(),
+        }
+    }
+}
+
 pub struct Engine {
     partitions: Vec<Arc<Partition>>,
     ranking: RankingConfig,
+    synonyms: Synonyms,
     analyzer: TextAnalyzer,
 }
 
@@ -130,7 +172,7 @@ impl Engine {
     pub fn open(
         data_dir: &Path,
         countries: &[String],
-        ranking: RankingConfig,
+        config: EngineConfig,
     ) -> Result<Self, IndexError> {
         let available = list_partitions(data_dir)?;
         if available.is_empty() {
@@ -160,13 +202,14 @@ impl Engine {
             info!(partition = %cc, places = p.len(), source = %p.meta.source, "loaded partition");
             partitions.push(Arc::new(p));
         }
-        Ok(Self::from_partitions(partitions, ranking))
+        Ok(Self::from_partitions(partitions, config))
     }
 
-    pub fn from_partitions(partitions: Vec<Arc<Partition>>, ranking: RankingConfig) -> Self {
+    pub fn from_partitions(partitions: Vec<Arc<Partition>>, config: EngineConfig) -> Self {
         Self {
             partitions,
-            ranking,
+            ranking: config.ranking,
+            synonyms: config.synonyms,
             analyzer: text::analyzer(),
         }
     }
@@ -262,7 +305,9 @@ impl Engine {
                     }
                     None => None,
                 };
-                let query = part.text.build_query(&parsed, &req.layers, slack);
+                let query = part
+                    .text
+                    .build_query(&parsed, &req.layers, slack, &self.synonyms);
                 let scorer_part = part.clone();
                 let ranking = self.ranking.clone();
                 let focus = req.focus;
@@ -440,6 +485,40 @@ impl Engine {
         self.load(cands, Some(p))
     }
 
+    /// Places by OSM id, in request order. Unknown ids are skipped.
+    /// Merged street segments are found by any of their way ids.
+    pub fn lookup(
+        &self,
+        ids: &[(OsmType, i64)],
+        countries: &[String],
+    ) -> Result<Vec<Hit>, EngineError> {
+        let keys: Vec<String> = ids.iter().map(|(t, id)| text::osm_key(*t, *id)).collect();
+        let mut found = Vec::new();
+        for pi in self.select(countries)? {
+            let part = &self.partitions[pi];
+            let cands: Vec<Candidate> = part
+                .text
+                .lookup(&keys)
+                .map_err(IndexError::from)?
+                .into_iter()
+                .map(|id| Candidate {
+                    part: pi,
+                    id,
+                    score: 1.0,
+                    distance_m: None,
+                })
+                .collect();
+            found.extend(self.load(cands, None)?);
+        }
+        let matches = |h: &Hit, t: OsmType, id: i64| {
+            h.place.osm_type == t && (h.place.osm_id == id || h.place.merged_ids.contains(&id))
+        };
+        Ok(ids
+            .iter()
+            .filter_map(|&(t, id)| found.iter().find(|h| matches(h, t, id)).cloned())
+            .collect())
+    }
+
     fn load(&self, cands: Vec<Candidate>, focus: Option<LonLat>) -> Result<Vec<Hit>, EngineError> {
         cands
             .into_iter()
@@ -449,7 +528,7 @@ impl Engine {
                 let distance_m = c
                     .distance_m
                     .or_else(|| focus.map(|f| part.distance(&rec, f)));
-                Some(part.doc(&rec).map(|place| Hit {
+                Some(part.doc(&rec, false).map(|place| Hit {
                     place,
                     place_id: c.id,
                     score: c.score,

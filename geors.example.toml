@@ -25,3 +25,18 @@ location_bias_scale_km = 20.0
 # Multipliers when the place name equals / starts with the query.
 exact_match_boost = 1.6
 prefix_match_boost = 1.25
+
+[updates]
+# Run `geors update` inside the server: check every registered source
+# (see `geors sources`) and hot-reload changed partitions.
+enabled = false
+interval = "6h"
+# Pick up partitions changed by an external `geors import` / `geors update`
+# (e.g. from cron). "0" disables.
+watch_interval = "30s"
+
+# Extra abbreviations, added to the built-in ones (str, st, pl, hbf, ...).
+# Keys starting with '*' are suffix rules: "kirchgs" -> "kirchgasse".
+[synonyms]
+"bhf" = ["bahnhof"]
+"*gs" = ["gasse"]

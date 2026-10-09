@@ -7,7 +7,7 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use geors_core::{Layer, Place};
+use geors_core::{Layer, OsmType, Place};
 use tantivy::collector::{FilterCollector, TopDocs};
 use tantivy::query::{
     BooleanQuery, BoostQuery, ConstScoreQuery, DisjunctionMaxQuery, FuzzyTermQuery, Occur, Query,
@@ -25,6 +25,7 @@ use tantivy::{
 };
 
 use crate::bitset::BitSet;
+use crate::synonyms::Synonyms;
 
 pub const TOKENIZER: &str = "geo";
 
@@ -43,6 +44,8 @@ pub struct Fields {
     pub address: Field,
     pub housenumber: Field,
     pub layer: Field,
+    /// `N123` / `W456` / `R789`, for lookup by OSM id.
+    pub osm: Field,
 }
 
 pub fn schema() -> (Schema, Fields) {
@@ -59,6 +62,7 @@ pub fn schema() -> (Schema, Fields) {
         address: b.add_text_field("address", text.clone()),
         housenumber: b.add_text_field("housenumber", text),
         layer: b.add_text_field("layer", STRING),
+        osm: b.add_text_field("osm", STRING),
     };
     (b.build(), fields)
 }
@@ -77,6 +81,11 @@ pub fn tokenize(analyzer: &mut TextAnalyzer, text: &str) -> Vec<String> {
     let mut stream = analyzer.token_stream(text);
     stream.process(&mut |t| out.push(t.text.clone()));
     out
+}
+
+/// Term used for OSM id lookup, e.g. `W123`.
+pub fn osm_key(t: OsmType, id: i64) -> String {
+    format!("{}{id}", t.as_str())
 }
 
 /// Text index writer used during import.
@@ -102,6 +111,10 @@ impl TextIndexWriter {
         let mut doc = TantivyDocument::default();
         doc.add_u64(f.place_id, place_id as u64);
         doc.add_text(f.layer, place.layer.as_str());
+        doc.add_text(f.osm, osm_key(place.osm_type, place.osm_id));
+        for id in &place.merged_ids {
+            doc.add_text(f.osm, osm_key(place.osm_type, *id));
+        }
         // Unique names only: dozens of identical translations would inflate
         // the field length and depress the BM25 score.
         let mut seen = std::collections::HashSet::new();
@@ -190,9 +203,12 @@ impl TextIndex {
 
     /// One query word: the best matching field counts (dis-max), so a POI
     /// named "Vaduz" in the city of Vaduz does not score twice.
-    fn token_clause(&self, token: &str, prefix: bool) -> Box<dyn Query> {
+    ///
+    /// Abbreviations ("str" -> "strasse") are added as exact alternatives.
+    fn token_clause(&self, token: &str, prefix: bool, synonyms: &Synonyms) -> Box<dyn Query> {
         let f = self.fields;
         let distance = fuzzy_distance(token);
+        let expansions = synonyms.expand(token);
         let per_field = [
             (f.name, NAME_BOOST, true),
             (f.alt_names, ALT_NAME_BOOST, true),
@@ -210,6 +226,13 @@ impl TextIndex {
                 Box::new(TermQuery::new(term.clone(), IndexRecordOption::WithFreqs)),
                 boost,
             );
+            for exp in &expansions {
+                let t = Term::from_field_text(field, exp);
+                push(
+                    Box::new(TermQuery::new(t, IndexRecordOption::WithFreqs)),
+                    boost * 0.9,
+                );
+            }
             if prefix {
                 push(
                     Box::new(FuzzyTermQuery::new_prefix(term.clone(), 0, true)),
@@ -235,13 +258,19 @@ impl TextIndex {
 
     /// Build the query: every token must match (or all but `slack` tokens),
     /// restricted to `layers` if non-empty.
-    pub fn build_query(&self, q: &ParsedQuery, layers: &[Layer], slack: usize) -> Box<dyn Query> {
+    pub fn build_query(
+        &self,
+        q: &ParsedQuery,
+        layers: &[Layer],
+        slack: usize,
+        synonyms: &Synonyms,
+    ) -> Box<dyn Query> {
         let n = q.tokens.len();
         let clauses: Vec<Box<dyn Query>> = q
             .tokens
             .iter()
             .enumerate()
-            .map(|(i, t)| self.token_clause(t, q.last_is_prefix && i + 1 == n))
+            .map(|(i, t)| self.token_clause(t, q.last_is_prefix && i + 1 == n, synonyms))
             .collect();
         let required = n.saturating_sub(slack).max(1);
         let text: Box<dyn Query> = if required == n {
@@ -267,6 +296,24 @@ impl TextIndex {
                 Box::new(ConstScoreQuery::new(Box::new(layer_filter), 0.0)),
             ),
         ]))
+    }
+
+    /// Place ids indexed under any of the given OSM keys (see [`osm_key`]).
+    pub fn lookup(&self, keys: &[String]) -> tantivy::Result<Vec<u32>> {
+        if keys.is_empty() {
+            return Ok(Vec::new());
+        }
+        let query = BooleanQuery::new_multiterms_query(
+            keys.iter()
+                .map(|k| Term::from_field_text(self.fields.osm, k))
+                .collect(),
+        );
+        let scorer = Arc::new(|_: u32, s: Score| s);
+        Ok(self
+            .search(&query, None, scorer, keys.len() * 4)?
+            .into_iter()
+            .map(|(_, id)| id)
+            .collect())
     }
 
     /// Run `query`, keeping only place ids in `filter` (if any), ranking by

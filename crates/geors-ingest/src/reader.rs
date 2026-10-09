@@ -43,6 +43,15 @@ pub struct RelationData {
 }
 
 impl RelationData {
+    /// `postal_code` of a `boundary=postal_code` relation.
+    pub fn postal_code(&self) -> Option<&str> {
+        (self.tags.get("boundary") == Some("postal_code"))
+            .then(|| self.tags.get("postal_code"))
+            .flatten()
+            .map(str::trim)
+            .filter(|c| !c.is_empty())
+    }
+
     pub fn is_admin_boundary(&self) -> bool {
         self.tags.get("boundary") == Some("administrative") && self.tags.admin_level().is_some()
     }
@@ -108,7 +117,8 @@ pub fn read_pbf(path: &Path) -> Result<RawData> {
             let admin = t.get("boundary") == Some("administrative")
                 && t.admin_level().is_some()
                 && t.name().is_some();
-            if class.is_none() && !admin {
+            let postal = t.get("boundary") == Some("postal_code") && t.has("postal_code");
+            if class.is_none() && !admin && !postal {
                 return;
             }
             let mut rel = RelationData {
