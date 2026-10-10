@@ -132,7 +132,10 @@ pub fn memory_limit() -> Option<u64> {
     }) {
         return Some(kb * 1024);
     }
-    let out = std::process::Command::new("sysctl").args(["-n", "hw.memsize"]).output().ok()?;
+    let out = std::process::Command::new("sysctl")
+        .args(["-n", "hw.memsize"])
+        .output()
+        .ok()?;
     String::from_utf8_lossy(&out.stdout).trim().parse().ok()
 }
 
@@ -296,10 +299,18 @@ impl Hierarchy {
     fn assign(&self, cache: &mut HierCache, place: &mut Place, own: Option<u32>) {
         let mut best: BTreeMap<Layer, (u8, u32)> = BTreeMap::new();
         let mut country = None;
+        let mut region_country = None;
         for ai in self.areas.containing(&mut cache.areas, place.center) {
             let a = &self.areas.areas[ai];
-            if a.layer == Layer::Country && country.is_none() {
-                country = a.country_code.clone();
+            if let Some(cc) = &a.country_code {
+                let slot = if a.layer == Layer::Country {
+                    &mut country
+                } else {
+                    &mut region_country
+                };
+                if slot.is_none() {
+                    *slot = Some(cc.clone());
+                }
             }
             if a.layer <= place.layer || Some(a.unit) == own {
                 continue;
@@ -321,7 +332,10 @@ impl Hierarchy {
             }
         }
         place.parents = best.values().map(|(_, u)| *u).collect();
-        place.country_code = country.or(place.country_code.take());
+        // A country boundary cut by the extract's edge is unusable, but the
+        // regions inside it (states, provinces) usually are complete and
+        // name their country in `ISO3166-2`.
+        place.country_code = country.or(region_country).or(place.country_code.take());
         if place.postcode.is_none() && place.layer <= Layer::Street {
             place.postcode = self
                 .postcodes
@@ -384,7 +398,11 @@ fn add_area(
     bbox: BBox,
 ) -> u32 {
     let unit = unit(units, t, layer);
-    let country_code = (layer == Layer::Country).then(|| t.country_code()).flatten();
+    let country_code = if layer == Layer::Country {
+        t.country_code()
+    } else {
+        t.subdivision_country()
+    };
     areas.push(Area {
         unit,
         layer,
@@ -444,7 +462,11 @@ fn relation_geometry(
             .or(r.admin_centre)
             .and_then(|id| coords.get(id))
             .or_else(|| mp.as_ref().and_then(interior));
-        (center, bbox, mp.as_ref().map(polygon_rings).unwrap_or_default())
+        (
+            center,
+            bbox,
+            mp.as_ref().map(polygon_rings).unwrap_or_default(),
+        )
     });
     RelGeometry {
         broken: mp.is_none() && n_broken > 0,
@@ -565,7 +587,15 @@ pub fn import_pbf(path: &Path, opts: &ImportOptions) -> Result<Import> {
         .collect();
     for (w, poly) in scan.area_ways.iter().zip(way_polys) {
         if let Some((polygon, bbox)) = poly {
-            let u = add_area(&mut units, &mut admin_areas, &w.tags, w.class.layer, 11, polygon, bbox);
+            let u = add_area(
+                &mut units,
+                &mut admin_areas,
+                &w.tags,
+                w.class.layer,
+                11,
+                polygon,
+                bbox,
+            );
             way_units.insert(w.id, u);
         }
     }
@@ -577,11 +607,28 @@ pub fn import_pbf(path: &Path, opts: &ImportOptions) -> Result<Import> {
     let mut postcode_areas = Vec::new();
     let mut rel_features: Vec<RelFeature> = Vec::new();
     let mut broken = 0usize;
+    // Countries with a region cut by the extract's edge: the extract holds
+    // only part of them, even if their outer boundary is complete.
+    let mut clipped: HashSet<String> = HashSet::new();
     for (ri, (r, g)) in relations.iter().zip(geoms).enumerate() {
         broken += g.broken as usize;
+        if g.broken
+            && r.is_admin_boundary()
+            && let Some(cc) = r.tags.subdivision_country()
+        {
+            clipped.insert(cc);
+        }
         let mut own = None;
         if let Some((layer, rank, polygon, bbox)) = g.admin {
-            own = Some(add_area(&mut units, &mut admin_areas, &r.tags, layer, rank, polygon, bbox));
+            own = Some(add_area(
+                &mut units,
+                &mut admin_areas,
+                &r.tags,
+                layer,
+                rank,
+                polygon,
+                bbox,
+            ));
         }
         if let Some((code, polygon, bbox)) = g.postcode {
             // Postcode areas reuse `Area`; `unit` indexes `postcode_names`.
@@ -614,14 +661,41 @@ pub fn import_pbf(path: &Path, opts: &ImportOptions) -> Result<Import> {
             "relations with incomplete geometry (probably clipped by the extract); they are not used for the hierarchy"
         );
     }
+    // Names come from country boundaries, complete or not.
     let mut country_names: HashMap<String, String> = HashMap::new();
-    for a in &admin_areas {
-        if let Some(cc) = &a.country_code {
-            country_names
-                .entry(cc.clone())
-                .or_insert_with(|| units[a.unit as usize].name.clone());
+    for r in &relations {
+        if r.is_admin_boundary()
+            && r.tags.admin_level() == Some(2)
+            && let (Some(cc), Some(name)) = (r.tags.country_code(), r.tags.name())
+        {
+            country_names.entry(cc).or_insert_with(|| name.to_string());
         }
     }
+    // Countries the extract covers: a complete country boundary, or a
+    // complete region of it, lying inside the extract's bounding box. A
+    // neighbour's boundary can be complete in an extract that holds only a
+    // strip along it (South Africa's extract has a hole for Lesotho), so a
+    // country whose regions are cut counts as covered by regions only.
+    let extent = reader::header_bbox(path);
+    let mut covered: BTreeMap<String, sink::Coverage> = BTreeMap::new();
+    for a in &admin_areas {
+        if let (Some(cc), Some(e)) = (&a.country_code, &extent)
+            && e.contains_bbox(&a.bbox)
+        {
+            let kind = if a.layer == Layer::Country && !clipped.contains(cc) {
+                sink::Coverage::Boundary
+            } else {
+                sink::Coverage::Regions
+            };
+            let k = covered.entry(cc.clone()).or_insert(kind);
+            *k = (*k).max(kind);
+        }
+    }
+    info!(
+        countries = %covered.iter().map(|(cc, k)| format!("{cc}({k:?})")).collect::<Vec<_>>().join(" "),
+        "countries covered by the extract"
+    );
+    let covered: HashMap<String, sink::Coverage> = covered.into_iter().collect();
     info!(
         admin_areas = admin_areas.len(),
         postcode_areas = postcode_areas.len(),
@@ -753,7 +827,7 @@ pub fn import_pbf(path: &Path, opts: &ImportOptions) -> Result<Import> {
         elapsed = ?started.elapsed(),
         "features extracted"
     );
-    let countries = sink.finish(opts, units, &country_names)?;
+    let countries = sink.finish(opts, units, &country_names, &covered)?;
     Ok(Import {
         countries,
         _work: work,

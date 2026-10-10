@@ -497,7 +497,9 @@ pub fn import_dump_reader(reader: impl Read, opts: &ImportOptions) -> Result<Imp
         .iter()
         .filter_map(|(cc, names)| Some((cc.clone(), names.get("")?.clone())))
         .collect();
-    let countries = b.sink.finish(opts, b.units, &country_names)?;
+    let countries = b
+        .sink
+        .finish(opts, b.units, &country_names, &Default::default())?;
     Ok(Import {
         countries,
         _work: work,

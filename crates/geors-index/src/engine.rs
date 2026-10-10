@@ -12,10 +12,12 @@
 use std::cmp::Ordering;
 use std::path::Path;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
 
 use geors_core::geom::{BBox, LonLat};
 use geors_core::{AdminUnit, Layer, OsmType, Place};
 use geors_rank::RankingConfig;
+use rayon::prelude::*;
 use tantivy::tokenizer::TextAnalyzer;
 use tracing::{debug, info};
 
@@ -159,6 +161,26 @@ impl Default for EngineConfig {
     }
 }
 
+/// Text searches in progress, across engines (the server swaps engines on
+/// reload).
+static SEARCHES: AtomicUsize = AtomicUsize::new(0);
+
+/// Counts a search in progress while alive.
+struct InFlight;
+
+impl InFlight {
+    /// Returns the guard and the number of searches now in progress.
+    fn enter() -> (Self, usize) {
+        (Self, SEARCHES.fetch_add(1, AtomicOrdering::Relaxed) + 1)
+    }
+}
+
+impl Drop for InFlight {
+    fn drop(&mut self) {
+        SEARCHES.fetch_sub(1, AtomicOrdering::Relaxed);
+    }
+}
+
 pub struct Engine {
     partitions: Vec<Arc<Partition>>,
     ranking: RankingConfig,
@@ -292,6 +314,13 @@ impl Engine {
 
         let parts = self.select(&req.countries)?;
         let fetch = (limit * 5).clamp(20, 200);
+        // Partitions are independent, so one search can use all cores. That
+        // cuts latency on a quiet server, but when many searches run at once
+        // the cores are already busy and splitting each one only adds
+        // overhead (measured on Europe, 55 partitions: 4x more req/s for a
+        // single client, 20 % fewer with 32).
+        let (_in_flight, running) = InFlight::enter();
+        let parallel = parts.len() > 1 && running <= (rayon::current_num_threads() / 2).max(1);
         // Hard spatial filter per partition, computed once for all phases.
         // `None` = no filter; partitions with an empty candidate set are skipped.
         let mut filters: Vec<(usize, Option<Arc<BitSet>>)> = Vec::new();
@@ -319,36 +348,50 @@ impl Engine {
             if slack > 0 && parsed.tokens.len() < 2 {
                 break;
             }
-            for (pi, filter) in &filters {
-                let part = &self.partitions[*pi];
-                let query =
-                    part.text
-                        .build_query(&parsed, &req.layers, slack, fuzzy, &self.synonyms);
-                let scorer_part = part.clone();
-                let ranking = self.ranking.clone();
-                let focus = req.focus;
-                let scorer = Arc::new(move |id: u32, s: f32| {
-                    let Some(rec) = scorer_part.record(id) else {
-                        return 0.0;
-                    };
-                    let d = focus.map(|f| geors_core::geom::haversine(f, rec.center()));
-                    ranking.combined(s, rec.importance, d) * penalty
-                });
-                let hits = part
-                    .text
-                    .search(query.as_ref(), filter.clone(), scorer, fetch)
-                    .map_err(IndexError::from)?;
-                for (score, id) in hits {
-                    if !cands.iter().any(|c| c.part == *pi && c.id == id) {
-                        cands.push(Candidate {
+            // Merged in partition order, so results do not depend on timing.
+            // A partition returns each place at most once, and later phases
+            // start from an empty list, so no duplicate check is needed.
+            let search_part = |(pi, filter): &(usize, Option<Arc<BitSet>>)| -> Result<Vec<Candidate>, EngineError> {
+                    let part = &self.partitions[*pi];
+                    let query =
+                        part.text
+                            .build_query(&parsed, &req.layers, slack, fuzzy, &self.synonyms);
+                    let scorer_part = part.clone();
+                    let ranking = self.ranking.clone();
+                    let focus = req.focus;
+                    let scorer = Arc::new(move |id: u32, s: f32| {
+                        let Some(rec) = scorer_part.record(id) else {
+                            return 0.0;
+                        };
+                        let d = focus.map(|f| geors_core::geom::haversine(f, rec.center()));
+                        ranking.combined(s, rec.importance, d) * penalty
+                    });
+                    let hits = part
+                        .text
+                        .search(query.as_ref(), filter.clone(), scorer, fetch)
+                        .map_err(IndexError::from)?;
+                    Ok(hits
+                        .into_iter()
+                        .map(|(score, id)| Candidate {
                             part: *pi,
                             id,
                             score,
                             distance_m: None,
-                        });
-                    }
-                }
-            }
+                        })
+                        .collect())
+                };
+            let per_part: Vec<Vec<Candidate>> = if parallel {
+                filters
+                    .par_iter()
+                    .map(search_part)
+                    .collect::<Result<_, EngineError>>()?
+            } else {
+                filters
+                    .iter()
+                    .map(search_part)
+                    .collect::<Result<_, EngineError>>()?
+            };
+            cands.extend(per_part.into_iter().flatten());
         }
         debug!(candidates = cands.len(), tokens = ?parsed.tokens, "text search");
         sort_by_score(&mut cands);

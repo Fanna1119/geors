@@ -1,9 +1,11 @@
 # geors
 
 A lightweight, fast geocoder for OpenStreetMap data, written in Rust and inspired by
-[Photon](https://github.com/komoot/photon). It is built for **small extracts**
-(a country, a region, a city), not the 100 GB planet file, and treats spatial
-filtering and per-country partitioning as core features.
+[Photon](https://github.com/komoot/photon). It is built for
+country and region extracts (up to a continent: Europe imports in under half
+an hour on a laptop), and treats spatial filtering and per-country
+partitioning as core features. Imports also run in small containers:
+South Africa imports in 70 s within 256 MB of RAM and one CPU.
 
 - Full-text search with search-as-you-type, typo tolerance and abbreviation expansion
   (`hauptstr.` → `hauptstrasse`), using [tantivy](https://github.com/quickwit-oss/tantivy)
@@ -16,21 +18,70 @@ filtering and per-country partitioning as core features.
 - **Continuous updates**: sources are tracked, new upstream versions are detected and
   re-imported, and the running server hot-swaps the data with no downtime
 - One country per partition, so you load only the countries you need
-- Single ~10 MB binary. All index files are memory-mapped.
+- Single ~14 MB binary (70 MB distroless Docker image). All index files are
+  memory-mapped.
 
-Measured on a laptop (Apple Silicon, 8 cores, 16 GB). Import times include
-writing the index.
+### Test hardware
+
+All numbers below come from one laptop, not a server:
+
+| | |
+|---|---|
+| Machine | MacBook Pro, Apple M1 Pro: 8 cores (6 performance + 2 efficiency), 16 GB RAM, internal SSD |
+| OS | macOS 26 |
+| Docker tests | Docker Desktop VM with 8 CPUs and 7.7 GB, limited per test with `--memory` / `--cpus` |
+
+Imports trade time for memory. Node coordinates, scratch files and the
+finished index are memory-mapped files or are streamed from disk, so the OS
+can drop those pages whenever it needs the memory. Up to country size, heap
+use is therefore low: South Africa imports within 256 MB, and a fast SSD
+matters more than lots of RAM. Some structures still grow with the extract:
+- the boundary polygons used to find each place's city / district / postcode
+  (Europe: 472 k boundaries);
+- the street-merging index (48 bytes per street segment; Europe: 26 M
+  segments).
+
+So a continent still needs several GB; Europe peaked at 10 GB on the 16 GB
+test machine. Import times include writing the index.
+
+> **Import memory is not serving memory.** The "Import memory" column is
+> what *building* the index takes, once per import or update. Serving the
+> finished index needs far less: all of Europe runs in about 230 MB at idle
+> and 380 MB under load (see below). You can build the index on a larger
+> machine and serve it from a small one. High import memory for continent
+> extracts is a known limitation that I'm still working on (see
+> [Known issues](#known-issues-and-roadmap)).
 
 | Extract | PBF | Places | Import | Import memory¹ | Index on disk |
 |---|---|---|---|---|---|
 | Liechtenstein | 3 MB | 16 k | 0.5 s | ~70 MB | 4 MB |
-| Austria | 774 MB | 3.1 M | 35 s | 0.7 GB | 0.8 GB |
-| South Africa | 402 MB | 483 k | 13 s | 0.3 GB | 147 MB |
+| Austria | 774 MB | 3.1 M | 34 s | 0.7 GB | 0.8 GB |
+| South Africa | 402 MB | 483 k | 11 s | 0.3 GB | 147 MB |
 | Germany | 4.6 GB | 24.6 M | **4 min 40 s** | 4.0 GB | 5.6 GB |
+| Europe (55 countries) | 33 GB | 149 M | **26 min 38 s** | 10.2 GB² | 26 GB |
 
-¹ Peak memory footprint (heap). Node coordinates and scratch files are
+¹ Peak memory footprint (heap) while importing, not while serving. Node
+coordinates and scratch files are
 memory-mapped and evictable. Peak extra disk during import is about the size
 of the finished index.
+² Measured with `bench/import-stats.sh ... --all-countries`, before the
+current country rules (see "Partitions and border slivers"), which no longer
+need that flag. The machine was
+already using 3.2 GB of swap before the import, and it pushed that to 4.2 GB.
+Peak disk during the import was 49 GB (index plus scratch files).
+
+**Small containers** (South Africa, Docker, 1 CPU, default settings):
+
+| Memory limit | Import | Of which writing the index |
+|---|---|---|
+| 256 MB | 70 s | 12 s |
+
+The import adapts to the memory it finds (cgroup limit or RAM). When node
+coordinates would not fit in memory, ways are joined with their nodes by
+sorting instead of random lookups (`--node-lookup`). When scratch files are
+larger than a quarter of memory, the index writer regroups them first, so it
+reads them sequentially. Sort buffers and the text indexer's memory scale with
+the limit.
 
 **Serving Germany + Austria + Liechtenstein + Andorra** (27.7 M places)
 with 32 concurrent connections (`bench/run.sh`):
@@ -45,7 +96,41 @@ with 32 concurrent connections (`bench/run.sh`):
 | reverse | 34,733 | 0.8 ms | 8 ms |
 | 10 nearest | 20,892 | 1.4 ms | 8 ms |
 
-Server memory: **18 MB physical footprint at start, ~150 MB under load**.
+**Serving all of Europe** (55 partitions, 149 M places, 26 GB index) on the
+same laptop, 32 concurrent connections, queries sampled from every 500th
+place (`EVERY=500 bench/run.sh data-europe 20s 32`):
+
+| Query mix | req/s | p50 | p99 |
+|---|---|---|---|
+| full address | 415 | 68 ms | 324 ms |
+| autocomplete prefix | 136 | 218 ms | 523 ms |
+| with typos | 88 | 348 ms | 636 ms |
+| name + location bias | 442 | 69 ms | 166 ms |
+| category within 2 km radius | 1,611 | 18 ms | 52 ms |
+| reverse | 32,857 | 0.9 ms | 3.7 ms |
+| 10 nearest | 19,068 | 1.6 ms | 4.7 ms |
+
+- **Memory:** **232 MB** physical footprint at start and **380 MB** after the
+  load test. For comparison, Photon's README recommends "at least 64GB RAM"
+  for its planet-wide database (about 95 GB on disk). That is not a direct
+  comparison: Europe is a large part of the planet, but not all of it.
+- **Page cache:** RSS reached 7.3 GB. These are cached index pages, which the
+  OS drops under pressure.
+- **Errors:** none.
+- **Spatial queries** (reverse, nearest, radius) are as fast as on a single
+  country.
+- **Text search** under load is about 5× slower than on Germany + Austria:
+  a query without `country=` searches all 55 partitions.
+- **Single client:** a lone search uses all cores, one partition per core.
+  With one connection, p50 latency is 4.4 ms for a full address, 17 ms for
+  autocomplete, 16 ms for typos and 4.2 ms with a location bias. Searching
+  one partition after another took 19 / 48 / 74 / 13 ms. Under load, each
+  search uses one core: splitting searches when all cores are busy only adds
+  overhead (measured: 20 % fewer req/s at 32 connections).
+- **Load generator:** wrk ran on the same 8 cores as the server.
+
+Server memory (Germany + Austria + Liechtenstein + Andorra): **18 MB physical
+footprint at start, ~150 MB under load**.
 RSS grows to a few GB as the OS caches index pages; those pages are clean and
 the OS drops them under memory pressure.
 
@@ -127,8 +212,9 @@ extract. Liechtenstein matched exactly on all 404,839 elements, and Austria on
 all 97,480,621. The dev tool `cargo run --release -p geors-update --example
 verify_diffs -- OLD.osm.pbf NEW.osm.pbf` repeats this check.
 
-**Cost:** diffs save bandwidth, not rebuild time (Germany still rebuilds in
-about 5 minutes), and the base PBF stays on disk. After the first diff update
+**Cost:** diffs save bandwidth, not rebuild time. Every update re-imports the
+whole extract (Germany about 5 minutes, Europe about 30); see
+[Known issues](#known-issues-and-roadmap) for why and for the plan. The base PBF also stays on disk. After the first diff update
 of a local file, the managed copy in `<data>/.base/` takes over and your
 original download is redundant. Let geors delete it with `prune_originals =
 true` under `[updates]` in the config, or `geors update --prune-originals`.
@@ -330,7 +416,7 @@ RUST_LOG=debug geors serve                      # logging to stderr (default: in
 |------------------------|---------------------------------------------------------------------------------|
 | `--data DIR`           | Data directory (default `data`).                                               |
 | `--countries li,ch`    | Keep only these countries from the extract.                                    |
-| `--all-countries`      | Keep every country found, including slivers across the border.                 |
+| `--all-countries`      | Keep every country found, including slivers across the border (see "Partitions and border slivers"). |
 | `--default-country XX` | Assign places outside every country boundary to `XX` (useful for city extracts without the country boundary). |
 | `--name NAME`          | Source name for `update` (default: derived from the file name).                |
 | `--no-track`           | Import once, without registering the source for updates.                        |
@@ -351,11 +437,38 @@ Global flags (any command, before or after it):
 `sorted` needs a PBF whose nodes are sorted by id, which is true of
 Geofabrik and planet extracts. Both modes produce identical output.
 
-By default, an import keeps every country that holds at least 1% of the
-extract's places. This drops the few neighbouring-country places that a border
-buffer pulls in. Without that rule, importing Liechtenstein would create a
-24-place `at` partition that overwrites a real Austria import. Re-importing a
-country replaces its partition atomically.
+#### Partitions and border slivers
+
+Extracts include a buffer across their border, which pulls in a few places of
+each neighbouring country. Writing those as partitions would replace a real
+import of that country with a fragment: importing Liechtenstein would
+overwrite an Austria import with 24 places. So, unless `--countries` or
+`--all-countries` is given, an import keeps a country when:
+
+1. **its complete boundary lies inside the extract**, and none of its regions
+   are cut off. This is meant to keep every country of a continent extract,
+   however small (Vatican City has 355 of Europe's 149 M places).
+2. **complete regions of it lie inside the extract** (states, provinces,
+   municipalities with an `ISO3166-2` code), and it has at least 0.1 % of the
+   places. This keeps countries that the extract cuts through: Germany in a
+   Bremen extract, and should keep European Russia and Turkey in the Europe
+   extract (not yet verified).
+3. **it has at least 1 % of the places.**
+
+"Inside the extract" means inside the bounding box in the PBF header.
+Completeness alone is not enough: Geofabrik's South Africa extract has a hole
+for Lesotho, yet Lesotho's boundary is complete in it, because the border
+lies in the buffer. Lesotho's districts are cut off, though, so it is
+recognised as a fragment. Tested on Liechtenstein, Andorra, Bremen, South
+Africa and Austria: each keeps exactly its own country.
+
+Places in a country whose boundary *and* regions are all cut off by the
+extract get no country and are skipped. This also applies to city extracts
+without any complete boundary that has a country or `ISO3166-2` code. Use
+`--default-country XX` to assign those places a country; their city and
+district then come from `place=*` nodes.
+
+Re-importing a country replaces its partition atomically.
 
 ### Nominatim / Photon dumps
 
@@ -390,18 +503,39 @@ bench/           load, accuracy and ambiguity benchmarks (wrk + Python)
       pass also records which blobs hold nodes and which hold ways, so later
       passes only decompress the blobs they need.
    2. ways: only the *ids* of needed nodes are recorded, plus node lists of
-      relation member ways and `place=*` areas
+      relation member ways and `place=*` areas. The ids are deduplicated by
+      an external merge sort: sorted runs on disk, merged sequentially.
    3. nodes: coordinates of the needed nodes go into a disk-backed, sorted
       store (16 bytes/node, memory-mapped), plus `place=*` nodes
    4. way features, then 5. node features: each place is built and gets its
       hierarchy on a worker thread, then is **spilled to a per-country
       scratch file**
 
+   Between passes 3 and 4, boundary polygons and their point-in-polygon
+   indexes are built on all cores.
+
+   **Node lookup modes.** In `memory` mode, pass 4 looks up each way's nodes
+   in the store above. That is a random read per node, which is fast while the
+   store fits in RAM and very slow once it does not. In `sorted` mode, pass 2
+   instead records `(node, way, position)` for every node reference and sorts
+   it by node id. Pass 3 walks the nodes in file order alongside it, producing
+   `(way, position, coordinate)`, which is sorted by way into a geometry file
+   that pass 4 reads front to back. This costs extra temporary disk and
+   sorting time, so `auto` (the default) only picks it when the store would
+   exceed a quarter of the available memory. Both modes produce identical
+   output. `sorted` needs nodes sorted by id, as in Geofabrik and planet
+   files.
+
    Blobs are decoded on all cores (rayon). One consumer thread does the
    ordered writes through a bounded channel. Output is deterministic:
    repeated imports produce byte-identical partitions. The writer orders
    places by `(Z-order, OSM type, OSM id)` and keeps only that sort key in
-   memory, never the arrival order.
+   memory, never the arrival order. If a scratch file is larger than a
+   quarter of memory, the writer first copies it, in one sequential pass,
+   into buckets of consecutive Z-order ranges, each small enough to read
+   into RAM whole. Places are then never read from disk one at a time.
+   (Importance scores can differ in the last float digit between macOS and
+   Linux, because `log10` differs slightly between their maths libraries.)
 2. **Classification** turns OSM tags into layers: `place=*`, admin boundaries,
    named highways (`street`), named amenities/shops/tourism/… (`poi`), and
    `addr:housenumber` (`house`). Each place also gets an importance prior from
@@ -415,7 +549,10 @@ bench/           load, accuracy and ambiguity benchmarks (wrk + Python)
    the edges in the point's band. Robust orientation predicates make it
    exact, and points on a border count as inside. Results are cached per grid
    cell (bounded, two generations), so only cells that a boundary crosses need
-   an exact test. Where a city or district has no boundary, the nearest `place=*` node
+   an exact test. The country comes from the country boundary, or, where
+   the extract cuts that boundary off, from the `ISO3166-2` code of a
+   complete region (`RU-MOS` → `ru`). Where a city or district has no
+   boundary, the nearest `place=*` node
    within a plausible radius is used instead. Places without `addr:postcode`
    get one from a `boundary=postal_code` area when the extract has them. A
    boundary and its label node are merged into one result, which takes the
@@ -512,27 +649,27 @@ rustup target add x86_64-unknown-linux-musl
 cargo build --release --target x86_64-unknown-linux-musl
 ```
 
-## Limitations and roadmap
+### Docker
 
-- Updates apply daily diffs to a kept base PBF, but still rebuild the whole
-  partition (Germany about 5 minutes). There is no incremental index update
-  and no minutely replication (see "Keeping data up to date").
-- House numbers are matched as tokens. There is no interpolation (`addr:interpolation`).
-- Transliteration is limited to accent folding. Cyrillic and other scripts
-  match through `name:*` translations.
-- For city extracts without boundary relations, use `--default-country`; city
-  and district then come from `place=*` nodes.
-- Supported platforms: Linux and macOS.
-- Queries with several misspelled long words can take a few hundred ms on a
-  Germany-sized partition. Phase 2 must expand common words such as "strasse".
-- Words written together ("ErichHeckel-Straße" for "Erich-Heckel-Straße")
-  are not split, so they only match through the one-word-missing phase.
-- A street-plus-city query can rank a POI whose *name* contains the city
-  above the street itself. For example, "long st cape town" returns a hotel
-  on Lower Long Street before Long Street.
-- Synonym rules are single words only (no `rue de la` style multi-word
-  expansions), and all languages apply to all countries unless restricted
-  in the config.
-- Ideas: point-in-polygon reverse geocoding ("which city contains this
-  point"), `/lookup` for Nominatim place ids, category filters from dump
-  `categories`, a Prometheus metrics endpoint.
+```sh
+docker build -t geors .
+docker volume create geors-data
+docker run --rm -v geors-data:/data -v ~/Downloads:/in:ro geors import /in/south-africa-latest.osm.pbf
+docker run -d -p 2322:2322 -v geors-data:/data --memory 512m --cpus 1 -e GEORS_THREADS=1 geors
+```
+
+The image is distroless (binary only). Data lives in the `/data` volume.
+`--memory` limits are detected and respected by the import. On macOS, use a
+Docker volume rather than a bind mount for `/data`: bind mounts go through a
+slow file-sharing layer, which makes every page-cache miss expensive.
+`bench/docker-bench.sh` measures serving and importing under several memory
+and CPU limits.
+
+## Known issues and roadmap
+
+Known limitations and planned work are tracked as
+[GitHub issues](https://github.com/Fanna1119/geors/issues). The main ones:
+- every update is a full re-import;
+- importing a continent takes several GB of RAM (serving it does not).
+
+Supported platforms: Linux and macOS.

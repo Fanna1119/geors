@@ -9,8 +9,8 @@
 
 use std::fs::{File, OpenOptions};
 use std::io::{self, BufWriter, Write};
-use std::time::Instant;
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 
 use geors_core::LonLat;
 use geors_core::geom::{from_e7, to_e7};

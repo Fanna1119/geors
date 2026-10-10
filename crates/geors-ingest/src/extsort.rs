@@ -252,7 +252,10 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let mut s = ExternalSorter::<[i64; 2]>::new(dir.path(), "t", 1 << 20, false);
         s.extend([[3, 1], [1, 9], [3, 0], [1, 9]]).unwrap();
-        assert_eq!(drain(s.finish().unwrap()), vec![[1, 9], [1, 9], [3, 0], [3, 1]]);
+        assert_eq!(
+            drain(s.finish().unwrap()),
+            vec![[1, 9], [1, 9], [3, 0], [3, 1]]
+        );
     }
 }
 

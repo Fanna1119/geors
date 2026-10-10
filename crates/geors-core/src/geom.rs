@@ -123,6 +123,14 @@ impl BBox {
             && p.lat <= self.max_lat
     }
 
+    /// `o` lies entirely inside `self`.
+    pub fn contains_bbox(&self, o: &BBox) -> bool {
+        o.min_lon >= self.min_lon
+            && o.max_lon <= self.max_lon
+            && o.min_lat >= self.min_lat
+            && o.max_lat <= self.max_lat
+    }
+
     pub fn intersects(&self, o: &BBox) -> bool {
         self.min_lon <= o.max_lon
             && self.max_lon >= o.min_lon

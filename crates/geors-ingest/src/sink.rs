@@ -12,6 +12,15 @@ use tracing::{info, warn};
 
 use crate::{CountryData, ImportOptions};
 
+/// How completely an extract covers a country (see [`CountrySink::finish`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Coverage {
+    /// Complete boundaries of regions (`ISO3166-2`) inside the extract.
+    Regions,
+    /// The complete country boundary lies inside the extract.
+    Boundary,
+}
+
 pub struct CountrySink {
     dir: PathBuf,
     writers: BTreeMap<String, SpillWriter>,
@@ -57,11 +66,23 @@ impl CountrySink {
     }
 
     /// Apply the country selection rules and return the partitions to write.
+    ///
+    /// Unless countries are chosen explicitly, a country is kept when
+    /// - its complete boundary lies inside the extract, or
+    /// - complete regions of it do, and it has at least a tenth of
+    ///   `min_share` of the places (a region can be a single municipality
+    ///   of a neighbour), or
+    /// - it has at least `min_share` of the places.
+    ///
+    /// The rest are border slivers: the few neighbouring places that an
+    /// extract's buffer pulls in. Writing them would replace a real import
+    /// of that country with a fragment.
     pub fn finish(
         self,
         opts: &ImportOptions,
         admins: Vec<AdminUnit>,
         country_names: &HashMap<String, String>,
+        covered: &HashMap<String, Coverage>,
     ) -> io::Result<Vec<CountryData>> {
         if self.unknown > 0 {
             warn!(
@@ -89,7 +110,12 @@ impl CountrySink {
             } else if opts.all_countries {
                 true
             } else {
-                let keep = w.count() as f64 >= opts.min_share * total as f64;
+                let share = w.count() as f64 / total.max(1) as f64;
+                let keep = match covered.get(&cc) {
+                    Some(Coverage::Boundary) => true,
+                    Some(Coverage::Regions) => share >= opts.min_share / 10.0,
+                    None => share >= opts.min_share,
+                };
                 if !keep {
                     info!(country = %cc, places = w.count(), "skipping border sliver (use --all-countries or --countries to keep it)");
                 }
@@ -108,5 +134,75 @@ impl CountrySink {
             });
         }
         Ok(out)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use geors_core::{Layer, LonLat, OsmType};
+
+    fn place(cc: &str, id: i64) -> Place {
+        Place {
+            osm_type: OsmType::Node,
+            osm_id: id,
+            osm_key: "amenity".into(),
+            osm_value: "cafe".into(),
+            layer: Layer::Poi,
+            name: Some("x".into()),
+            names: Default::default(),
+            alt_names: vec![],
+            housenumber: None,
+            street: None,
+            postcode: None,
+            city: None,
+            parents: vec![],
+            country_code: Some(cc.into()),
+            center: LonLat::new(0.0, 0.0),
+            extent: None,
+            importance: 0.1,
+            lines: Vec::new(),
+            polygons: Vec::new(),
+            merged_ids: vec![],
+        }
+    }
+
+    #[test]
+    fn keeps_covered_countries_and_drops_slivers() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut sink = CountrySink::new(dir.path().to_path_buf(), None);
+        // 100,000 places: 1 % = 1,000, a tenth of that = 100.
+        let counts = [
+            ("AT", 96_000), // main country
+            ("DE", 1_500),  // >= 1 %: kept by share
+            ("VA", 50),     // complete boundary inside the extract
+            ("RU", 2_000),  // regions only, >= 0.1 %
+            ("LI", 50),     // regions only, < 0.1 %: sliver
+            ("CH", 400),    // nothing, < 1 %: sliver
+        ];
+        let mut id = 0;
+        for (cc, n) in counts {
+            for _ in 0..n {
+                id += 1;
+                sink.push(place(cc, id)).unwrap();
+            }
+        }
+        let covered = HashMap::from([
+            ("va".to_string(), Coverage::Boundary),
+            ("ru".to_string(), Coverage::Regions),
+            ("li".to_string(), Coverage::Regions),
+        ]);
+        let kept: Vec<String> = sink
+            .finish(
+                &ImportOptions::default(),
+                Vec::new(),
+                &HashMap::new(),
+                &covered,
+            )
+            .unwrap()
+            .into_iter()
+            .map(|c| c.country_code)
+            .collect();
+        assert_eq!(kept, ["at", "de", "ru", "va"]);
     }
 }

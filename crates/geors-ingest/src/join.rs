@@ -24,7 +24,7 @@ use geors_core::LonLat;
 use geors_core::geom::from_e7;
 use memmap2::Mmap;
 
-use crate::extsort::{ExternalSorter, buffer_bytes, Sorted};
+use crate::extsort::{ExternalSorter, Sorted, buffer_bytes};
 
 /// Ways longer than this cannot be packed (OSM's limit is 2,000 nodes).
 const MAX_POSITION: usize = u16::MAX as usize;
@@ -152,22 +152,23 @@ impl WayGeoms {
         let (mut offset, mut ways) = (0usize, 0usize);
         let mut current: Option<i64> = None;
         let mut coords: Vec<i64> = Vec::new();
-        let mut flush = |way: i64, coords: &mut Vec<i64>, out: &mut BufWriter<File>| -> io::Result<()> {
-            if ways.is_multiple_of(FENCE_EVERY) {
-                fence.push((way, offset));
-            }
-            out.write_all(&way.to_le_bytes())?;
-            out.write_all(&(coords.len() as u32).to_le_bytes())?;
-            for &c in coords.iter() {
-                let (lon, lat) = unpack_coord(c);
-                out.write_all(&lon.to_le_bytes())?;
-                out.write_all(&lat.to_le_bytes())?;
-            }
-            offset += 12 + coords.len() * 8;
-            ways += 1;
-            coords.clear();
-            Ok(())
-        };
+        let mut flush =
+            |way: i64, coords: &mut Vec<i64>, out: &mut BufWriter<File>| -> io::Result<()> {
+                if ways.is_multiple_of(FENCE_EVERY) {
+                    fence.push((way, offset));
+                }
+                out.write_all(&way.to_le_bytes())?;
+                out.write_all(&(coords.len() as u32).to_le_bytes())?;
+                for &c in coords.iter() {
+                    let (lon, lat) = unpack_coord(c);
+                    out.write_all(&lon.to_le_bytes())?;
+                    out.write_all(&lat.to_le_bytes())?;
+                }
+                offset += 12 + coords.len() * 8;
+                ways += 1;
+                coords.clear();
+                Ok(())
+            };
         while let Some([wp, coord]) = sorted.next_record()? {
             let way = wp >> 16;
             if current.is_some_and(|w| w != way) {
@@ -289,7 +290,11 @@ mod tests {
 
     #[test]
     fn coordinate_packing() {
-        for (lon, lat) in [(0, 0), (-1_800_000_000, 900_000_000), (1_799_999_999, -899_999_999)] {
+        for (lon, lat) in [
+            (0, 0),
+            (-1_800_000_000, 900_000_000),
+            (1_799_999_999, -899_999_999),
+        ] {
             assert_eq!(unpack_coord(pack_coord(lon, lat)), (lon, lat));
         }
     }

@@ -30,12 +30,19 @@ done | python3 "$HERE/make_queries.py" "$WORK/queries"
 PID=$!
 trap 'kill $PID 2>/dev/null; rm -rf "$WORK"' EXIT
 for _ in $(seq 1 100); do curl -sf "localhost:$PORT/status" >/dev/null && break; sleep 0.2; done
-rss() { ps -o rss= -p "$PID" | awk '{printf "%.0f MiB", $1/1024}'; }
-echo "== server ready, RSS $(rss)"
+# RSS includes cached index pages (clean, evictable). On macOS, also report
+# the physical footprint, which is what Activity Monitor shows as "Memory".
+rss() {
+  ps -o rss= -p "$PID" | awk '{printf "RSS %.0f MiB", $1/1024}'
+  if [[ $(uname) == Darwin ]]; then
+    footprint -p "$PID" 2>/dev/null | awk '/phys_footprint:/ {printf ", footprint %s %s", $2, $3; exit}'
+  fi
+}
+echo "== server ready: $(rss)"
 
 printf "%-8s %10s %9s %9s %9s %8s\n" mix req/s p50 p90 p99 errors
 for mix in $MIXES; do
-  out=$(QUERIES="$WORK/queries/$mix.txt" wrk -t4 -c"$CONN" -d"$DUR" --latency -s "$HERE/wrk.lua" "http://127.0.0.1:$PORT")
+  out=$(QUERIES="$WORK/queries/$mix.txt" wrk -t"$(( CONN < 4 ? CONN : 4 ))" -c"$CONN" -d"$DUR" --latency -s "$HERE/wrk.lua" "http://127.0.0.1:$PORT")
   rps=$(awk '/Requests\/sec/ {print $2}' <<<"$out")
   p50=$(awk '$1=="50%" {print $2}' <<<"$out")
   p90=$(awk '$1=="90%" {print $2}' <<<"$out")
@@ -43,4 +50,4 @@ for mix in $MIXES; do
   err=$(awk '/Non-2xx/ {print $NF}' <<<"$out")
   printf "%-8s %10s %9s %9s %9s %8s\n" "$mix" "$rps" "$p50" "$p90" "$p99" "${err:-0}"
 done
-echo "== server RSS after load: $(rss)"
+echo "== server after load: $(rss)"

@@ -53,6 +53,7 @@ const KEEP_KEYS: &[&str] = &[
     "wikipedia",
     "ISO3166-1",
     "ISO3166-1:alpha2",
+    "ISO3166-2",
     "country_code",
     "area",
     "postal_code",
@@ -185,6 +186,17 @@ impl Tags {
             .iter()
             .filter_map(|k| self.get(k))
             .find_map(geors_core::normalize_country_code)
+    }
+
+    /// Country of a subdivision boundary, from its `ISO3166-2` code
+    /// (`RU-MOS` -> `ru`).
+    pub fn subdivision_country(&self) -> Option<String> {
+        let code = self.get("ISO3166-2")?;
+        let (cc, rest) = code.split_once('-')?;
+        if rest.is_empty() {
+            return None;
+        }
+        geors_core::normalize_country_code(cc)
     }
 
     pub fn population(&self) -> Option<u64> {
@@ -328,6 +340,17 @@ mod tests {
 
     fn tags(pairs: &[(&str, &str)]) -> Tags {
         Tags::from_osm(pairs.iter().copied())
+    }
+
+    #[test]
+    fn subdivision_country() {
+        let c = |v| tags(&[("ISO3166-2", v)]).subdivision_country();
+        assert_eq!(c("RU-MOS").as_deref(), Some("ru"));
+        assert_eq!(c("DE-HB").as_deref(), Some("de"));
+        assert_eq!(c("LI-01").as_deref(), Some("li"));
+        assert_eq!(c("RU"), None);
+        assert_eq!(c("RU-"), None);
+        assert_eq!(c("XYZ-1"), None);
     }
 
     #[test]

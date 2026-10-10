@@ -27,8 +27,8 @@ use std::sync::mpsc::sync_channel;
 use std::time::Instant;
 
 use anyhow::{Context, Result, anyhow};
-use geors_core::LonLat;
 use geors_core::geom::from_e7;
+use geors_core::{BBox, LonLat};
 use osmpbf::{BlobDecode, BlobReader, ByteOffset, Element, PrimitiveBlock, RelMemberType};
 use rayon::prelude::*;
 use tracing::info;
@@ -118,6 +118,20 @@ where
             .join()
             .map_err(|_| anyhow!("PBF decoder thread panicked"))?;
         result
+    })
+}
+
+/// The bounding box in the PBF header, if the file has one (Geofabrik
+/// extracts do: the bounds of the extract's polygon).
+pub fn header_bbox(path: &Path) -> Option<BBox> {
+    let mut reader = open_seekable(path).ok()?;
+    let header = reader.next()?.ok()?.to_headerblock().ok()?;
+    let b = header.bbox()?;
+    Some(BBox {
+        min_lon: b.left.min(b.right),
+        min_lat: b.top.min(b.bottom),
+        max_lon: b.left.max(b.right),
+        max_lat: b.top.max(b.bottom),
     })
 }
 
@@ -488,7 +502,12 @@ pub fn scan_nodes_joined(
                                 && class.key == "place"
                             {
                                 let point = LonLat::new(from_e7(lon), from_e7(lat));
-                                place_nodes.push(PlaceNode { id, point, tags, class });
+                                place_nodes.push(PlaceNode {
+                                    id,
+                                    point,
+                                    tags,
+                                    class,
+                                });
                             }
                         }
                     }

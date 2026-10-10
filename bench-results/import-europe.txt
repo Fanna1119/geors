@@ -1,0 +1,98 @@
+geors import: europe-latest.osm.pbf ( 33G)
+date: 2026-10-10T11:35:39Z   machine: Apple M1 Pro, 8 cores, 16 GB RAM
+args: --all-countries   exit code: 0
+
+wall time:             26 min 38 s
+peak memory footprint: 10.19 GB   (heap)
+max RSS:               7.41 GB   (includes mmapped scratch / page cache)
+peak swap in use:      4203.75 MB
+peak data dir size:    48.8 GB   (index + scratch)
+final data dir size:    26G
+lowest free disk:      111.5 GB
+
+== phases
+pass 1/5: relations relations=862053 node_blobs=480820 way_blobs=58817 elapsed=79.305677625s
+pass 2/5: ways feature_ways=84968254 member_ways=3847084 elapsed=68.338229666s
+pass 3/5: node coordinates (sorted join) place_nodes=3743988 elapsed=268.658872542s
+areas built admin_areas=472336 postcode_areas=22465 localities=1317273 elapsed=25.352235959s
+pass 4/5: way features ways=84968254 elapsed=245.957922167s
+pass 5/5: node features nodes=63664736 elapsed=149.372041084s
+features extracted places=149301302 street_segments=26173881 streets=10349215 elapsed=974.137898125s
+
+== countries
+places per country countries=ad=4336 al=77554 am=5983 at=3103574 ba=235591 be=4553733 bg=392419 by=1408542 ch=2766998 cy=89060 cz=3590129 de=24601800 dk=2924375 ee=904821 es=4662212 fi=1651653 fo=35157 fr=17339362 gb=8082515 ge=204148 gg=8514 gi=1389 gr=462010 hr=424724 hu=1106707 ie=666013 im=16001 iq=459 is=152628 it=6788105 je=7985 li=15543 lt=1190221 lu=204568 lv=694123 mc=2080 md=1093377 me=35027 mk=36083 mt=26118 nl=10455445 no=3380707 pl=9686220 pt=1182355 ro=1378431 rs=2665272 ru=980941 se=1744234 si=520592 sk=1926227 sm=13707 sy=2 tr=996227 ua=2354297 va=355 xk=322526
+
+== partitions written (slowest 10: seconds, country, places)
+788.85675ms al 77554
+660.556ms mk 36083
+656.492791ms me 35027
+531.83475ms mt 26118
+469.848125ms fo 35157
+401.768459ms ad 4336
+397.966ms im 16001
+371.830541ms sm 13707
+368.827833ms li 15543
+366.344083ms gi 1389
+
+== errors / warnings
+  18 WARN geo::algorithm::relate::geomgraph::geometry_graph: polygon had no winding order. Results are undefined.
+   1 WARN geors_ingest::sink: places outside any country boundary were skipped (use --default-country to keep them) unknown=6303461
+   1 WARN geors_ingest: relations with incomplete geometry (probably clipped by the extract); they are not used for the hierarchy broken=588
+
+== partitions
+ad  Andorra                   4336 places       1.4 MiB  source=europe-latest.osm.pbf  bbox=[1.4115,42.4287,1.7924,42.6559]
+al  Shqipëria                77554 places      19.3 MiB  source=europe-latest.osm.pbf  bbox=[19.2648,39.6466,21.0702,42.6610]
+am  -                         5983 places       1.3 MiB  source=europe-latest.osm.pbf  bbox=[43.6623,39.8223,44.9350,41.2315]
+at  Österreich             3103574 places     727.4 MiB  source=europe-latest.osm.pbf  bbox=[9.5314,46.3731,17.1608,49.0206]
+ba  Bosna i Hercegovina / Босна и Херцеговина    235591 places      60.2 MiB  source=europe-latest.osm.pbf  bbox=[13.6615,41.8000,20.6000,46.0923]
+be  België / Belgique / Belgien   4553733 places     984.7 MiB  source=europe-latest.osm.pbf  bbox=[2.4475,49.5006,6.4079,51.5433]
+bg  България                392419 places      96.8 MiB  source=europe-latest.osm.pbf  bbox=[22.3583,41.2354,28.6075,44.2162]
+by  Беларусь               1408542 places     355.7 MiB  source=europe-latest.osm.pbf  bbox=[23.1349,51.2675,32.7386,56.1702]
+ch  Schweiz/Suisse/Svizzera/Svizra   2766998 places     576.9 MiB  source=europe-latest.osm.pbf  bbox=[5.9546,45.8180,10.5350,47.8084]
+cy  Κύπρος - Kıbrıs          89060 places      25.7 MiB  source=europe-latest.osm.pbf  bbox=[32.2692,34.6131,34.6054,35.7084]
+cz  Česko                  3590129 places     564.7 MiB  source=europe-latest.osm.pbf  bbox=[12.0907,48.5518,18.8593,51.0557]
+de  Deutschland           24601800 places    5286.6 MiB  source=europe-latest.osm.pbf  bbox=[5.8663,47.2701,15.0419,55.0588]
+dk  Danmark                2924375 places     448.3 MiB  source=europe-latest.osm.pbf  bbox=[7.8749,54.1446,15.4816,57.7504]
+ee  Eesti                   904821 places     200.5 MiB  source=europe-latest.osm.pbf  bbox=[21.7656,57.5093,28.2082,59.8737]
+es  España                 4662212 places    1032.6 MiB  source=europe-latest.osm.pbf  bbox=[-9.3014,35.2661,4.3275,43.7911]
+fi  Suomi / Finland        1651653 places     442.9 MiB  source=europe-latest.osm.pbf  bbox=[19.1315,59.4727,31.5841,70.0911]
+fo  Føroyar                  35157 places       7.1 MiB  source=europe-latest.osm.pbf  bbox=[-7.6912,61.3333,-6.2545,62.3930]
+fr  France                17339362 places    3130.5 MiB  source=europe-latest.osm.pbf  bbox=[-5.1511,41.3165,9.5598,51.3804]
+gb  United Kingdom         8082515 places    1847.4 MiB  source=europe-latest.osm.pbf  bbox=[-13.6875,49.8634,2.1246,60.8602]
+ge  საქართველო              204148 places      66.4 MiB  source=europe-latest.osm.pbf  bbox=[40.0093,41.0551,46.7407,43.5864]
+gg  Guernsey                  8514 places       2.0 MiB  source=europe-latest.osm.pbf  bbox=[-2.7024,49.4013,-2.0793,49.7345]
+gi  Gibraltar                 1389 places       0.4 MiB  source=europe-latest.osm.pbf  bbox=[-5.3914,36.1090,-5.3381,36.1549]
+gr  Ελλάς                   462010 places     134.2 MiB  source=europe-latest.osm.pbf  bbox=[19.3745,34.8009,29.6368,41.7489]
+hr  Hrvatska                424724 places     101.0 MiB  source=europe-latest.osm.pbf  bbox=[13.2997,42.3767,19.4320,46.5516]
+hu  Magyarország           1106707 places     240.2 MiB  source=europe-latest.osm.pbf  bbox=[16.1139,45.7372,22.8963,48.5851]
+ie  Éire / Ireland          666013 places     213.4 MiB  source=europe-latest.osm.pbf  bbox=[-10.6887,51.2970,-5.6204,55.4497]
+im  Isle of Man              16001 places       4.0 MiB  source=europe-latest.osm.pbf  bbox=[-5.1933,53.9736,-4.0772,54.7810]
+iq  -                          459 places       0.1 MiB  source=europe-latest.osm.pbf  bbox=[42.3430,36.7402,43.3679,37.2368]
+is  Ísland                  152628 places      41.5 MiB  source=europe-latest.osm.pbf  bbox=[-24.5318,63.3005,-13.2760,67.1504]
+it  Italia                 6788105 places    1317.2 MiB  source=europe-latest.osm.pbf  bbox=[6.6290,35.4931,18.5203,47.0921]
+je  Jersey                    7985 places       1.9 MiB  source=europe-latest.osm.pbf  bbox=[-2.2545,48.8964,-1.9024,49.2991]
+li  Liechtenstein            15543 places       3.4 MiB  source=europe-latest.osm.pbf  bbox=[9.4716,47.0504,9.6350,47.2667]
+lt  Lietuva                1190221 places     248.9 MiB  source=europe-latest.osm.pbf  bbox=[20.9639,53.8989,26.8321,56.4504]
+lu  Lëtzebuerg              204568 places      42.7 MiB  source=europe-latest.osm.pbf  bbox=[5.7390,49.4486,6.5311,50.1823]
+lv  Latvija                 694123 places     139.6 MiB  source=europe-latest.osm.pbf  bbox=[20.9004,55.6747,28.2415,58.0856]
+mc  Monaco                    2080 places       0.5 MiB  source=europe-latest.osm.pbf  bbox=[7.4094,43.7248,7.4390,43.7518]
+md  Moldova                1093377 places     192.4 MiB  source=europe-latest.osm.pbf  bbox=[26.6164,45.4677,30.1637,48.4921]
+me  Crna Gora / Црна Гора     35027 places      10.2 MiB  source=europe-latest.osm.pbf  bbox=[18.4367,41.8509,20.3492,43.5552]
+mk  Северна Македонија       36083 places      13.6 MiB  source=europe-latest.osm.pbf  bbox=[20.4531,40.8570,23.0268,42.3549]
+mt  Malta                    26118 places       6.6 MiB  source=europe-latest.osm.pbf  bbox=[14.1847,35.7863,14.5992,36.0831]
+nl  Nederland             10455445 places    1592.5 MiB  source=europe-latest.osm.pbf  bbox=[3.2420,50.7508,7.2274,53.6150]
+no  Norge                  3380707 places     667.7 MiB  source=europe-latest.osm.pbf  bbox=[-9.0768,57.5959,33.4957,80.8280]
+pl  Polska                 9686220 places    1910.7 MiB  source=europe-latest.osm.pbf  bbox=[14.1238,49.0024,24.1457,54.9333]
+pt  Portugal               1182355 places     257.9 MiB  source=europe-latest.osm.pbf  bbox=[-31.2752,30.0294,-6.1893,42.1538]
+ro  România                1378431 places     256.2 MiB  source=europe-latest.osm.pbf  bbox=[20.0365,43.6188,29.7681,48.2645]
+rs  Србија                 2665272 places     498.5 MiB  source=europe-latest.osm.pbf  bbox=[18.8552,42.2251,23.0001,46.1816]
+ru  Россия                  980941 places     233.6 MiB  source=europe-latest.osm.pbf  bbox=[19.6387,42.6550,45.3334,80.1639]
+se  Sverige                1744234 places     428.5 MiB  source=europe-latest.osm.pbf  bbox=[10.9585,55.2977,24.1575,69.0592]
+si  Slovenija               520592 places     114.7 MiB  source=europe-latest.osm.pbf  bbox=[13.3755,45.4166,16.6124,46.8766]
+sk  Slovensko              1926227 places     409.1 MiB  source=europe-latest.osm.pbf  bbox=[16.8332,47.7319,22.5656,49.6137]
+sm  San Marino               13707 places       2.3 MiB  source=europe-latest.osm.pbf  bbox=[12.4039,43.8940,12.5169,43.9907]
+sy  -                            2 places       0.0 MiB  source=europe-latest.osm.pbf  bbox=[36.8554,36.6947,38.3485,36.8939]
+tr  Türkiye                 996227 places     262.7 MiB  source=europe-latest.osm.pbf  bbox=[25.6654,35.8187,44.8176,42.1048]
+ua  Україна                2354297 places     611.7 MiB  source=europe-latest.osm.pbf  bbox=[21.9568,44.3867,40.2009,52.3797]
+va  Civitas Vaticana - Città del Vaticano       355 places       0.2 MiB  source=europe-latest.osm.pbf  bbox=[12.4463,41.9004,12.4583,41.9069]
+xk  Kosova / Kosovo         322526 places      51.1 MiB  source=europe-latest.osm.pbf  bbox=[20.0158,41.8647,21.8188,43.2667]
