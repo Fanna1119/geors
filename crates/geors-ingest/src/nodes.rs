@@ -1,49 +1,51 @@
 //! Disk-backed node coordinate store.
 //!
 //! Only nodes referenced by interesting ways are kept. Their ids are
-//! appended to a scratch file, then sorted and deduplicated in place
-//! through a memory map, next to a parallel coordinate array (two `i32`s
-//! per node). Both live in the page cache, not on the heap, so the OS can
+//! sorted and deduplicated with an external merge sort (sequential disk
+//! access even when the ids far exceed RAM) into a scratch file, next to a
+//! parallel coordinate array (two `i32`s per node). Both live in the page cache, not on the heap, so the OS can
 //! evict them under memory pressure instead of the import being killed.
 //! Cost: 16 bytes per needed node.
 
 use std::fs::{File, OpenOptions};
 use std::io::{self, BufWriter, Write};
+use std::time::Instant;
 use std::path::{Path, PathBuf};
 
 use geors_core::LonLat;
 use geors_core::geom::{from_e7, to_e7};
 use memmap2::MmapMut;
-use rayon::slice::ParallelSliceMut;
+use tracing::info;
+
+use crate::extsort::{ExternalSorter, buffer_bytes};
 
 const MISSING: i32 = i32::MIN;
 
-/// Collects node ids (duplicates allowed) into a scratch file.
+/// Collects node ids (duplicates allowed); sorted and deduplicated by
+/// [`NodeCoords::build`].
 pub struct IdSink {
-    out: BufWriter<File>,
+    sorter: ExternalSorter<i64>,
     path: PathBuf,
-    count: u64,
 }
 
 impl IdSink {
+    /// `path` is where the final sorted id file goes; sort runs are written
+    /// next to it.
     pub fn create(path: &Path) -> io::Result<Self> {
+        let dir = path.parent().unwrap_or(Path::new("."));
+        let prefix = path.file_name().unwrap_or_default().to_string_lossy();
         Ok(Self {
-            out: BufWriter::with_capacity(1 << 20, File::create(path)?),
+            sorter: ExternalSorter::new(dir, &prefix, buffer_bytes(), true),
             path: path.to_path_buf(),
-            count: 0,
         })
     }
 
     pub fn push(&mut self, id: i64) -> io::Result<()> {
-        self.count += 1;
-        self.out.write_all(&id.to_ne_bytes())
+        self.sorter.push(id)
     }
 
     pub fn extend(&mut self, ids: impl IntoIterator<Item = i64>) -> io::Result<()> {
-        for id in ids {
-            self.push(id)?;
-        }
-        Ok(())
+        self.sorter.extend(ids)
     }
 }
 
@@ -157,32 +159,20 @@ impl NodeCoords {
     /// Sort and deduplicate the collected ids; allocate the coordinate array
     /// at `coords_path`.
     pub fn build(sink: IdSink, coords_path: &Path) -> io::Result<Self> {
-        let IdSink {
-            mut out,
-            path,
-            count,
-        } = sink;
+        let t = Instant::now();
+        let IdSink { sorter, path } = sink;
+        let pushed = sorter.pushed();
+        let mut sorted = sorter.finish()?;
+        let mut out = BufWriter::with_capacity(1 << 20, File::create(&path)?);
+        let mut len = 0usize;
+        while let Some(id) = sorted.next_record()? {
+            out.write_all(&id.to_ne_bytes())?;
+            len += 1;
+        }
         out.flush()?;
         drop(out);
-        let mut ids = map(&path, count * 8)?;
-        let len = match ids.as_deref_mut() {
-            None => 0,
-            Some(bytes) => {
-                let ids: &mut [i64] = bytemuck::cast_slice_mut(bytes);
-                ids.par_sort_unstable();
-                // In-place dedup.
-                let mut w = 0;
-                for r in 0..ids.len() {
-                    if w == 0 || ids[r] != ids[w - 1] {
-                        ids[w] = ids[r];
-                        w += 1;
-                    }
-                }
-                w
-            }
-        };
-        // Shrink the id file to the deduplicated ids.
-        drop(ids);
+        drop(sorted);
+        info!(references = pushed, needed_nodes = len, elapsed = ?t.elapsed(), "ids sorted");
         let ids = map(&path, len as u64 * 8)?;
         let mut coords = map(coords_path, len as u64 * 8)?;
         if let Some(c) = coords.as_deref_mut() {

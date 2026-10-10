@@ -340,6 +340,17 @@ RUST_LOG=debug geors serve                      # logging to stderr (default: in
 These flags are stored with the source, so `geors update` re-imports it the
 same way.
 
+Global flags (any command, before or after it):
+
+| Flag                     | Meaning                                                                       |
+|--------------------------|-------------------------------------------------------------------------------|
+| `--threads N`            | Worker threads (env `GEORS_THREADS`; default: all cores).                     |
+| `--index-memory-mb N`    | Text-index writer memory per partition.                                       |
+| `--node-lookup MODE`     | How way geometry finds node coordinates (env `GEORS_NODE_LOOKUP`): `memory` (memory-mapped coordinate store, random access), `sorted` (sort node references and join them with the nodes in one sequential sweep; costs extra temporary disk and sorting time but never reads the store at random), or `auto` (default: `sorted` when the coordinate store would exceed a quarter of RAM or the container limit). |
+
+`sorted` needs a PBF whose nodes are sorted by id, which is true of
+Geofabrik and planet extracts. Both modes produce identical output.
+
 By default, an import keeps every country that holds at least 1% of the
 extract's places. This drops the few neighbouring-country places that a border
 buffer pulls in. Without that rule, importing Liechtenstein would create a

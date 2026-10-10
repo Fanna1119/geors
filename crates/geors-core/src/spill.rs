@@ -115,6 +115,8 @@ pub struct SpillEntry {
     /// `OsmType as u8`.
     pub osm_type: u8,
     pub osm_id: i64,
+    /// Size of the whole record in bytes, including its length prefix.
+    pub len: u32,
 }
 
 /// Read access to a spill file (memory mapped).
@@ -162,6 +164,7 @@ impl SpillReader {
                 center: LonLat::new(lon, lat),
                 osm_type,
                 osm_id,
+                len: (4 + len) as u32,
             });
             pos += 4 + len;
         }
@@ -170,23 +173,41 @@ impl SpillReader {
 
     /// Decode the record at `offset`, including its geometry.
     pub fn get(&self, offset: u64) -> io::Result<Place> {
-        let b = self.bytes();
-        let pos = offset as usize;
-        let doc_len = read_u32(b, pos + 29)? as usize;
-        let doc = slice(b, pos + 33, doc_len)?;
-        let mut place = doc::decode_full(doc).map_err(io::Error::other)?;
-        let g = pos + 33 + doc_len;
-        let kind = GeomKind::from_u8(*b.get(g).ok_or_else(|| bad("geometry kind"))?)
-            .ok_or_else(|| bad("geometry kind"))?;
-        let n = read_u32(b, g + 1)? as usize;
-        let geom = slice(b, g + 5, n * 4)?;
-        match kind {
-            GeomKind::Lines => place.lines = storage::decode_lines(geom),
-            GeomKind::Polygons => place.polygons = storage::decode_polygons(geom),
-            GeomKind::None => {}
-        }
-        Ok(place)
+        decode_record(self.bytes(), offset as usize)
     }
+
+    /// The raw bytes of a record, for copying it to another spill file.
+    pub fn record(&self, entry: &SpillEntry) -> &[u8] {
+        let start = entry.offset as usize;
+        &self.bytes()[start..start + entry.len as usize]
+    }
+
+    /// Hint that the file is about to be read front to back.
+    pub fn advise_sequential(&self) {
+        #[cfg(unix)]
+        if let Some(map) = &self.map {
+            let _ = map.advise(memmap2::Advice::Sequential);
+        }
+    }
+}
+
+/// Decode the record starting at `pos` of a buffer holding spill records
+/// (a spill file, or records copied from one with [`SpillReader::record`]).
+pub fn decode_record(b: &[u8], pos: usize) -> io::Result<Place> {
+    let doc_len = read_u32(b, pos + 29)? as usize;
+    let doc = slice(b, pos + 33, doc_len)?;
+    let mut place = doc::decode_full(doc).map_err(io::Error::other)?;
+    let g = pos + 33 + doc_len;
+    let kind = GeomKind::from_u8(*b.get(g).ok_or_else(|| bad("geometry kind"))?)
+        .ok_or_else(|| bad("geometry kind"))?;
+    let n = read_u32(b, g + 1)? as usize;
+    let geom = slice(b, g + 5, n * 4)?;
+    match kind {
+        GeomKind::Lines => place.lines = storage::decode_lines(geom),
+        GeomKind::Polygons => place.polygons = storage::decode_polygons(geom),
+        GeomKind::None => {}
+    }
+    Ok(place)
 }
 
 fn slice(b: &[u8], start: usize, len: usize) -> io::Result<&[u8]> {

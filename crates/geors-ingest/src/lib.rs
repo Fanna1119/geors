@@ -19,6 +19,8 @@
 
 pub mod areas;
 pub mod dump;
+pub mod extsort;
+pub mod join;
 pub mod nodes;
 pub mod pip;
 pub mod reader;
@@ -38,9 +40,11 @@ use geors_core::geom::{BBox, LonLat};
 use geors_core::spill::{Spill, WorkDir};
 use geors_core::storage::PolygonRings;
 use geors_core::{AdminUnit, Layer, OsmType, Place};
+use rayon::prelude::*;
 use tracing::{info, warn};
 
 use crate::areas::{Area, AreaIndex, CellCache, LocalityIndex, LocalityPoint};
+use crate::join::{RefSink, WayCursor};
 use crate::nodes::{IdSink, NodeCoords};
 use crate::pip::BandedPolygon;
 use crate::sink::CountrySink;
@@ -63,6 +67,95 @@ pub struct ImportOptions {
     /// Where scratch files go (default: the system temp dir). Needs room for
     /// roughly the size of the resulting partitions.
     pub work_dir: Option<PathBuf>,
+    /// How ways find their nodes' coordinates.
+    pub node_lookup: NodeLookup,
+}
+
+/// How ways get their nodes' coordinates during import.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum NodeLookup {
+    /// Sorted join when the coordinates would not fit in a quarter of the
+    /// available memory, else memory.
+    #[default]
+    Auto = 0,
+    /// Random lookups in a memory-mapped store: fastest when it fits in RAM.
+    Memory = 1,
+    /// Sequential sort-merge join ([`join`]): for extracts larger than RAM.
+    Sorted = 2,
+}
+
+impl std::str::FromStr for NodeLookup {
+    type Err = String;
+    fn from_str(s: &str) -> std::result::Result<Self, String> {
+        match s {
+            "auto" => Ok(NodeLookup::Auto),
+            "memory" => Ok(NodeLookup::Memory),
+            "sorted" => Ok(NodeLookup::Sorted),
+            _ => Err(format!("unknown node lookup '{s}' (auto, memory, sorted)")),
+        }
+    }
+}
+
+static NODE_LOOKUP: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+
+/// Process-wide default for [`ImportOptions::node_lookup`] (CLI flag).
+pub fn set_default_node_lookup(mode: NodeLookup) {
+    NODE_LOOKUP.store(mode as u8, std::sync::atomic::Ordering::Relaxed);
+}
+
+fn default_node_lookup() -> NodeLookup {
+    match NODE_LOOKUP.load(std::sync::atomic::Ordering::Relaxed) {
+        1 => NodeLookup::Memory,
+        2 => NodeLookup::Sorted,
+        _ => NodeLookup::Auto,
+    }
+}
+
+/// Memory available to this process: the container limit if there is one,
+/// else physical RAM. `None` if unknown.
+pub fn memory_limit() -> Option<u64> {
+    let read = |p: &str| std::fs::read_to_string(p).ok();
+    // cgroup v2, then v1 (v1 reports a huge number when unlimited).
+    if let Some(v) = read("/sys/fs/cgroup/memory.max").and_then(|s| s.trim().parse::<u64>().ok()) {
+        return Some(v);
+    }
+    if let Some(v) = read("/sys/fs/cgroup/memory/memory.limit_in_bytes")
+        .and_then(|s| s.trim().parse::<u64>().ok())
+        .filter(|&v| v < 1 << 60)
+    {
+        return Some(v);
+    }
+    if let Some(kb) = read("/proc/meminfo").and_then(|m| {
+        m.lines()
+            .find(|l| l.starts_with("MemTotal:"))
+            .and_then(|l| l.split_whitespace().nth(1)?.parse::<u64>().ok())
+    }) {
+        return Some(kb * 1024);
+    }
+    let out = std::process::Command::new("sysctl").args(["-n", "hw.memsize"]).output().ok()?;
+    String::from_utf8_lossy(&out.stdout).trim().parse().ok()
+}
+
+/// Whether to use the sorted join for this extract.
+fn use_sorted_join(path: &Path, mode: NodeLookup) -> bool {
+    match mode {
+        NodeLookup::Memory => false,
+        NodeLookup::Sorted => true,
+        NodeLookup::Auto => {
+            // Measured: the coordinate store is about half the PBF size
+            // (Germany 4.6 GB -> 2.4 GB, Europe 33 GB -> 13 GB).
+            let pbf = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+            let store = pbf / 2;
+            let sorted = memory_limit().is_some_and(|mem| store > mem / 4);
+            info!(
+                store_estimate_mb = store >> 20,
+                memory_mb = memory_limit().map(|m| m >> 20),
+                mode = if sorted { "sorted join" } else { "memory" },
+                "node lookup"
+            );
+            sorted
+        }
+    }
 }
 
 impl Default for ImportOptions {
@@ -73,6 +166,7 @@ impl Default for ImportOptions {
             default_country: None,
             min_share: 0.01,
             work_dir: None,
+            node_lookup: default_node_lookup(),
         }
     }
 }
@@ -280,28 +374,84 @@ fn unit(units: &mut Vec<AdminUnit>, t: &Tags, layer: Layer) -> u32 {
     (units.len() - 1) as u32
 }
 
-fn area(
+fn add_area(
     units: &mut Vec<AdminUnit>,
     areas: &mut Vec<Area>,
     t: &Tags,
     layer: Layer,
     rank: u8,
-    polygon: &MultiPolygon<f64>,
-) -> Option<u32> {
-    let bbox = bbox_of(polygon)?;
+    polygon: BandedPolygon,
+    bbox: BBox,
+) -> u32 {
     let unit = unit(units, t, layer);
-    let country_code = (layer == Layer::Country)
-        .then(|| t.country_code())
-        .flatten();
+    let country_code = (layer == Layer::Country).then(|| t.country_code()).flatten();
     areas.push(Area {
         unit,
         layer,
         rank,
-        polygon: BandedPolygon::new(polygon),
+        polygon,
         bbox,
         country_code,
     });
-    Some(unit)
+    unit
+}
+
+/// Everything derived from a relation's geometry, computed in parallel.
+struct RelGeometry {
+    /// Member ways could not be joined into closed rings.
+    broken: bool,
+    /// Admin (or `place=*`) area: layer, rank, polygon index, bbox.
+    admin: Option<(Layer, u8, BandedPolygon, BBox)>,
+    /// Postcode area: code, polygon index, bbox.
+    postcode: Option<(String, BandedPolygon, BBox)>,
+    /// Searchable feature: centre, extent, simplified outline.
+    feature: Option<(Option<LonLat>, Option<BBox>, Vec<PolygonRings>)>,
+}
+
+fn relation_geometry(
+    r: &reader::RelationData,
+    member_refs: &HashMap<i64, Vec<i64>>,
+    coords: &NodeCoords,
+) -> RelGeometry {
+    let refs = |ids: &[i64]| -> Vec<&[i64]> {
+        ids.iter()
+            .filter_map(|id| member_refs.get(id).map(Vec::as_slice))
+            .collect()
+    };
+    let (mp, n_broken) = rings::assemble(refs(&r.outer), refs(&r.inner), coords);
+    let bbox = mp.as_ref().and_then(bbox_of);
+    let admin_kind = if r.is_admin_boundary() {
+        r.tags
+            .admin_level()
+            .and_then(|l| tags::admin_level_layer(l).map(|layer| (layer, l)))
+    } else {
+        r.class
+            .as_ref()
+            .filter(|c| c.key == "place" && c.layer.is_admin())
+            .map(|c| (c.layer, 11))
+    };
+    let admin = match (admin_kind, &mp, bbox) {
+        (Some((layer, rank)), Some(mp), Some(b)) => Some((layer, rank, BandedPolygon::new(mp), b)),
+        _ => None,
+    };
+    let postcode = match (r.postal_code(), &mp, bbox) {
+        (Some(code), Some(mp), Some(b)) => Some((code.to_string(), BandedPolygon::new(mp), b)),
+        _ => None,
+    };
+    let feature = r.class.as_ref().map(|_| {
+        let center = r
+            .label
+            .or(r.admin_centre)
+            .and_then(|id| coords.get(id))
+            .or_else(|| mp.as_ref().and_then(interior));
+        (center, bbox, mp.as_ref().map(polygon_rings).unwrap_or_default())
+    });
+    RelGeometry {
+        broken: mp.is_none() && n_broken > 0,
+        admin,
+        postcode,
+        feature,
+    }
 }
 
 fn interior(mp: &MultiPolygon<f64>) -> Option<LonLat> {
@@ -321,8 +471,7 @@ struct RelFeature {
 }
 
 /// Build the place for a way feature (geometry from `coords`).
-fn way_place(id: i64, refs: &[i64], t: &Tags, c: &Class, coords: &NodeCoords) -> Option<Place> {
-    let pts = coords.line(refs);
+fn way_place(id: i64, refs: &[i64], pts: Vec<LonLat>, t: &Tags, c: &Class) -> Option<Place> {
     let first = *pts.first()?;
     let linear = !reader::is_closed(refs) || c.layer == Layer::Street || c.key == "waterway";
     if linear {
@@ -355,7 +504,9 @@ pub fn import_pbf(path: &Path, opts: &ImportOptions) -> Result<Import> {
     for r in &relations {
         ids.extend(r.label.into_iter().chain(r.admin_centre))?;
     }
-    let scan = reader::scan_ways(&index, &member_ways, &mut ids)?;
+    let sorted = use_sorted_join(path, opts.node_lookup);
+    let mut join = sorted.then(|| RefSink::new(&work.path));
+    let scan = reader::scan_ways(&index, &member_ways, &mut ids, join.as_mut())?;
     drop(member_ways);
 
     // Pass 3: coordinates, and place nodes for the locality fallback.
@@ -363,7 +514,17 @@ pub fn import_pbf(path: &Path, opts: &ImportOptions) -> Result<Import> {
     let mut units: Vec<AdminUnit> = Vec::new();
     let mut localities: Vec<LocalityPoint> = Vec::new();
     let mut node_units: HashMap<i64, u32> = HashMap::new();
-    let place_nodes = reader::scan_nodes(&index, &mut coords)?;
+    let (place_nodes, way_geoms) = match join {
+        Some(join) => {
+            let references = join.references();
+            let mut joiner = join.into_joiner()?;
+            let places = reader::scan_nodes_joined(&index, &mut coords, &mut joiner)?;
+            let (geoms, matched) = joiner.finish(&work.path.join("way-geoms"))?;
+            info!(references, matched, "way geometry joined");
+            (places, Some(geoms))
+        }
+        None => (reader::scan_nodes(&index, &mut coords)?, None),
+    };
     let place_node_info: HashMap<i64, (Layer, Option<String>)> = place_nodes
         .iter()
         .map(|n| (n.id, (n.class.layer, n.tags.name().map(str::to_string))))
@@ -383,79 +544,64 @@ pub fn import_pbf(path: &Path, opts: &ImportOptions) -> Result<Import> {
         }
     }
 
-    // Areas: place=* ways, admin / postcode / place relations.
+    // Areas: place=* ways, admin / postcode / place relations. The
+    // geometry work (ring assembly, polygon indexes, interior points) runs
+    // on all cores; units are then numbered sequentially, in relation
+    // order, so the result does not depend on thread timing.
+    let t_areas = Instant::now();
     let mut admin_areas: Vec<Area> = Vec::new();
     let mut way_units: HashMap<i64, u32> = HashMap::new();
-    for w in &scan.area_ways {
-        let pts = coords.line(&w.refs);
-        if pts.len() == w.refs.len() {
-            let mp = MultiPolygon::new(vec![geo::Polygon::new(rings::to_linestring(&pts), vec![])]);
-            if let Some(u) = area(
-                &mut units,
-                &mut admin_areas,
-                &w.tags,
-                w.class.layer,
-                11,
-                &mp,
-            ) {
-                way_units.insert(w.id, u);
+    let way_polys: Vec<Option<(BandedPolygon, BBox)>> = scan
+        .area_ways
+        .par_iter()
+        .map(|w| {
+            let pts = coords.line(&w.refs);
+            if pts.len() != w.refs.len() {
+                return None;
             }
+            let mp = MultiPolygon::new(vec![geo::Polygon::new(rings::to_linestring(&pts), vec![])]);
+            Some((BandedPolygon::new(&mp), bbox_of(&mp)?))
+        })
+        .collect();
+    for (w, poly) in scan.area_ways.iter().zip(way_polys) {
+        if let Some((polygon, bbox)) = poly {
+            let u = add_area(&mut units, &mut admin_areas, &w.tags, w.class.layer, 11, polygon, bbox);
+            way_units.insert(w.id, u);
         }
     }
+    let geoms: Vec<RelGeometry> = relations
+        .par_iter()
+        .map(|r| relation_geometry(r, &scan.member_refs, &coords))
+        .collect();
     let mut postcode_names = Vec::new();
     let mut postcode_areas = Vec::new();
     let mut rel_features: Vec<RelFeature> = Vec::new();
     let mut broken = 0usize;
-    for (ri, r) in relations.iter().enumerate() {
-        let refs = |ids: &[i64]| -> Vec<&[i64]> {
-            ids.iter()
-                .filter_map(|id| scan.member_refs.get(id).map(Vec::as_slice))
-                .collect()
-        };
-        let (mp, n_broken) = rings::assemble(refs(&r.outer), refs(&r.inner), &coords);
-        if mp.is_none() && n_broken > 0 {
-            broken += 1;
-        }
-        let admin = if r.is_admin_boundary() {
-            r.tags
-                .admin_level()
-                .and_then(|l| tags::admin_level_layer(l).map(|layer| (layer, l)))
-        } else {
-            r.class
-                .as_ref()
-                .filter(|c| c.key == "place" && c.layer.is_admin())
-                .map(|c| (c.layer, 11))
-        };
+    for (ri, (r, g)) in relations.iter().zip(geoms).enumerate() {
+        broken += g.broken as usize;
         let mut own = None;
-        if let (Some((layer, rank)), Some(mp)) = (admin, &mp) {
-            own = area(&mut units, &mut admin_areas, &r.tags, layer, rank, mp);
+        if let Some((layer, rank, polygon, bbox)) = g.admin {
+            own = Some(add_area(&mut units, &mut admin_areas, &r.tags, layer, rank, polygon, bbox));
         }
-        if let (Some(code), Some(mp)) = (r.postal_code(), &mp)
-            && let Some(bbox) = bbox_of(mp)
-        {
+        if let Some((code, polygon, bbox)) = g.postcode {
             // Postcode areas reuse `Area`; `unit` indexes `postcode_names`.
-            postcode_names.push(code.to_string());
+            postcode_names.push(code);
             postcode_areas.push(Area {
                 unit: (postcode_names.len() - 1) as u32,
                 layer: Layer::Locality,
                 rank: 0,
-                polygon: BandedPolygon::new(mp),
+                polygon,
                 bbox,
                 country_code: None,
             });
         }
-        if let Some(class) = &r.class {
-            let center = r
-                .label
-                .or(r.admin_centre)
-                .and_then(|id| coords.get(id))
-                .or_else(|| mp.as_ref().and_then(interior));
+        if let (Some(class), Some((center, extent, polygons))) = (&r.class, g.feature) {
             rel_features.push(RelFeature {
                 rel: ri,
                 class: class.clone(),
                 center,
-                extent: mp.as_ref().and_then(bbox_of),
-                polygons: mp.as_ref().map(polygon_rings).unwrap_or_default(),
+                extent,
+                polygons,
                 own,
                 absorbed: false,
             });
@@ -480,6 +626,7 @@ pub fn import_pbf(path: &Path, opts: &ImportOptions) -> Result<Import> {
         admin_areas = admin_areas.len(),
         postcode_areas = postcode_areas.len(),
         localities = localities.len(),
+        elapsed = ?t_areas.elapsed(),
         "areas built"
     );
 
@@ -533,14 +680,19 @@ pub fn import_pbf(path: &Path, opts: &ImportOptions) -> Result<Import> {
     // Pass 4: way features.
     reader::stream_ways(
         &index,
-        HierCache::default,
-        |cache, id, refs, t, c| {
-            Ok(way_place(id, refs, &t, &c, &coords)
+        || (HierCache::default(), WayCursor::default()),
+        |(cache, cursor), id, refs, t, c| {
+            let pts = match &way_geoms {
+                Some(geoms) => geoms.line(cursor, id),
+                None => coords.line(refs),
+            };
+            Ok(way_place(id, refs, pts, &t, &c)
                 .map(|p| finish(cache, p, way_units.get(&id).copied())))
         },
         |(p, city)| router.route(p, city),
     )?;
     drop(coords);
+    drop(way_geoms);
 
     // Pass 5: node features.
     reader::stream_nodes(
@@ -573,6 +725,19 @@ pub fn import_pbf(path: &Path, opts: &ImportOptions) -> Result<Import> {
         let (p, city) = finish(&mut cache, place, f.own);
         router.route(p, city)?;
     }
+    // Every place has its hierarchy now: free the boundary indexes, the
+    // relations and the lookup maps before street merging and writing,
+    // which would otherwise run with all of that still in memory.
+    // Move it into a block: moving one field out of `hierarchy` would keep
+    // the others (the polygon indexes) alive until the end of the function.
+    let units = {
+        let h = hierarchy;
+        h.units
+    };
+    drop(relations);
+    drop(twins);
+    drop(node_units);
+    drop(way_units);
 
     let Router {
         mut sink,
@@ -588,7 +753,7 @@ pub fn import_pbf(path: &Path, opts: &ImportOptions) -> Result<Import> {
         elapsed = ?started.elapsed(),
         "features extracted"
     );
-    let countries = sink.finish(opts, hierarchy.units, &country_names)?;
+    let countries = sink.finish(opts, units, &country_names)?;
     Ok(Import {
         countries,
         _work: work,

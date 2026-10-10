@@ -7,19 +7,17 @@
 
 use geo::kernels::{Kernel, Orientation, RobustKernel};
 use geo::{Coord, MultiPolygon};
-use geors_core::geom::BBox;
+use geors_core::geom::{BBox, from_e7, to_e7};
 
 /// Average number of edges per band to aim for.
 const EDGES_PER_BAND: usize = 8;
 const MAX_BANDS: usize = 4096;
 
 pub struct BandedPolygon {
-    /// All ring vertices; `starts` marks where each ring begins.
-    xs: Vec<f64>,
-    ys: Vec<f64>,
-    /// Edge `i` runs from vertex `i` to `i + 1`; `false` at the last vertex
-    /// of a ring.
-    has_edge: Vec<bool>,
+    /// All ring vertices, fixed point (1e-7 degrees, as in OSM): half the
+    /// memory of f64 and exact for OSM data. Edge `i` runs from vertex `i`
+    /// to `i + 1`; only edges within a ring are indexed.
+    pts: Vec<[i32; 2]>,
     min_y: f64,
     band_height: f64,
     n_bands: usize,
@@ -31,26 +29,27 @@ pub struct BandedPolygon {
 
 impl BandedPolygon {
     pub fn new(mp: &MultiPolygon<f64>) -> Self {
-        let (mut xs, mut ys, mut has_edge) = (Vec::new(), Vec::new(), Vec::new());
+        let mut pts = Vec::new();
+        // Whether vertex i starts an edge (false at the end of a ring);
+        // only needed while building.
+        let mut has_edge = Vec::new();
         let mut bbox = BBox::empty();
         for poly in mp {
             for ring in std::iter::once(poly.exterior()).chain(poly.interiors()) {
                 let n = ring.0.len();
                 for (i, c) in ring.0.iter().enumerate() {
-                    xs.push(c.x);
-                    ys.push(c.y);
+                    pts.push([to_e7(c.x), to_e7(c.y)]);
                     has_edge.push(i + 1 < n);
                     bbox.extend(geors_core::LonLat::new(c.x, c.y));
                 }
             }
         }
-        let n_edges = has_edge.iter().filter(|e| **e).count();
-        let bands = (n_edges / EDGES_PER_BAND).clamp(1, MAX_BANDS);
+        let edge_ids: Vec<usize> = (0..has_edge.len()).filter(|&i| has_edge[i]).collect();
+        drop(has_edge);
+        let bands = (edge_ids.len() / EDGES_PER_BAND).clamp(1, MAX_BANDS);
         let height = ((bbox.max_lat - bbox.min_lat) / bands as f64).max(f64::MIN_POSITIVE);
         let mut p = Self {
-            xs,
-            ys,
-            has_edge,
+            pts,
             min_y: bbox.min_lat,
             band_height: height,
             n_bands: bands,
@@ -58,10 +57,11 @@ impl BandedPolygon {
             edges: Vec::new(),
             bbox,
         };
+        let y = |i: usize| from_e7(p.pts[i][1]);
         // Two passes (count, fill) to build the CSR arrays.
         let mut counts = vec![0u32; bands + 1];
-        for i in p.edge_ids() {
-            let (lo, hi) = p.band_range(p.ys[i].min(p.ys[i + 1]), p.ys[i].max(p.ys[i + 1]));
+        for &i in &edge_ids {
+            let (lo, hi) = p.band_range(y(i).min(y(i + 1)), y(i).max(y(i + 1)));
             for b in lo..=hi {
                 counts[b + 1] += 1;
             }
@@ -71,8 +71,8 @@ impl BandedPolygon {
         }
         let mut fill = counts.clone();
         let mut edges = vec![0u32; counts[bands] as usize];
-        for i in p.edge_ids() {
-            let (lo, hi) = p.band_range(p.ys[i].min(p.ys[i + 1]), p.ys[i].max(p.ys[i + 1]));
+        for &i in &edge_ids {
+            let (lo, hi) = p.band_range(y(i).min(y(i + 1)), y(i).max(y(i + 1)));
             for b in lo..=hi {
                 edges[fill[b] as usize] = i as u32;
                 fill[b] += 1;
@@ -80,13 +80,8 @@ impl BandedPolygon {
         }
         p.offsets = counts;
         p.edges = edges;
+        p.pts.shrink_to_fit();
         p
-    }
-
-    fn edge_ids(&self) -> Vec<usize> {
-        (0..self.has_edge.len())
-            .filter(|&i| self.has_edge[i])
-            .collect()
     }
 
     fn bands(&self) -> usize {
@@ -107,8 +102,8 @@ impl BandedPolygon {
     }
 
     fn edge(&self, i: u32) -> (f64, f64, f64, f64) {
-        let i = i as usize;
-        (self.xs[i], self.ys[i], self.xs[i + 1], self.ys[i + 1])
+        let (a, b) = (self.pts[i as usize], self.pts[i as usize + 1]);
+        (from_e7(a[0]), from_e7(a[1]), from_e7(b[0]), from_e7(b[1]))
     }
 
     /// Point inside or on the boundary.

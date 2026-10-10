@@ -37,6 +37,11 @@ struct Cli {
     /// (default 48 per thread, at most 4 threads; minimum 15).
     #[arg(long, global = true, env = "GEORS_INDEX_MEMORY_MB")]
     index_memory_mb: Option<usize>,
+    /// How imports find way node coordinates: `memory` (random lookups,
+    /// fastest when they fit in RAM), `sorted` (sequential sort-merge join,
+    /// for extracts larger than RAM) or `auto`.
+    #[arg(long, global = true, env = "GEORS_NODE_LOOKUP", default_value = "auto")]
+    node_lookup: geors_ingest::NodeLookup,
 }
 
 #[derive(Subcommand)]
@@ -527,8 +532,21 @@ fn main() -> Result<()> {
         .num_threads(threads)
         .build_global()
         .context("cannot configure thread pool")?;
-    if let Some(mb) = cli.index_memory_mb {
-        geors_index::text::set_index_memory(mb * 1024 * 1024);
+    geors_ingest::set_default_node_lookup(cli.node_lookup);
+    // Spill files up to a quarter of the memory are read in place while
+    // writing; larger ones are regrouped for sequential reads.
+    let memory = geors_ingest::memory_limit();
+    geors_index::writer::set_writer_memory(
+        memory.map_or(u64::MAX, |m| m / 4),
+        geors_ingest::extsort::buffer_bytes() / 2,
+    );
+    match (cli.index_memory_mb, memory) {
+        (Some(mb), _) => geors_index::text::set_index_memory(mb * 1024 * 1024),
+        // Default: 48 MB per indexing thread, at most an eighth of memory.
+        (None, Some(m)) => geors_index::text::set_index_memory(
+            ((m / 8) as usize).min(threads.min(4) * (48 << 20)),
+        ),
+        (None, None) => {}
     }
     match cli.command {
         Command::Import {

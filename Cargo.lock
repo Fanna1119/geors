@@ -775,6 +775,7 @@ dependencies = [
  "geors-api",
  "geors-core",
  "geors-index",
+ "geors-ingest",
  "geors-rank",
  "geors-update",
  "rayon",

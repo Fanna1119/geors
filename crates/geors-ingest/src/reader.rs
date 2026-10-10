@@ -33,6 +33,7 @@ use osmpbf::{BlobDecode, BlobReader, ByteOffset, Element, PrimitiveBlock, RelMem
 use rayon::prelude::*;
 use tracing::info;
 
+use crate::join::{Joiner, RefSink};
 use crate::nodes::{CoordArray, IdSink, NodeCoords, NodeIds};
 use crate::tags::{self, Class, ElementKind, Tags};
 
@@ -267,17 +268,24 @@ pub fn is_closed(refs: &[i64]) -> bool {
 #[derive(Default)]
 struct WayBlock {
     ids: Vec<i64>,
+    /// Sorted-join mode: (way id, node refs) of feature ways.
+    joined: Vec<(i64, Vec<i64>)>,
     members: Vec<(i64, Vec<i64>)>,
     areas: Vec<AreaWay>,
     features: u64,
 }
 
 /// Pass 2: record which nodes are needed (into `ids`).
+/// With `join` (sorted-join mode), feature ways' node references go to the
+/// join instead of the random-access store; only boundary member ways and
+/// `place=*` area ways (needed before pass 4) still use the store.
 pub fn scan_ways(
     index: &BlobIndex,
     member_ways: &HashSet<i64>,
     ids: &mut IdSink,
+    mut join: Option<&mut RefSink>,
 ) -> Result<WayScan> {
+    let sorted = join.is_some();
     let t = Instant::now();
     let mut scan = WayScan {
         member_refs: HashMap::new(),
@@ -303,10 +311,18 @@ pub fn scan_ways(
                     continue;
                 }
                 let refs: Vec<i64> = w.refs().collect();
-                out.ids.extend_from_slice(&refs);
+                let area = feature.as_ref().is_some_and(|(_, c)| {
+                    c.key == "place" && c.layer.is_admin() && is_closed(&refs)
+                });
+                if !sorted || member || area {
+                    out.ids.extend_from_slice(&refs);
+                }
+                if sorted && feature.is_some() {
+                    out.joined.push((w.id(), refs.clone()));
+                }
                 if let Some((tags, class)) = feature {
                     out.features += 1;
-                    if class.key == "place" && class.layer.is_admin() && is_closed(&refs) {
+                    if area {
                         out.areas.push(AreaWay {
                             id: w.id(),
                             refs: refs.clone(),
@@ -323,6 +339,11 @@ pub fn scan_ways(
         },
         |b| {
             ids.extend(b.ids)?;
+            if let Some(join) = join.as_deref_mut() {
+                for (way, refs) in &b.joined {
+                    join.push_way(*way, refs)?;
+                }
+            }
             scan.member_refs.extend(b.members);
             scan.area_ways.extend(b.areas);
             scan.feature_ways += b.features;
@@ -428,6 +449,69 @@ pub fn scan_nodes(index: &BlobIndex, coords: &mut NodeCoords) -> Result<Vec<Plac
         place_nodes = places.len(),
         elapsed = ?t.elapsed(),
         "pass 3/5: node coordinates"
+    );
+    Ok(places)
+}
+
+/// Pass 3 in sorted-join mode: nodes are consumed in id order (blobs are
+/// decoded in parallel batches, then processed in file order) so the
+/// joiner can sweep the sorted node references alongside them.
+pub fn scan_nodes_joined(
+    index: &BlobIndex,
+    coords: &mut NodeCoords,
+    joiner: &mut Joiner,
+) -> Result<Vec<PlaceNode>> {
+    const BATCH: usize = 64;
+    let t = Instant::now();
+    let mut places = Vec::new();
+    let (ids, values) = coords.parts_mut();
+    type Decoded = (Vec<(i64, i32, i32)>, Vec<PlaceNode>);
+    for batch in index.nodes.chunks(BATCH) {
+        let decoded: Vec<Result<Decoded>> = batch
+            .par_iter()
+            .map_init(
+                || open_seekable(&index.path),
+                |reader, &offset| {
+                    let reader = reader.as_mut().map_err(|e| anyhow!("{e:#}"))?;
+                    let block = reader.blob_from_offset(offset)?.to_primitiveblock()?;
+                    let mut nodes = Vec::new();
+                    let mut place_nodes = Vec::new();
+                    for el in block.elements() {
+                        let Some((id, lon, lat, interesting)) = node_parts(&el) else {
+                            continue;
+                        };
+                        nodes.push((id, lon, lat));
+                        if interesting {
+                            let tags = node_tags(&el);
+                            if tags.has("place")
+                                && let Some(class) = tags::classify(&tags, ElementKind::Node)
+                                && class.key == "place"
+                            {
+                                let point = LonLat::new(from_e7(lon), from_e7(lat));
+                                place_nodes.push(PlaceNode { id, point, tags, class });
+                            }
+                        }
+                    }
+                    Ok((nodes, place_nodes))
+                },
+            )
+            .collect();
+        for d in decoded {
+            let (nodes, place_nodes) = d?;
+            for (id, lon, lat) in nodes {
+                if let Some(i) = ids.index(id) {
+                    values.set(i, lon, lat);
+                }
+                joiner.node(id, lon, lat)?;
+            }
+            places.extend(place_nodes);
+        }
+    }
+    places.sort_by_key(|p: &PlaceNode| p.id);
+    info!(
+        place_nodes = places.len(),
+        elapsed = ?t.elapsed(),
+        "pass 3/5: node coordinates (sorted join)"
     );
     Ok(places)
 }

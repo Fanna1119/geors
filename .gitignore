@@ -3,3 +3,4 @@
 /osm
 *.osm.pbf
 .DS_Store
+/data-europe
