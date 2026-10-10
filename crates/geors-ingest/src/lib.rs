@@ -47,7 +47,7 @@ use tracing::{info, warn};
 use crate::areas::{Area, AreaIndex, CellCache, LocalityIndex, LocalityPoint};
 use crate::join::{RefSink, WayCursor};
 use crate::nodes::{IdSink, NodeCoords};
-use crate::pip::BandedPolygon;
+use crate::pip::{BandedPolygon, PolygonStore, StoredPolygon};
 use crate::sink::CountrySink;
 use crate::streets::StreetStore;
 use crate::tags::{Class, Tags};
@@ -395,7 +395,7 @@ fn add_area(
     t: &Tags,
     layer: Layer,
     rank: u8,
-    polygon: BandedPolygon,
+    polygon: StoredPolygon,
     bbox: BBox,
 ) -> u32 {
     let unit = unit(units, t, layer);
@@ -500,6 +500,9 @@ struct RelFeature {
     own: Option<u32>,
     absorbed: bool,
 }
+
+/// Relations whose geometry is built at once (see `import_pbf`).
+const GEOMETRY_CHUNK: usize = 4096;
 
 /// Where an outline is stored in [`Outlines`]: byte offset and length.
 type OutlineRef = (u64, u32);
@@ -650,6 +653,8 @@ pub fn import_pbf(path: &Path, opts: &ImportOptions) -> Result<Import> {
     // on all cores; units are then numbered sequentially, in relation
     // order, so the result does not depend on thread timing.
     let t_areas = Instant::now();
+    let mut admin_store = PolygonStore::create(&work.path.join("admin-polygons"))?;
+    let mut postcode_store = PolygonStore::create(&work.path.join("postcode-polygons"))?;
     let mut admin_areas: Vec<Area> = Vec::new();
     let mut way_units: HashMap<i64, u32> = HashMap::new();
     let way_polys: Vec<Option<(BandedPolygon, BBox)>> = scan
@@ -666,6 +671,7 @@ pub fn import_pbf(path: &Path, opts: &ImportOptions) -> Result<Import> {
         .collect();
     for (w, poly) in scan.area_ways.iter().zip(way_polys) {
         if let Some((polygon, bbox)) = poly {
+            let polygon = admin_store.push(polygon)?;
             let u = add_area(
                 &mut units,
                 &mut admin_areas,
@@ -679,11 +685,6 @@ pub fn import_pbf(path: &Path, opts: &ImportOptions) -> Result<Import> {
         }
     }
     mem::mark("place=* area polygons");
-    let geoms: Vec<RelGeometry> = relations
-        .par_iter()
-        .map(|r| relation_geometry(r, &scan.member_refs, &coords))
-        .collect();
-    mem::mark("relation geometry (all boundaries)");
     let mut postcode_names = Vec::new();
     let mut postcode_areas = Vec::new();
     let mut rel_features: Vec<RelFeature> = Vec::new();
@@ -692,50 +693,61 @@ pub fn import_pbf(path: &Path, opts: &ImportOptions) -> Result<Import> {
     // Countries with a region cut by the extract's edge: the extract holds
     // only part of them, even if their outer boundary is complete.
     let mut clipped: HashSet<String> = HashSet::new();
-    for (ri, (r, g)) in relations.iter().zip(geoms).enumerate() {
-        broken += g.broken as usize;
-        if g.broken
-            && r.is_admin_boundary()
-            && let Some(cc) = r.tags.subdivision_country()
-        {
-            clipped.insert(cc);
-        }
-        let mut own = None;
-        if let Some((layer, rank, polygon, bbox)) = g.admin {
-            own = Some(add_area(
-                &mut units,
-                &mut admin_areas,
-                &r.tags,
-                layer,
-                rank,
-                polygon,
-                bbox,
-            ));
-        }
-        if let Some((code, polygon, bbox)) = g.postcode {
-            // Postcode areas reuse `Area`; `unit` indexes `postcode_names`.
-            postcode_names.push(code);
-            postcode_areas.push(Area {
-                unit: (postcode_names.len() - 1) as u32,
-                layer: Layer::Locality,
-                rank: 0,
-                polygon,
-                bbox,
-                country_code: None,
-            });
-        }
-        if let (Some(class), Some((center, extent, polygons))) = (&r.class, g.feature) {
-            rel_features.push(RelFeature {
-                rel: ri,
-                class: class.clone(),
-                center,
-                extent,
-                outline: outlines.push(&polygons)?,
-                own,
-                absorbed: false,
-            });
+    // In chunks, so only one chunk's polygons are on the heap before they
+    // move to the stores.
+    for (ci, chunk) in relations.chunks(GEOMETRY_CHUNK).enumerate() {
+        let geoms: Vec<RelGeometry> = chunk
+            .par_iter()
+            .map(|r| relation_geometry(r, &scan.member_refs, &coords))
+            .collect();
+        for (k, (r, g)) in chunk.iter().zip(geoms).enumerate() {
+            let ri = ci * GEOMETRY_CHUNK + k;
+            broken += g.broken as usize;
+            if g.broken
+                && r.is_admin_boundary()
+                && let Some(cc) = r.tags.subdivision_country()
+            {
+                clipped.insert(cc);
+            }
+            let mut own = None;
+            if let Some((layer, rank, polygon, bbox)) = g.admin {
+                let polygon = admin_store.push(polygon)?;
+                own = Some(add_area(
+                    &mut units,
+                    &mut admin_areas,
+                    &r.tags,
+                    layer,
+                    rank,
+                    polygon,
+                    bbox,
+                ));
+            }
+            if let Some((code, polygon, bbox)) = g.postcode {
+                // Postcode areas reuse `Area`; `unit` indexes `postcode_names`.
+                postcode_names.push(code);
+                postcode_areas.push(Area {
+                    unit: (postcode_names.len() - 1) as u32,
+                    layer: Layer::Locality,
+                    rank: 0,
+                    polygon: postcode_store.push(polygon)?,
+                    bbox,
+                    country_code: None,
+                });
+            }
+            if let (Some(class), Some((center, extent, polygons))) = (&r.class, g.feature) {
+                rel_features.push(RelFeature {
+                    rel: ri,
+                    class: class.clone(),
+                    center,
+                    extent,
+                    outline: outlines.push(&polygons)?,
+                    own,
+                    absorbed: false,
+                });
+            }
         }
     }
+    mem::mark("relation geometry (all boundaries)");
     drop(scan);
     mem::mark("areas assigned, way scan freed");
     if broken > 0 {
@@ -811,14 +823,10 @@ pub fn import_pbf(path: &Path, opts: &ImportOptions) -> Result<Import> {
     drop(place_node_info);
     mem::mark("twins");
     if cfg!(feature = "mem-stats") {
-        let mb = |b: usize| b / 1048576;
-        let polys = |areas: &[Area]| {
-            areas.iter().fold((0, 0), |(b, v), a| {
-                (b + a.polygon.heap_bytes(), v + a.polygon.vertices())
-            })
-        };
-        let (admin_b, admin_v) = polys(&admin_areas);
-        let (post_b, post_v) = polys(&postcode_areas);
+        let mb = |b: u64| b / 1048576;
+        let vertices = |areas: &[Area]| areas.iter().map(|a| a.polygon.vertices()).sum::<usize>();
+        let (admin_b, admin_v) = (admin_store.bytes(), vertices(&admin_areas));
+        let (post_b, post_v) = (postcode_store.bytes(), vertices(&postcode_areas));
         let outline_bytes: u64 = outlines.len;
         let member_refs: usize = relations
             .iter()
@@ -826,9 +834,9 @@ pub fn import_pbf(path: &Path, opts: &ImportOptions) -> Result<Import> {
             .sum();
         info!(
             admin_areas = admin_areas.len(),
-            admin_mb = mb(admin_b),
+            admin_disk_mb = mb(admin_b),
             admin_vertices = admin_v,
-            postcode_mb = mb(post_b),
+            postcode_disk_mb = mb(post_b),
             postcode_vertices = post_v,
             rel_features = rel_features.len(),
             outline_disk_mb = outline_bytes / 1048576,
@@ -842,8 +850,8 @@ pub fn import_pbf(path: &Path, opts: &ImportOptions) -> Result<Import> {
     let outlines = outlines.finish()?;
     let hierarchy = Hierarchy {
         units,
-        areas: AreaIndex::new(admin_areas),
-        postcodes: AreaIndex::new(postcode_areas),
+        areas: AreaIndex::new(admin_areas, admin_store)?,
+        postcodes: AreaIndex::new(postcode_areas, postcode_store)?,
         postcode_names,
         localities: LocalityIndex::new(localities),
     };

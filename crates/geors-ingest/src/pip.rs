@@ -18,26 +18,33 @@ pub struct BandedPolygon {
     /// memory of f64 and exact for OSM data. Edge `i` runs from vertex `i`
     /// to `i + 1`; only edges within a ring are indexed.
     pts: Vec<[i32; 2]>,
-    min_y: f64,
-    band_height: f64,
-    n_bands: usize,
+    bands: Bands,
     /// CSR layout: edges of band `b` are `edges[offsets[b]..offsets[b + 1]]`.
     offsets: Vec<u32>,
     edges: Vec<u32>,
     pub bbox: BBox,
 }
 
+/// Band layout of a polygon.
+#[derive(Clone, Copy)]
+struct Bands {
+    min_y: f64,
+    height: f64,
+    n: usize,
+}
+
+impl Bands {
+    fn band(&self, y: f64) -> usize {
+        let b = ((y - self.min_y) / self.height).floor();
+        (b.max(0.0) as usize).min(self.n.saturating_sub(1))
+    }
+
+    fn range(&self, y0: f64, y1: f64) -> (usize, usize) {
+        (self.band(y0), self.band(y1))
+    }
+}
+
 impl BandedPolygon {
-    /// Heap bytes held (for memory diagnostics).
-    pub fn heap_bytes(&self) -> usize {
-        self.pts.capacity() * 8 + self.offsets.capacity() * 4 + self.edges.capacity() * 4
-    }
-
-    /// Number of vertices.
-    pub fn vertices(&self) -> usize {
-        self.pts.len()
-    }
-
     pub fn new(mp: &MultiPolygon<f64>) -> Self {
         let mut pts = Vec::new();
         // Whether vertex i starts an edge (false at the end of a ring);
@@ -56,57 +63,79 @@ impl BandedPolygon {
         }
         let edge_ids: Vec<usize> = (0..has_edge.len()).filter(|&i| has_edge[i]).collect();
         drop(has_edge);
-        let bands = (edge_ids.len() / EDGES_PER_BAND).clamp(1, MAX_BANDS);
-        let height = ((bbox.max_lat - bbox.min_lat) / bands as f64).max(f64::MIN_POSITIVE);
-        let mut p = Self {
-            pts,
+        let n = (edge_ids.len() / EDGES_PER_BAND).clamp(1, MAX_BANDS);
+        let bands = Bands {
             min_y: bbox.min_lat,
-            band_height: height,
-            n_bands: bands,
-            offsets: Vec::new(),
-            edges: Vec::new(),
-            bbox,
+            height: ((bbox.max_lat - bbox.min_lat) / n as f64).max(f64::MIN_POSITIVE),
+            n,
         };
-        let y = |i: usize| from_e7(p.pts[i][1]);
+        let y = |i: usize| from_e7(pts[i][1]);
         // Two passes (count, fill) to build the CSR arrays.
-        let mut counts = vec![0u32; bands + 1];
+        let mut counts = vec![0u32; n + 1];
         for &i in &edge_ids {
-            let (lo, hi) = p.band_range(y(i).min(y(i + 1)), y(i).max(y(i + 1)));
+            let (lo, hi) = bands.range(y(i).min(y(i + 1)), y(i).max(y(i + 1)));
             for b in lo..=hi {
                 counts[b + 1] += 1;
             }
         }
-        for b in 0..bands {
+        for b in 0..n {
             counts[b + 1] += counts[b];
         }
         let mut fill = counts.clone();
-        let mut edges = vec![0u32; counts[bands] as usize];
+        let mut edges = vec![0u32; counts[n] as usize];
         for &i in &edge_ids {
-            let (lo, hi) = p.band_range(y(i).min(y(i + 1)), y(i).max(y(i + 1)));
+            let (lo, hi) = bands.range(y(i).min(y(i + 1)), y(i).max(y(i + 1)));
             for b in lo..=hi {
                 edges[fill[b] as usize] = i as u32;
                 fill[b] += 1;
             }
         }
-        p.offsets = counts;
-        p.edges = edges;
-        p.pts.shrink_to_fit();
-        p
+        pts.shrink_to_fit();
+        Self {
+            pts,
+            bands,
+            offsets: counts,
+            edges,
+            bbox,
+        }
     }
 
+    fn view(&self) -> PolygonView<'_> {
+        PolygonView {
+            pts: &self.pts,
+            offsets: &self.offsets,
+            edges: &self.edges,
+            bands: self.bands,
+            bbox: self.bbox,
+        }
+    }
+
+    #[cfg(test)]
     fn bands(&self) -> usize {
-        self.n_bands
+        self.bands.n
     }
 
-    fn band(&self, y: f64) -> usize {
-        let b = ((y - self.min_y) / self.band_height).floor();
-        (b.max(0.0) as usize).min(self.bands().saturating_sub(1))
+    /// Point inside or on the boundary.
+    pub fn contains(&self, x: f64, y: f64) -> bool {
+        self.view().contains(x, y)
     }
 
-    fn band_range(&self, y0: f64, y1: f64) -> (usize, usize) {
-        (self.band(y0), self.band(y1))
+    /// Whether any edge passes through the box.
+    pub fn crosses(&self, b: &BBox) -> bool {
+        self.view().crosses(b)
     }
+}
 
+/// A polygon's arrays, wherever they are stored (heap or [`PolygonStore`]).
+struct PolygonView<'a> {
+    pts: &'a [[i32; 2]],
+    offsets: &'a [u32],
+    edges: &'a [u32],
+    bands: Bands,
+    bbox: BBox,
+}
+
+impl PolygonView<'_> {
     fn band_edges(&self, b: usize) -> &[u32] {
         &self.edges[self.offsets[b] as usize..self.offsets[b + 1] as usize]
     }
@@ -116,14 +145,13 @@ impl BandedPolygon {
         (from_e7(a[0]), from_e7(a[1]), from_e7(b[0]), from_e7(b[1]))
     }
 
-    /// Point inside or on the boundary.
-    pub fn contains(&self, x: f64, y: f64) -> bool {
-        if !self.bbox.contains(geors_core::LonLat::new(x, y)) || self.bands() == 0 {
+    fn contains(&self, x: f64, y: f64) -> bool {
+        if !self.bbox.contains(geors_core::LonLat::new(x, y)) || self.bands.n == 0 {
             return false;
         }
         let p = Coord { x, y };
         let mut inside = false;
-        for &e in self.band_edges(self.band(y)) {
+        for &e in self.band_edges(self.bands.band(y)) {
             let (x1, y1, x2, y2) = self.edge(e);
             let (a, b) = (Coord { x: x1, y: y1 }, Coord { x: x2, y: y2 });
             // Robust orientation: exact, no rounding near edges.
@@ -149,18 +177,143 @@ impl BandedPolygon {
         inside
     }
 
-    /// Whether any edge passes through the box.
-    pub fn crosses(&self, b: &BBox) -> bool {
-        if !self.bbox.intersects(b) || self.bands() == 0 {
+    fn crosses(&self, b: &BBox) -> bool {
+        if !self.bbox.intersects(b) || self.bands.n == 0 {
             return false;
         }
-        let (lo, hi) = self.band_range(b.min_lat, b.max_lat);
+        let (lo, hi) = self.bands.range(b.min_lat, b.max_lat);
         (lo..=hi).any(|band| {
             self.band_edges(band).iter().any(|&e| {
                 let (x1, y1, x2, y2) = self.edge(e);
                 segment_hits_box(x1, y1, x2, y2, b)
             })
         })
+    }
+}
+
+/// Where a polygon's arrays are in a [`PolygonStore`]: 4-byte word offsets
+/// and lengths. About 80 bytes per polygon stay on the heap.
+#[derive(Clone, Copy)]
+pub struct StoredPolygon {
+    pts: (u64, u32),
+    offsets: (u64, u32),
+    edges: (u64, u32),
+    bands: Bands,
+    pub bbox: BBox,
+}
+
+/// Polygon arrays in a memory-mapped scratch file.
+///
+/// Boundary polygons are the largest structure an import keeps through
+/// passes 4 and 5 (Germany: 270 MB, Europe: gigabytes). In a mapped file
+/// they live in the page cache instead of the heap: shared, and dropped by
+/// the OS under memory pressure, then read back on demand.
+pub struct PolygonStore {
+    writer: Option<std::io::BufWriter<std::fs::File>>,
+    words: u64,
+    map: Option<memmap2::Mmap>,
+    path: std::path::PathBuf,
+}
+
+impl PolygonStore {
+    pub fn create(path: &std::path::Path) -> std::io::Result<Self> {
+        Ok(Self {
+            // Readable too: the file is mapped once written.
+            writer: Some(std::io::BufWriter::with_capacity(
+                1 << 20,
+                std::fs::OpenOptions::new()
+                    .read(true)
+                    .write(true)
+                    .create(true)
+                    .truncate(true)
+                    .open(path)?,
+            )),
+            words: 0,
+            map: None,
+            path: path.to_path_buf(),
+        })
+    }
+
+    fn write(&mut self, data: &[u8]) -> std::io::Result<(u64, u32)> {
+        use std::io::Write;
+        let w = self.writer.as_mut().expect("store already finished");
+        w.write_all(data)?;
+        let at = self.words;
+        let len = (data.len() / 4) as u32;
+        self.words += len as u64;
+        Ok((at, len))
+    }
+
+    /// Move a polygon's arrays to the store.
+    pub fn push(&mut self, p: BandedPolygon) -> std::io::Result<StoredPolygon> {
+        Ok(StoredPolygon {
+            pts: self.write(bytemuck::cast_slice(&p.pts))?,
+            offsets: self.write(bytemuck::cast_slice(&p.offsets))?,
+            edges: self.write(bytemuck::cast_slice(&p.edges))?,
+            bands: p.bands,
+            bbox: p.bbox,
+        })
+    }
+
+    /// Stop writing and map the file. Written pages are flushed first: in a
+    /// container they count against the memory limit until they reach the
+    /// disk.
+    pub fn finish(&mut self) -> std::io::Result<()> {
+        if let Some(w) = self.writer.take() {
+            let file = w.into_inner().map_err(|e| e.into_error())?;
+            file.sync_data()?;
+            if self.words > 0 {
+                // SAFETY: scratch file private to this import, not modified
+                // after this point.
+                self.map = Some(unsafe { memmap2::Mmap::map(&file)? });
+            }
+        }
+        Ok(())
+    }
+
+    fn slice<T: bytemuck::Pod>(&self, (at, len): (u64, u32)) -> &[T] {
+        let bytes = self.map.as_deref().unwrap_or_default();
+        bytemuck::cast_slice(&bytes[at as usize * 4..(at as usize + len as usize) * 4])
+    }
+
+    fn view(&self, p: &StoredPolygon) -> PolygonView<'_> {
+        PolygonView {
+            pts: self.slice(p.pts),
+            offsets: self.slice(p.offsets),
+            edges: self.slice(p.edges),
+            bands: p.bands,
+            bbox: p.bbox,
+        }
+    }
+
+    /// Point inside or on the boundary of `p`.
+    pub fn contains(&self, p: &StoredPolygon, x: f64, y: f64) -> bool {
+        self.view(p).contains(x, y)
+    }
+
+    /// Whether any edge of `p` passes through the box.
+    pub fn crosses(&self, p: &StoredPolygon, b: &BBox) -> bool {
+        self.view(p).crosses(b)
+    }
+
+    /// Bytes in the store (for memory diagnostics).
+    pub fn bytes(&self) -> u64 {
+        self.words * 4
+    }
+}
+
+impl StoredPolygon {
+    /// Number of vertices.
+    pub fn vertices(&self) -> usize {
+        self.pts.1 as usize / 2
+    }
+}
+
+impl Drop for PolygonStore {
+    fn drop(&mut self) {
+        self.map = None;
+        self.writer = None;
+        let _ = std::fs::remove_file(&self.path);
     }
 }
 
@@ -291,6 +444,36 @@ mod tests {
         assert!(!p.contains(5.0, 5.0)); // inside hole
         assert!(p.contains(21.0, 1.0)); // island
         assert!(!p.contains(15.0, 5.0));
+    }
+
+    #[test]
+    fn stored_polygons_match_heap_ones() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = PolygonStore::create(&dir.path().join("polys")).unwrap();
+        let shapes = [shape(), shape()];
+        let stored: Vec<StoredPolygon> = shapes
+            .iter()
+            .map(|mp| store.push(BandedPolygon::new(mp)).unwrap())
+            .collect();
+        store.finish().unwrap();
+        let heap = BandedPolygon::new(&shape());
+        for sp in &stored {
+            for (x, y) in [
+                (0.0, 5.0),
+                (5.0, 5.0),
+                (5.0, 4.0),
+                (21.0, 1.0),
+                (15.0, 5.0),
+                (3.0, 3.0),
+            ] {
+                assert_eq!(store.contains(sp, x, y), heap.contains(x, y), "{x},{y}");
+            }
+            let b = BBox::new(-1.0, 4.0, 1.0, 5.0);
+            assert_eq!(store.crosses(sp, &b), heap.crosses(&b));
+        }
+        let path = dir.path().join("polys");
+        drop(store);
+        assert!(!path.exists());
     }
 
     #[test]
