@@ -21,7 +21,7 @@ pub mod areas;
 pub mod dump;
 pub mod extsort;
 pub mod join;
-pub mod mem;
+pub use geors_core::mem;
 pub mod nodes;
 pub mod pip;
 pub mod reader;
