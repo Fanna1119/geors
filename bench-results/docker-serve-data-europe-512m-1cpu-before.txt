@@ -1,0 +1,19 @@
+geors serving in Docker  2026-10-10T18:12:21Z
+data: data-europe ( 27G, 56 partitions)
+limits: --memory 512m --cpus 1 (GEORS_THREADS=1)
+docker host: 8 CPUs, 8319770624 bytes RAM, Docker Desktop
+load: wrk, 8 connections, 20s per mix, queries from every 500th place
+
+startup: 1s   memory at idle: 282.9MiB
+
+mix           req/s        p50        p90        p99   errors     memory
+full              1      1.79s      1.79s      1.79s       27   273.2MiB
+prefix            0     0.00us     0.00us     0.00us        5   278.7MiB
+typo              0     0.00us     0.00us     0.00us        0   359.8MiB
+bias              0     0.00us     0.00us     0.00us        0   334.7MiB
+radius            8   706.41ms   826.97ms   900.78ms        8   293.1MiB
+reverse          30   258.43ms   319.66ms   659.96ms        0   344.4MiB
+nearest          25   318.71ms   385.71ms   432.50ms        0   305.9MiB
+
+OOM killed: false
+memory = container usage excluding reclaimable page cache (docker stats)

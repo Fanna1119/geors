@@ -367,7 +367,10 @@ pub struct TextIndex {
 
 impl TextIndex {
     pub fn open(dir: &Path) -> tantivy::Result<Self> {
-        let index = Index::open(ReadOnlyDirectory(MmapDirectory::open(dir)?))?;
+        // Random access, as for the other index files (see
+        // `partition::advise_random`).
+        let mmap = MmapDirectory::open_with_madvice(dir, tantivy::directory::Advice::Random)?;
+        let index = Index::open(ReadOnlyDirectory(mmap))?;
         register_tokenizers(&index);
         let (_, fields) = schema();
         let reader = index

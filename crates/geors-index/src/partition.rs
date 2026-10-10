@@ -20,6 +20,16 @@ enum Blob {
     Empty,
 }
 
+/// Queries read index files at random. Without this hint, Linux reads
+/// ahead around every page fault (up to `read_ahead_kb`, 8 MB in Docker
+/// Desktop's VM), so a search touching a few hundred scattered pages read
+/// gigabytes and evicted the cache it was building. Only matters once the
+/// index is larger than the page cache.
+pub(crate) fn advise_random(map: &Mmap) {
+    #[cfg(unix)]
+    let _ = map.advise(memmap2::Advice::Random);
+}
+
 impl Blob {
     fn open(path: &Path) -> Result<Self, IndexError> {
         let file = File::open(path)
@@ -29,7 +39,9 @@ impl Blob {
         }
         // SAFETY: partition files are written once and never modified in
         // place; imports swap whole directories.
-        Ok(Blob::Mapped(unsafe { Mmap::map(&file)? }))
+        let map = unsafe { Mmap::map(&file)? };
+        advise_random(&map);
+        Ok(Blob::Mapped(map))
     }
 
     fn bytes(&self) -> &[u8] {
