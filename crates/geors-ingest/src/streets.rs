@@ -11,6 +11,8 @@ use geors_core::geom::{self, BBox, LonLat};
 use geors_core::spill::{SpillReader, SpillWriter};
 use geors_core::{Layer, Place};
 
+use crate::extsort::{ExternalSorter, buffer_bytes};
+
 /// Segments whose bboxes are within roughly this distance are connected.
 const JOIN_DEG: f64 = 0.001; // ~110 m
 
@@ -135,51 +137,65 @@ pub fn merge(places: Vec<Place>, city_of: impl Fn(&Place) -> Option<u32>) -> Vec
     out
 }
 
-/// Street segments spilled to disk during import, with a small in-memory
-/// index (48 bytes per segment) used to group them for merging.
+/// Street segments spilled to disk during import. The index used to group
+/// them, `(key hash, spill offset, city)` per segment, is sorted externally:
+/// a continent has tens of millions of segments, too many to keep in RAM
+/// through passes 4 and 5.
 pub struct StreetStore {
     spill: SpillWriter,
-    segs: Vec<(u64, Option<u32>, u64)>,
+    segs: ExternalSorter<[u64; 3]>,
 }
+
+/// `city` in a sort record (`None` sorts last; only the order within one
+/// key matters).
+const NO_CITY: u64 = u64::MAX;
 
 impl StreetStore {
     pub fn create(path: &Path) -> io::Result<Self> {
+        let dir = path.parent().unwrap_or(Path::new("."));
         Ok(Self {
             spill: SpillWriter::create(path)?,
-            segs: Vec::new(),
+            // 24-byte records; a quarter of the usual buffer is plenty.
+            segs: ExternalSorter::new(dir, "street-index", buffer_bytes() / 4, false),
         })
-    }
-
-    pub fn len(&self) -> usize {
-        self.segs.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.segs.is_empty()
     }
 
     pub fn push(&mut self, place: &Place, city: Option<u32>) -> io::Result<()> {
         let mut h = DefaultHasher::new();
         street_key(place, city).hash(&mut h);
         let offset = self.spill.push(place)?;
-        self.segs.push((h.finish(), city, offset));
-        Ok(())
+        self.segs
+            .push([h.finish(), offset, city.map_or(NO_CITY, u64::from)])
     }
 
     /// Merge each group and hand the results to `emit`. Only one group of
     /// segments is in memory at a time. Returns (segments, merged streets).
     pub fn finish(
-        mut self,
+        self,
         mut emit: impl FnMut(Place) -> io::Result<()>,
     ) -> io::Result<(usize, usize)> {
         let spill = self.spill.finish()?;
         let reader = SpillReader::open(&spill)?;
-        self.segs.sort_unstable_by_key(|s| (s.0, s.2));
+        // Sorted by (hash, offset): groups in hash order, segments within a
+        // group in file order.
+        let mut sorted = self.segs.finish()?;
         let (mut segments, mut streets) = (0, 0);
-        for group in self.segs.chunk_by(|a, b| a.0 == b.0) {
+        let mut group: Vec<[u64; 3]> = Vec::new();
+        let mut next = sorted.next_record()?;
+        while let Some(first) = next {
+            group.clear();
+            group.push(first);
+            loop {
+                next = sorted.next_record()?;
+                match next {
+                    Some(r) if r[0] == first[0] => group.push(r),
+                    _ => break,
+                }
+            }
             // Same hash: split by the real key in case of a collision.
             let mut by_key: HashMap<StreetKey, Vec<Place>> = HashMap::new();
-            for &(_, city, offset) in group {
+            for &[_, offset, city] in &group {
+                let city = (city != NO_CITY).then_some(city as u32);
                 let p = reader.get(offset)?;
                 by_key.entry(street_key(&p, city)).or_default().push(p);
             }
