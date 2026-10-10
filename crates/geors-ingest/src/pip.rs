@@ -28,6 +28,16 @@ pub struct BandedPolygon {
 }
 
 impl BandedPolygon {
+    /// Heap bytes held (for memory diagnostics).
+    pub fn heap_bytes(&self) -> usize {
+        self.pts.capacity() * 8 + self.offsets.capacity() * 4 + self.edges.capacity() * 4
+    }
+
+    /// Number of vertices.
+    pub fn vertices(&self) -> usize {
+        self.pts.len()
+    }
+
     pub fn new(mp: &MultiPolygon<f64>) -> Self {
         let mut pts = Vec::new();
         // Whether vertex i starts an edge (false at the end of a ring);

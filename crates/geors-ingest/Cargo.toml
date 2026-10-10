@@ -19,3 +19,7 @@ tracing = "0.1.44"
 
 [dev-dependencies]
 tempfile = "3.27.0"
+
+[features]
+# Heap accounting per import step (see `mem.rs`).
+mem-stats = []

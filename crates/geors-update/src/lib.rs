@@ -100,6 +100,7 @@ pub fn import_file(
             path.display()
         );
     }
+    geors_ingest::mem::mark("import done, writing partitions");
     let mut written = Vec::new();
     for c in &import.countries {
         let code = c.country_code.clone();
@@ -113,6 +114,7 @@ pub fn import_file(
                 admins: c.admins.clone(),
             },
         )?;
+        geors_ingest::mem::mark(&format!("partition {code} written"));
         written.push(code);
     }
     drop(import); // removes the scratch files
@@ -151,15 +153,27 @@ pub fn import_location(data_dir: &Path, input: &str, opts: &AddOptions) -> Resul
     };
     let _lock = lock(data_dir)?;
     clean_data_dir(data_dir, &Registry::load(data_dir)?);
+    let name = opts.name.clone().unwrap_or_else(|| default_name(&location));
+    // A source registered under this name or location is replaced; what it
+    // produced before decides which partitions become stale.
+    let previous: Vec<String> = Registry::load(data_dir)?
+        .sources
+        .iter()
+        .filter(|s| s.name == name || s.location == location)
+        .flat_map(|s| s.state.partitions.clone())
+        .collect();
     let mut source = Source {
-        name: opts.name.clone().unwrap_or_else(|| default_name(&location)),
+        name,
         location,
         format,
         countries: opts.countries.clone(),
         all_countries: opts.all_countries,
         default_country: opts.default_country.clone(),
         diffs: !opts.no_diffs,
-        state: SourceState::default(),
+        state: SourceState {
+            partitions: previous,
+            ..SourceState::default()
+        },
     };
     let partitions = fetch_and_import(
         &Http::new(),
@@ -241,16 +255,46 @@ fn fetch_and_import(
         );
         (partitions, version)
     };
-    for old in &source.state.partitions {
-        if !partitions.contains(old) {
-            warn!(source = %source.name, partition = %old, "partition no longer produced by this source; left in place");
-        }
-    }
+    remove_stale_partitions(data_dir, source, &partitions)?;
     source.state.version = Some(version);
     source.state.partitions = partitions.clone();
     source.state.imported_at = Some(now());
     source.state.last_error = None;
     Ok(partitions)
+}
+
+/// Delete partitions that `source` produced before but not this time (for
+/// example a country that now counts as a border sliver), unless another
+/// tracked source produces them. Otherwise the server would keep serving
+/// the outdated fragment.
+fn remove_stale_partitions(data_dir: &Path, source: &Source, produced: &[String]) -> Result<()> {
+    let registry = Registry::load(data_dir)?;
+    let mut removed = false;
+    for old in &source.state.partitions {
+        if produced.contains(old) {
+            continue;
+        }
+        let other = registry.sources.iter().find(|s| {
+            s.name != source.name
+                && s.location != source.location
+                && s.state.partitions.contains(old)
+        });
+        if let Some(other) = other {
+            info!(source = %source.name, partition = %old, other = %other.name, "partition no longer produced by this source; kept for the other source");
+            continue;
+        }
+        let dir = geors_core::storage::partition_dir(data_dir, old);
+        if dir.is_dir() {
+            std::fs::remove_dir_all(&dir)
+                .with_context(|| format!("cannot remove stale partition {}", dir.display()))?;
+            warn!(source = %source.name, partition = %old, "removed partition this source no longer produces");
+            removed = true;
+        }
+    }
+    if removed {
+        geors_core::storage::bump_generation(data_dir)?;
+    }
+    Ok(())
 }
 
 /// Where the base PBF of a source with diff updates is kept.
@@ -355,6 +399,7 @@ fn diff_update(
         &label,
         false,
     )?;
+    remove_stale_partitions(data_dir, source, &partitions)?;
     let rep = replicate::read_replication(&path)?.context("base lost its replication header")?;
     let iso = (rep.timestamp > 0).then(|| unix_to_iso(rep.timestamp));
     source.state.version = Some(Version {
@@ -695,6 +740,52 @@ mod tests {
                 .last_error
                 .is_some()
         );
+    }
+
+    /// A dump with `li` places and one `ch` place (a border sliver).
+    fn dump_li_ch(path: &Path) {
+        let mut out = String::from(r#"{"type":"NominatimDumpFile","content":{"version":"0.1.0"}}"#);
+        for (i, cc) in std::iter::repeat_n("li", 200).chain(["ch"]).enumerate() {
+            out.push_str(&format!(
+                "\n{{\"type\":\"Place\",\"content\":[{{\"place_id\":{i},\"object_type\":\"N\",\"object_id\":{i},\"osm_key\":\"amenity\",\"osm_value\":\"cafe\",\"rank_address\":30,\"name\":{{\"name\":\"Cafe {i}\"}},\"country_code\":\"{cc}\",\"centroid\":[9.52,47.14]}}]}}"
+            ));
+        }
+        std::fs::write(path, out + "\n").unwrap();
+    }
+
+    #[test]
+    fn reimport_removes_partitions_no_longer_produced() {
+        let dir = tempfile::tempdir().unwrap();
+        let data = dir.path().join("data");
+        let input = dir.path().join("li.jsonl");
+        dump_li_ch(&input);
+        let input = input.to_str().unwrap();
+        let all = AddOptions {
+            track: true,
+            all_countries: true,
+            ..Default::default()
+        };
+        let parts = import_location(&data, input, &all).unwrap();
+        assert_eq!(parts, vec!["ch", "li"]);
+
+        // Without --all-countries, ch is a sliver: the old partition goes.
+        let default = AddOptions {
+            track: true,
+            ..Default::default()
+        };
+        let gen1 = geors_core::storage::read_generation(&data).unwrap();
+        assert_eq!(import_location(&data, input, &default).unwrap(), vec!["li"]);
+        assert!(!geors_core::storage::partition_dir(&data, "ch").exists());
+        assert!(geors_core::storage::partition_dir(&data, "li").exists());
+        assert_ne!(geors_core::storage::read_generation(&data).unwrap(), gen1);
+
+        // A partition another source also produces is kept.
+        let other = dir.path().join("other.jsonl");
+        dump_li_ch(&other);
+        import_location(&data, input, &all).unwrap();
+        import_location(&data, other.to_str().unwrap(), &all).unwrap();
+        import_location(&data, input, &default).unwrap();
+        assert!(geors_core::storage::partition_dir(&data, "ch").exists());
     }
 
     fn pbf(path: &Path, seq: Option<u64>) {

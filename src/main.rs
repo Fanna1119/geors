@@ -513,6 +513,10 @@ async fn serve(
     Ok(())
 }
 
+#[cfg(feature = "mem-stats")]
+#[global_allocator]
+static ALLOC: geors_ingest::mem::Counting = geors_ingest::mem::Counting;
+
 fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -543,9 +547,9 @@ fn main() -> Result<()> {
     match (cli.index_memory_mb, memory) {
         (Some(mb), _) => geors_index::text::set_index_memory(mb * 1024 * 1024),
         // Default: 48 MB per indexing thread, at most an eighth of memory.
-        (None, Some(m)) => geors_index::text::set_index_memory(
-            ((m / 8) as usize).min(threads.min(4) * (48 << 20)),
-        ),
+        (None, Some(m)) => {
+            geors_index::text::set_index_memory(((m / 8) as usize).min(threads.min(4) * (48 << 20)))
+        }
         (None, None) => {}
     }
     match cli.command {
