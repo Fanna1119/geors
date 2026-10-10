@@ -1,0 +1,10 @@
+# Dutch.
+
+[words]
+str = ["straat"]
+ln = ["laan"]
+pl = ["plein"]
+
+[suffixes]
+# "Kerkstr" -> "Kerkstraat"
+str = ["straat"]

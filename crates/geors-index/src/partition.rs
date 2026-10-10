@@ -4,7 +4,9 @@ use std::fs::File;
 use std::path::{Path, PathBuf};
 
 use geo_index::rtree::{NeighborsOptions, RTreeIndex, RTreeRef, SimpleDistanceMetric};
+use geors_core::doc;
 use geors_core::geom::{self, LonLat};
+use geors_core::geom::{f32_down, f32_up};
 use geors_core::storage::{self, FORMAT_VERSION, GeomKind, PartitionMeta, PlaceRecord};
 use geors_core::{AdminUnit, BBox, Place};
 use memmap2::Mmap;
@@ -48,6 +50,10 @@ pub struct Partition {
     pub meta: PartitionMeta,
     pub dir: PathBuf,
     pub admins: Vec<AdminUnit>,
+    /// (osm_key, osm_value) pairs referenced by documents.
+    tags: Vec<(String, String)>,
+    /// Uppercase country code implied for documents.
+    cc_upper: String,
     pub text: TextIndex,
     records: Blob,
     docs: Blob,
@@ -69,6 +75,7 @@ impl Partition {
             )));
         }
         let admins = serde_json::from_slice(&std::fs::read(dir.join(storage::ADMIN_FILE))?)?;
+        let tags = serde_json::from_slice(&std::fs::read(dir.join(storage::TAGS_FILE))?)?;
         let p = Self {
             text: TextIndex::open(&dir.join(storage::TEXT_DIR))?,
             records: Blob::open(&dir.join(storage::PLACES_FILE))?,
@@ -77,6 +84,8 @@ impl Partition {
             spatial: Blob::open(&dir.join(storage::SPATIAL_FILE))?,
             dir: dir.to_path_buf(),
             admins,
+            tags,
+            cc_upper: meta.country_code.to_ascii_uppercase(),
             meta,
         };
         let expected = p.meta.num_places as usize * PlaceRecord::SIZE;
@@ -112,7 +121,7 @@ impl Partition {
         self.meta.num_places == 0
     }
 
-    fn rtree(&self) -> Result<RTreeRef<'_, f64>, IndexError> {
+    fn rtree(&self) -> Result<RTreeRef<'_, f32>, IndexError> {
         RTreeRef::try_new(&self.spatial)
             .map_err(|e| IndexError::Format(format!("spatial index: {e}")))
     }
@@ -130,7 +139,15 @@ impl Partition {
             .bytes()
             .get(start..start + rec.doc_len as usize)
             .ok_or_else(|| IndexError::Format("document offset out of range".into()))?;
-        let mut place: Place = serde_json::from_slice(bytes)?;
+        let mut place = doc::decode_stored(
+            bytes,
+            &self.tags,
+            &self.cc_upper,
+            rec.layer,
+            rec.importance,
+            rec.center(),
+        )
+        .map_err(|e| IndexError::Format(format!("partition '{}': {e}", self.code())))?;
         if with_geometry {
             match rec.geom_kind {
                 GeomKind::Lines => place.lines = self.lines(rec),
@@ -164,15 +181,10 @@ impl Partition {
     /// Exact distance from `p` to the place: to its line geometry when it has
     /// one (streets), otherwise to its centre.
     pub fn distance(&self, rec: &PlaceRecord, p: LonLat) -> f64 {
-        if rec.geom_kind == GeomKind::Lines {
-            let d = self
-                .lines(rec)
-                .iter()
-                .filter_map(|l| geom::point_line_distance(p, l))
-                .min_by(f64::total_cmp);
-            if let Some(d) = d {
-                return d;
-            }
+        if rec.geom_kind == GeomKind::Lines
+            && let Some(d) = storage::lines_distance(self.geom_bytes(rec), p)
+        {
+            return d;
         }
         geom::haversine(p, rec.center())
     }
@@ -182,60 +194,85 @@ impl Partition {
         if !bbox.intersects(&self.meta.bbox) {
             return Ok(Vec::new());
         }
-        Ok(self
-            .rtree()?
-            .search(bbox.min_lon, bbox.min_lat, bbox.max_lon, bbox.max_lat))
+        Ok(self.rtree()?.search(
+            f32_down(bbox.min_lon),
+            f32_down(bbox.min_lat),
+            f32_up(bbox.max_lon),
+            f32_up(bbox.max_lat),
+        ))
     }
 
-    /// Up to `k` ids closest to `p` by bbox distance in a local equirectangular
-    /// projection. This is an approximation of true distance order (it ignores
-    /// line geometry and earth curvature); `Engine` refines it exactly.
-    pub fn approx_neighbors(&self, p: LonLat, k: usize) -> Result<Vec<u32>, IndexError> {
+    /// Up to `k` places in increasing order of a *lower bound* on their
+    /// distance from `p` (bbox distance in a local equirectangular
+    /// projection, in metres, conservatively reduced). Only places whose
+    /// bound is at most `max_m` are returned.
+    pub fn neighbors_lower_bound(
+        &self,
+        p: LonLat,
+        k: usize,
+        max_m: f64,
+    ) -> Result<Vec<(u32, f64)>, IndexError> {
         let metric = ScaledPlanar {
             lon_scale: p.lat.to_radians().cos().max(1e-6),
         };
-        let options = NeighborsOptions::k(k);
+        let mut options = NeighborsOptions::k(k);
+        if max_m.is_finite() {
+            let deg = (max_m + F32_SLACK_M) / LOWER_BOUND_M_PER_DEG;
+            options = options.max_distance((deg * deg) as f32);
+        }
         Ok(self
             .rtree()?
-            .neighbors_with_simple_distance(p.lon, p.lat, options, &metric)
+            .neighbors_with_simple_distance(p.lon as f32, p.lat as f32, options, &metric)
             .into_iter()
-            .map(|(id, _)| id)
+            .map(|(id, sq)| {
+                let m = (sq as f64).sqrt() * LOWER_BOUND_M_PER_DEG - F32_SLACK_M;
+                (id, m.max(0.0))
+            })
             .collect())
     }
 }
+
+/// Metres per degree for [`Partition::neighbors_lower_bound`]: the length
+/// of a degree of latitude, reduced by 20 % because scaling longitude by
+/// the query point's cos(latitude) is only exact at that latitude.
+const LOWER_BOUND_M_PER_DEG: f64 = 111_195.0 * 0.8;
+
+/// The tree stores f32 (about 1e-6 degrees); the query point is rounded too.
+/// Lower bounds are reduced by this much so they stay lower bounds.
+const F32_SLACK_M: f64 = 1.0;
 
 /// Squared planar distance with longitude shrunk by cos(latitude).
 struct ScaledPlanar {
     lon_scale: f64,
 }
 
-impl SimpleDistanceMetric<f64> for ScaledPlanar {
-    fn distance(&self, x1: f64, y1: f64, x2: f64, y2: f64) -> f64 {
-        let dx = (x2 - x1) * self.lon_scale;
-        let dy = y2 - y1;
-        dx * dx + dy * dy
+impl SimpleDistanceMetric<f32> for ScaledPlanar {
+    fn distance(&self, x1: f32, y1: f32, x2: f32, y2: f32) -> f32 {
+        let dx = (x2 as f64 - x1 as f64) * self.lon_scale;
+        let dy = y2 as f64 - y1 as f64;
+        (dx * dx + dy * dy) as f32
     }
 
     fn distance_to_bbox(
         &self,
-        x: f64,
-        y: f64,
-        min_x: f64,
-        min_y: f64,
-        max_x: f64,
-        max_y: f64,
-    ) -> f64 {
-        let axis = |v: f64, lo: f64, hi: f64| {
+        x: f32,
+        y: f32,
+        min_x: f32,
+        min_y: f32,
+        max_x: f32,
+        max_y: f32,
+    ) -> f32 {
+        let axis = |v: f32, lo: f32, hi: f32| {
             if v < lo {
-                lo - v
+                (lo - v) as f64
             } else if v > hi {
-                v - hi
+                (v - hi) as f64
             } else {
                 0.0
             }
         };
         let dx = axis(x, min_x, max_x) * self.lon_scale;
         let dy = axis(y, min_y, max_y);
-        dx * dx + dy * dy
+        (dx * dx + dy * dy) as f32
     }
 }

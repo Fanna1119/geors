@@ -5,11 +5,17 @@ edition = "2024"
 
 [dependencies]
 anyhow = "1.0.104"
+bytemuck = "1.25.2"
 flate2 = "1.1.10"
 geo = "0.33.1"
 geo-index = "0.4.0"
 geors-core = { version = "0.1.0", path = "../geors-core" }
+memmap2 = "0.9.11"
 osmpbf = "0.3.8"
+rayon = "1.12.0"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 tracing = "0.1.44"
+
+[dev-dependencies]
+tempfile = "3.27.0"

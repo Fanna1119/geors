@@ -18,7 +18,8 @@ use serde::Deserialize;
 use serde_json::Value;
 use tracing::{info, warn};
 
-use crate::{CountryData, ImportOptions};
+use crate::sink::CountrySink;
+use crate::{Import, ImportOptions};
 
 const ALT_NAME_KEYS: &[&str] = &[
     "alt_name",
@@ -214,13 +215,13 @@ struct AddrRef {
     name: String,
 }
 
-#[derive(Default)]
 struct DumpBuilder {
     units: Vec<AdminUnit>,
     unit_ids: HashMap<(Layer, String, String), u32>,
     countries: HashMap<String, BTreeMap<String, String>>,
     refs: HashMap<String, AddrRef>,
-    places: Vec<Place>,
+    sink: CountrySink,
+    count: u64,
     skipped: usize,
 }
 
@@ -253,11 +254,11 @@ impl DumpBuilder {
         self.unit(Layer::Country, name, localized, cc)
     }
 
-    fn add(&mut self, d: DumpPlace) {
+    fn add(&mut self, d: DumpPlace) -> std::io::Result<()> {
         let center = LonLat::new(d.centroid[0], d.centroid[1]);
         if !center.is_valid() {
             self.skipped += 1;
-            return;
+            return Ok(());
         }
         let osm_type = match d.object_type.as_deref() {
             Some("N") => OsmType::Node,
@@ -265,7 +266,7 @@ impl DumpBuilder {
             Some("R") => OsmType::Relation,
             _ => {
                 self.skipped += 1;
-                return;
+                return Ok(());
             }
         };
         let cc = d
@@ -371,7 +372,8 @@ impl DumpBuilder {
             .map(|b| BBox::new(b[0], b[1], b[2], b[3]))
             .filter(|b| !b.is_empty() && (b.min_lon < b.max_lon || b.min_lat < b.max_lat));
         let base = layer.base_importance();
-        self.places.push(Place {
+        self.count += 1;
+        self.sink.push(Place {
             osm_type,
             osm_id: d.object_id.unwrap_or_default(),
             osm_key: d.osm_key.unwrap_or_else(|| "place".into()),
@@ -394,12 +396,12 @@ impl DumpBuilder {
             lines: lines.into_iter().filter(|l| l.len() >= 2).collect(),
             polygons,
             merged_ids: Vec::new(),
-        });
+        })
     }
 }
 
 /// Import a dump file (optionally gzip-compressed).
-pub fn import_dump(path: &Path, opts: &ImportOptions) -> Result<Vec<CountryData>> {
+pub fn import_dump(path: &Path, opts: &ImportOptions) -> Result<Import> {
     let file =
         File::open(path).with_context(|| format!("cannot open dump file '{}'", path.display()))?;
     let reader: Box<dyn Read> = if path.extension().is_some_and(|e| e == "gz") {
@@ -411,8 +413,17 @@ pub fn import_dump(path: &Path, opts: &ImportOptions) -> Result<Vec<CountryData>
         .with_context(|| format!("failed reading dump '{}'", path.display()))
 }
 
-pub fn import_dump_reader(reader: impl Read, opts: &ImportOptions) -> Result<Vec<CountryData>> {
-    let mut b = DumpBuilder::default();
+pub fn import_dump_reader(reader: impl Read, opts: &ImportOptions) -> Result<Import> {
+    let work = crate::work_dir(opts)?;
+    let mut b = DumpBuilder {
+        units: Vec::new(),
+        unit_ids: HashMap::new(),
+        countries: HashMap::new(),
+        refs: HashMap::new(),
+        sink: CountrySink::new(work.path.clone(), opts.default_country.clone()),
+        count: 0,
+        skipped: 0,
+    };
     let mut stream = serde_json::Deserializer::from_reader(reader).into_iter::<Envelope>();
     let Some(first) = stream.next() else {
         bail!("dump file is empty")
@@ -460,7 +471,7 @@ pub fn import_dump_reader(reader: impl Read, opts: &ImportOptions) -> Result<Vec
                 };
                 for item in items {
                     match serde_json::from_value::<DumpPlace>(item) {
-                        Ok(p) => b.add(p),
+                        Ok(p) => b.add(p)?,
                         Err(e) => {
                             b.skipped += 1;
                             if b.skipped <= 5 {
@@ -479,18 +490,18 @@ pub fn import_dump_reader(reader: impl Read, opts: &ImportOptions) -> Result<Vec
             "places skipped (no OSM id type, bad centroid or invalid JSON)"
         );
     }
-    info!(
-        places = b.places.len(),
-        admin_units = b.units.len(),
-        "dump read"
-    );
+    info!(places = b.count, admin_units = b.units.len(), "dump read");
 
     let country_names: HashMap<String, String> = b
         .countries
         .iter()
         .filter_map(|(cc, names)| Some((cc.clone(), names.get("")?.clone())))
         .collect();
-    Ok(crate::partition(b.places, &b.units, &country_names, opts))
+    let countries = b.sink.finish(opts, b.units, &country_names)?;
+    Ok(Import {
+        countries,
+        _work: work,
+    })
 }
 
 #[cfg(test)]
@@ -509,12 +520,19 @@ mod tests {
 
     #[test]
     fn reads_dump() {
-        let parts = import_dump_reader(DUMP.as_bytes(), &ImportOptions::default()).unwrap();
-        assert_eq!(parts.len(), 1);
-        let li = &parts[0];
+        let import = import_dump_reader(DUMP.as_bytes(), &ImportOptions::default()).unwrap();
+        assert_eq!(import.countries.len(), 1);
+        let li = &import.countries[0];
         assert_eq!(li.country_code, "li");
         assert_eq!(li.country_name.as_deref(), Some("Liechtenstein"));
-        assert_eq!(li.places.len(), 4);
+        assert_eq!(li.places.count, 4);
+        let reader = geors_core::spill::SpillReader::open(&li.places).unwrap();
+        let places: Vec<Place> = reader
+            .index()
+            .unwrap()
+            .into_iter()
+            .map(|e| reader.get(e.offset).unwrap())
+            .collect();
 
         let unit = |p: &Place, l: Layer| {
             p.parents
@@ -523,18 +541,18 @@ mod tests {
                 .find(|a| a.layer == l)
                 .map(|a| a.name.clone())
         };
-        let town = &li.places[0];
+        let town = &places[0];
         assert_eq!(town.layer, Layer::City);
         assert_eq!(town.names.get("ru").map(String::as_str), Some("Вадуц"));
         assert_eq!(unit(town, Layer::Country).as_deref(), Some("Liechtenstein"));
 
-        let street = &li.places[1];
+        let street = &places[1];
         assert_eq!(street.layer, Layer::Street);
         assert_eq!(street.lines.len(), 1);
         // City comes from the addressline reference to place 1.
         assert_eq!(unit(street, Layer::City).as_deref(), Some("Vaduz"));
 
-        let house = &li.places[2];
+        let house = &places[2];
         assert_eq!(house.layer, Layer::House);
         assert_eq!(house.street.as_deref(), Some("Städtle"));
         assert_eq!(house.postcode.as_deref(), Some("9490"));

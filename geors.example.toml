@@ -34,9 +34,25 @@ interval = "6h"
 # Pick up partitions changed by an external `geors import` / `geors update`
 # (e.g. from cron). "0" disables.
 watch_interval = "30s"
+# After a diff update, delete the local extract a source was imported from
+# (e.g. osm/germany-latest.osm.pbf); the newer copy in <data>/.base replaces
+# it. Only files with older data than that copy are deleted.
+# CLI equivalent: geors update --prune-originals
+prune_originals = false
 
-# Extra abbreviations, added to the built-in ones (str, st, pl, hbf, ...).
-# Keys starting with '*' are suffix rules: "kirchgs" -> "kirchgasse".
+# Abbreviation / synonym expansion ("hauptstr" -> "hauptstrasse").
+# Built-in rules: one file per language in the repository's synonyms/
+# directory (see synonyms/README.md). Check with: geors synonyms kerkstr cres
 [synonyms]
-"bhf" = ["bahnhof"]
-"*gs" = ["gasse"]
+# Built-in languages to use; empty = all (de, en, fr, nl, af, ...).
+languages = []
+# Directory with extra rule files (*.toml, same format as synonyms/*.toml).
+# dir = "/etc/geors/synonyms"
+
+# Inline rules, added to the above.
+[synonyms.words]
+"kh" = ["krankenhaus"]
+
+[synonyms.suffixes]
+# "kirchgs" -> "kirchgasse"
+"gs" = ["gasse"]

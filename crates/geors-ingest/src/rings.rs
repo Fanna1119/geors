@@ -4,7 +4,7 @@
 use geo::{Coord, Intersects, LineString, MultiPolygon, Polygon};
 use geors_core::LonLat;
 
-use crate::reader::NodeCoords;
+use crate::nodes::NodeCoords;
 
 /// Join way node lists end-to-end into closed rings (by shared node ids).
 /// Returns the rings and the number of open chains that could not be closed

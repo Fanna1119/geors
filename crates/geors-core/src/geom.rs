@@ -179,6 +179,18 @@ impl BBox {
     }
 }
 
+/// Largest f32 not above `x`: rounding a box's minimum outward.
+pub fn f32_down(x: f64) -> f32 {
+    let f = x as f32;
+    if f as f64 > x { f.next_down() } else { f }
+}
+
+/// Smallest f32 not below `x`: rounding a box's maximum outward.
+pub fn f32_up(x: f64) -> f32 {
+    let f = x as f32;
+    if (f as f64) < x { f.next_up() } else { f }
+}
+
 /// Fixed point coordinate (1e-7 degrees, about 1 cm), as used by OSM itself.
 pub fn to_e7(v: f64) -> i32 {
     (v * 1e7).round() as i32
@@ -225,6 +237,14 @@ mod tests {
                 c.lat + (999.0 / EARTH_RADIUS_M).to_degrees() * t.cos(),
             );
             assert!(b.contains(p));
+        }
+    }
+
+    #[test]
+    fn f32_rounding_is_outward() {
+        for x in [9.52091234567, -47.1234567891, 0.0, 179.9999999, 1e-9] {
+            assert!(f32_down(x) as f64 <= x && f32_up(x) as f64 >= x, "{x}");
+            assert!(f32_up(x) as f64 - x < 1e-5);
         }
     }
 

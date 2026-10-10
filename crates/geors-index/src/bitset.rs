@@ -1,40 +1,53 @@
-/// Minimal fixed-size bitset over place ids, used to hand the spatial
-/// candidate set to the text search.
+/// Set of place ids passing the hard spatial filter, handed to the text
+/// search. Sparse sets (the usual case: a radius in a large partition) are
+/// a sorted id list; dense ones a bitmap. Either way at most one bit per
+/// place, often far less: a 3 km radius in Germany is a few kB instead of a
+/// 3 MB bitmap per query.
 #[derive(Debug, Clone)]
-pub struct BitSet {
-    words: Vec<u64>,
-    len: usize,
+pub enum BitSet {
+    Sparse(Vec<u32>),
+    Dense { words: Vec<u64>, len: usize },
 }
 
 impl BitSet {
-    pub fn new(capacity: usize) -> Self {
-        Self {
-            words: vec![0; capacity.div_ceil(64)],
-            len: 0,
+    /// Build from ids (any order, duplicates allowed) in `0..capacity`.
+    pub fn from_ids(mut ids: Vec<u32>, capacity: usize) -> Self {
+        ids.sort_unstable();
+        ids.dedup();
+        // A sorted u32 list costs 32 bits per id, a bitmap 1 bit per place.
+        if ids.len() * 32 <= capacity {
+            ids.shrink_to_fit();
+            return BitSet::Sparse(ids);
         }
-    }
-
-    pub fn insert(&mut self, id: u32) {
-        let (w, b) = (id as usize / 64, id as usize % 64);
-        if let Some(word) = self.words.get_mut(w)
-            && *word & (1 << b) == 0
-        {
-            *word |= 1 << b;
-            self.len += 1;
+        let mut words = vec![0u64; capacity.div_ceil(64)];
+        let mut len = 0;
+        for id in ids {
+            if let Some(w) = words.get_mut(id as usize / 64) {
+                *w |= 1 << (id % 64);
+                len += 1;
+            }
         }
+        BitSet::Dense { words, len }
     }
 
     pub fn contains(&self, id: u32) -> bool {
-        let (w, b) = (id as usize / 64, id as usize % 64);
-        self.words.get(w).is_some_and(|word| word & (1 << b) != 0)
+        match self {
+            BitSet::Sparse(ids) => ids.binary_search(&id).is_ok(),
+            BitSet::Dense { words, .. } => words
+                .get(id as usize / 64)
+                .is_some_and(|w| w & (1 << (id % 64)) != 0),
+        }
     }
 
     pub fn len(&self) -> usize {
-        self.len
+        match self {
+            BitSet::Sparse(ids) => ids.len(),
+            BitSet::Dense { len, .. } => *len,
+        }
     }
 
     pub fn is_empty(&self) -> bool {
-        self.len == 0
+        self.len() == 0
     }
 }
 
@@ -43,12 +56,28 @@ mod tests {
     use super::*;
 
     #[test]
-    fn basics() {
-        let mut s = BitSet::new(130);
-        s.insert(0);
-        s.insert(129);
-        s.insert(129);
-        assert!(s.contains(0) && s.contains(129) && !s.contains(64) && !s.contains(1000));
-        assert_eq!(s.len(), 2);
+    fn sparse_and_dense_agree() {
+        let ids = [129, 0, 129, 64, 5000];
+        for capacity in [10_000, 100] {
+            let s = BitSet::from_ids(
+                ids.iter()
+                    .copied()
+                    .filter(|&i| (i as usize) < capacity)
+                    .collect(),
+                capacity,
+            );
+            assert!(s.contains(0));
+            assert!(!s.contains(1));
+            assert_eq!(s.contains(5000), capacity > 5000);
+        }
+        assert!(matches!(
+            BitSet::from_ids(vec![1, 2], 10_000),
+            BitSet::Sparse(_)
+        ));
+        assert!(matches!(
+            BitSet::from_ids((0..100).collect(), 200),
+            BitSet::Dense { .. }
+        ));
+        assert_eq!(BitSet::from_ids((0..100).collect(), 200).len(), 100);
     }
 }

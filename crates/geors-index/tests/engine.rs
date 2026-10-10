@@ -4,8 +4,8 @@
 use geors_core::geom::{self, BBox, LonLat};
 use geors_core::{AdminUnit, Layer, OsmType, Place};
 use geors_index::{
-    Engine, EngineConfig, EngineError, NearestRequest, PartitionInput, SearchRequest, Shape,
-    write_partition,
+    Engine, EngineConfig, EngineError, NearestRequest, SearchRequest, Shape,
+    write_partition_from_places,
 };
 
 fn place(id: i64, layer: Layer, name: Option<&str>, lon: f64, lat: f64) -> Place {
@@ -76,29 +76,12 @@ fn fixture() -> (tempfile::TempDir, Engine, Vec<Place>) {
         name: "Liechtenstein".into(),
         names: Default::default(),
     }];
-    write_partition(
-        dir.path(),
-        PartitionInput {
-            country_code: "li".into(),
-            country_name: Some("Liechtenstein".into()),
-            source: "test".into(),
-            places: places.clone(),
-            admins: admins.clone(),
-        },
-    )
-    .unwrap();
+    let li = Some("Liechtenstein".to_string());
+    write_partition_from_places(dir.path(), "li", li, "test", &places, admins.clone()).unwrap();
     // A second, tiny partition to exercise country selection.
-    write_partition(
-        dir.path(),
-        PartitionInput {
-            country_code: "ad".into(),
-            country_name: Some("Andorra".into()),
-            source: "test".into(),
-            places: vec![place(9, Layer::City, Some("Vaduz Andorra"), 1.52, 42.50)],
-            admins,
-        },
-    )
-    .unwrap();
+    let andorra = [place(9, Layer::City, Some("Vaduz Andorra"), 1.52, 42.50)];
+    let ad = Some("Andorra".to_string());
+    write_partition_from_places(dir.path(), "ad", ad, "test", &andorra, admins).unwrap();
     let engine = Engine::open(dir.path(), &[], EngineConfig::default()).unwrap();
     (dir, engine, places)
 }
@@ -314,4 +297,39 @@ fn shapes_are_stored() {
     assert!(matches!(hits[0].shape(), Shape::Polygons(ref p) if p[0][0].len() == 4));
     assert!(matches!(hits[1].shape(), Shape::Lines(ref l) if l[0].len() == 2));
     assert!(matches!(hits[2].shape(), Shape::Point(_)));
+}
+
+/// Serving must work from read-only data (images, read-only volumes): the
+/// text index must not need lock files.
+#[cfg(unix)]
+#[test]
+fn opens_read_only_partitions() {
+    use std::os::unix::fs::PermissionsExt;
+    let (dir, engine, _) = fixture();
+    drop(engine);
+    let set_mode = |mode: u32| {
+        for entry in walk(dir.path()) {
+            let mut p = std::fs::metadata(&entry).unwrap().permissions();
+            p.set_mode(if entry.is_dir() { mode | 0o111 } else { mode });
+            std::fs::set_permissions(&entry, p).unwrap();
+        }
+    };
+    set_mode(0o444);
+    let result = Engine::open(dir.path(), &[], EngineConfig::default());
+    set_mode(0o644); // let the temp dir be cleaned up
+    let engine = result.expect("read-only partitions open");
+    assert_eq!(search(&engine, |r| r.query = Some("vaduz".into()))[0], "Vaduz");
+}
+
+#[cfg(unix)]
+fn walk(root: &std::path::Path) -> Vec<std::path::PathBuf> {
+    let mut out = Vec::new();
+    for e in std::fs::read_dir(root).unwrap().flatten() {
+        let p = e.path();
+        if p.is_dir() {
+            out.extend(walk(&p));
+        }
+        out.push(p);
+    }
+    out
 }

@@ -1,35 +1,50 @@
-//! OSM PBF ingestion: turns an extract into per-country lists of [`Place`]s
-//! with an address hierarchy, ready to be indexed.
+//! Ingestion: turns an OSM extract (or a Nominatim dump) into per-country
+//! streams of [`Place`]s with an address hierarchy, ready to be indexed.
 //!
-//! Pipeline:
-//! 1. [`reader::read_pbf`]: three streaming passes over the file, keeping
-//!    only relevant elements and the node coordinates they need.
-//! 2. Geometry: ways become lines (streets) or polygons; relations are
-//!    assembled into multipolygons ([`rings`]).
-//! 3. Hierarchy: admin boundaries (and `place=*` nodes as a fallback) give
-//!    every place its district / city / county / state / country ([`areas`]).
-//! 4. Street segments are merged ([`streets`]).
-//! 5. Places are partitioned by country code.
+//! The PBF pipeline is streaming, so memory does not grow with the number
+//! of places:
+//!
+//! 1. Five passes over the file ([`reader`]); only relations, their member
+//!    ways and `place=*` nodes are kept in memory. Coordinates of needed
+//!    nodes go to a disk-backed store ([`nodes`]).
+//! 2. Admin, postcode and `place=*` areas are assembled ([`rings`]) and
+//!    indexed for point-in-polygon lookups ([`areas`]).
+//! 3. Way and node features are built one at a time, get their hierarchy,
+//!    and are spilled to disk per country ([`sink`]).
+//! 4. Street segments are spilled separately and merged group by group
+//!    ([`streets`]).
+//!
+//! Peak memory is roughly: relations + boundary polygons + 48 bytes per
+//! street segment, plus the page cache for 16 bytes per needed node.
 
 pub mod areas;
 pub mod dump;
+pub mod nodes;
+pub mod pip;
 pub mod reader;
 pub mod rings;
+pub mod sink;
 pub mod streets;
 pub mod tags;
 
-use std::collections::{BTreeMap, HashMap};
-use std::path::Path;
+use std::collections::{BTreeMap, HashMap, HashSet};
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::time::Instant;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use geo::{BoundingRect, InteriorPoint, MultiPolygon, Simplify};
 use geors_core::geom::{BBox, LonLat};
+use geors_core::spill::{Spill, WorkDir};
 use geors_core::storage::PolygonRings;
 use geors_core::{AdminUnit, Layer, OsmType, Place};
 use tracing::{info, warn};
 
-use crate::areas::{Area, AreaIndex, LocalityIndex, LocalityPoint};
-use crate::reader::RawData;
+use crate::areas::{Area, AreaIndex, CellCache, LocalityIndex, LocalityPoint};
+use crate::nodes::{IdSink, NodeCoords};
+use crate::pip::BandedPolygon;
+use crate::sink::CountrySink;
+use crate::streets::StreetStore;
 use crate::tags::{Class, Tags};
 
 /// Douglas-Peucker tolerance for stored line geometry (~1 m).
@@ -45,6 +60,9 @@ pub struct ImportOptions {
     pub default_country: Option<String>,
     /// In automatic mode, drop countries with less than this share of places.
     pub min_share: f64,
+    /// Where scratch files go (default: the system temp dir). Needs room for
+    /// roughly the size of the resulting partitions.
+    pub work_dir: Option<PathBuf>,
 }
 
 impl Default for ImportOptions {
@@ -54,6 +72,7 @@ impl Default for ImportOptions {
             all_countries: false,
             default_country: None,
             min_share: 0.01,
+            work_dir: None,
         }
     }
 }
@@ -63,13 +82,23 @@ pub struct CountryData {
     /// Lowercase ISO 3166-1 alpha-2 code.
     pub country_code: String,
     pub country_name: Option<String>,
-    pub places: Vec<Place>,
-    pub admins: Vec<AdminUnit>,
+    /// The country's places, spilled to disk.
+    pub places: Spill,
+    /// Admin table `Place::parents` refers to (shared across countries).
+    pub admins: Arc<Vec<AdminUnit>>,
 }
 
-pub fn import_pbf(path: &Path, opts: &ImportOptions) -> Result<Vec<CountryData>> {
-    let raw = reader::read_pbf(path)?;
-    Ok(build(raw, opts))
+/// Result of an import. The spill files live in a scratch directory that is
+/// deleted when this is dropped, so write the partitions first.
+pub struct Import {
+    pub countries: Vec<CountryData>,
+    pub(crate) _work: WorkDir,
+}
+
+pub(crate) fn work_dir(opts: &ImportOptions) -> Result<WorkDir> {
+    let parent = opts.work_dir.clone().unwrap_or_else(std::env::temp_dir);
+    WorkDir::create(&parent, "geors-import")
+        .with_context(|| format!("cannot create scratch directory in '{}'", parent.display()))
 }
 
 fn make_place(osm_type: OsmType, osm_id: i64, t: &Tags, c: &Class, center: LonLat) -> Place {
@@ -152,252 +181,33 @@ fn simplify(line: &[LonLat]) -> Vec<LonLat> {
         .collect()
 }
 
-/// Collects places and admin units while walking the raw data.
-#[derive(Default)]
-struct Builder {
+/// Assigns parents (admin units), country and postcode to places.
+struct Hierarchy {
     units: Vec<AdminUnit>,
-    areas: Vec<Area>,
-    localities: Vec<LocalityPoint>,
-    places: Vec<Place>,
-    /// For each place, the admin unit it itself represents (excluded from its parents).
-    self_unit: Vec<Option<u32>>,
-    postcodes: Vec<String>,
-    postcode_areas: Vec<Area>,
+    areas: AreaIndex,
+    postcodes: AreaIndex,
+    postcode_names: Vec<String>,
+    localities: LocalityIndex,
 }
 
-impl Builder {
-    fn unit(&mut self, t: &Tags, layer: Layer) -> u32 {
-        self.units.push(AdminUnit {
-            layer,
-            name: t.name().unwrap_or_default().to_string(),
-            names: t.localized_names(),
-        });
-        (self.units.len() - 1) as u32
-    }
-
-    fn area(
-        &mut self,
-        t: &Tags,
-        layer: Layer,
-        rank: u8,
-        polygon: &MultiPolygon<f64>,
-    ) -> Option<u32> {
-        let bbox = bbox_of(polygon)?;
-        let unit = self.unit(t, layer);
-        let country_code = if layer == Layer::Country {
-            t.country_code()
-        } else {
-            None
-        };
-        self.areas.push(Area {
-            unit,
-            layer,
-            rank,
-            polygon: polygon.clone(),
-            bbox,
-            country_code,
-        });
-        Some(unit)
-    }
-
-    fn push(&mut self, place: Place, self_unit: Option<u32>) -> usize {
-        self.places.push(place);
-        self.self_unit.push(self_unit);
-        self.places.len() - 1
-    }
+/// Per-worker point-in-polygon caches.
+#[derive(Default)]
+struct HierCache {
+    areas: CellCache,
+    postcodes: CellCache,
 }
 
-fn build(raw: RawData, opts: &ImportOptions) -> Vec<CountryData> {
-    let mut b = Builder::default();
-    let way_refs = |id: i64| -> Option<&[i64]> {
-        raw.ways
-            .binary_search_by_key(&id, |w| w.id)
-            .ok()
-            .map(|i| raw.ways[i].refs.as_slice())
-    };
-
-    // Nodes. Place nodes double as locality units for the hierarchy fallback.
-    let mut place_nodes: HashMap<i64, usize> = HashMap::new();
-    for n in &raw.nodes {
-        let place = make_place(OsmType::Node, n.id, &n.tags, &n.class, n.point);
-        let mut self_unit = None;
-        if n.class.key == "place"
-            && matches!(n.class.layer, Layer::City | Layer::District)
-            && let Some(radius_m) = areas::place_radius_m(&n.class.value)
-        {
-            let unit = b.unit(&n.tags, n.class.layer);
-            b.localities.push(LocalityPoint {
-                unit,
-                layer: n.class.layer,
-                point: n.point,
-                radius_m,
-            });
-            self_unit = Some(unit);
-        }
-        let i = b.push(place, self_unit);
-        if n.class.key == "place" {
-            place_nodes.insert(n.id, i);
-        }
-    }
-
-    // Ways: streets and rivers are lines, closed ways are areas.
-    for w in &raw.ways {
-        let Some((t, c)) = &w.feature else { continue };
-        let pts = raw.coords.line(&w.refs);
-        if pts.is_empty() {
-            continue;
-        }
-        let closed = w.refs.len() >= 4 && w.refs.first() == w.refs.last();
-        let linear = !closed || c.layer == Layer::Street || c.key == "waterway";
-        let mut self_unit = None;
-        let place = if linear {
-            let line = simplify(&pts);
-            let center = streets::line_midpoint(&line).unwrap_or(pts[0]);
-            let mut p = make_place(OsmType::Way, w.id, t, c, center);
-            p.lines = vec![line];
-            p
-        } else {
-            let polygon = geo::Polygon::new(rings::to_linestring(&pts), vec![]);
-            let mp = MultiPolygon::new(vec![polygon]);
-            let center = mp
-                .interior_point()
-                .map(|p| LonLat::new(p.x(), p.y()))
-                .unwrap_or(pts[0]);
-            if c.key == "place" && c.layer.is_admin() {
-                self_unit = b.area(t, c.layer, 11, &mp);
-            }
-            let mut p = make_place(OsmType::Way, w.id, t, c, center);
-            p.extent = bbox_of(&mp);
-            p.polygons = polygon_rings(&mp);
-            p
-        };
-        b.push(place, self_unit);
-    }
-
-    // Relations: admin boundaries feed the hierarchy; named ones are places too.
-    let mut broken = 0usize;
-    for r in &raw.relations {
-        let outer: Vec<&[i64]> = r.outer.iter().filter_map(|&id| way_refs(id)).collect();
-        let inner: Vec<&[i64]> = r.inner.iter().filter_map(|&id| way_refs(id)).collect();
-        let (mp, n_broken) = rings::assemble(outer, inner, &raw.coords);
-        if mp.is_none() {
-            broken += (n_broken > 0) as usize;
-        }
-        let admin = if r.is_admin_boundary() {
-            r.tags
-                .admin_level()
-                .and_then(tags::admin_level_layer)
-                .map(|l| (l, r.tags.admin_level().unwrap()))
-        } else {
-            r.class
-                .as_ref()
-                .filter(|c| c.key == "place" && c.layer.is_admin())
-                .map(|c| (c.layer, 11))
-        };
-        let mut self_unit = None;
-        if let (Some((layer, rank)), Some(mp)) = (admin, &mp) {
-            self_unit = b.area(&r.tags, layer, rank, mp);
-        }
-        if let (Some(code), Some(mp)) = (r.postal_code(), &mp)
-            && let Some(bbox) = bbox_of(mp)
-        {
-            // Postcode areas reuse `Area`; `unit` indexes `b.postcodes`.
-            b.postcodes.push(code.to_string());
-            b.postcode_areas.push(Area {
-                unit: (b.postcodes.len() - 1) as u32,
-                layer: Layer::Locality,
-                rank: 0,
-                polygon: mp.clone(),
-                bbox,
-                country_code: None,
-            });
-        }
-        let Some(class) = &r.class else { continue };
-        let extent = mp.as_ref().and_then(bbox_of);
-
-        // A boundary whose label / admin_centre is the matching place node is
-        // the same real-world place: keep the node, give it the extent.
-        let name = r.tags.name();
-        let twin = r
-            .label
-            .and_then(|id| place_nodes.get(&id))
-            .filter(|&&i| b.places[i].layer == class.layer)
-            .or_else(|| {
-                r.admin_centre
-                    .and_then(|id| place_nodes.get(&id))
-                    .filter(|&&i| {
-                        b.places[i].layer == class.layer && b.places[i].name.as_deref() == name
-                    })
-            })
-            .copied();
-        if let Some(i) = twin {
-            if b.places[i].extent.is_none() {
-                b.places[i].extent = extent;
-            }
-            if b.places[i].polygons.is_empty()
-                && let Some(mp) = &mp
-            {
-                b.places[i].polygons = polygon_rings(mp);
-            }
-            continue;
-        }
-        let center = r
-            .label
-            .or(r.admin_centre)
-            .and_then(|id| raw.coords.get(id))
-            .or_else(|| {
-                mp.as_ref()?
-                    .interior_point()
-                    .map(|p| LonLat::new(p.x(), p.y()))
-            });
-        let Some(center) = center else { continue };
-        let mut place = make_place(OsmType::Relation, r.id, &r.tags, class, center);
-        place.extent = extent;
-        b.push(place, self_unit);
-    }
-    if broken > 0 {
-        warn!(
-            broken,
-            "relations with incomplete geometry (probably clipped by the extract); they are not used for the hierarchy"
-        );
-    }
-    info!(
-        places = b.places.len(),
-        admin_areas = b.areas.len(),
-        localities = b.localities.len(),
-        "features extracted"
-    );
-
-    // Hierarchy.
-    let Builder {
-        units,
-        areas,
-        localities,
-        mut places,
-        self_unit,
-        postcodes,
-        postcode_areas,
-    } = b;
-    let mut area_index = AreaIndex::new(areas);
-    let mut postcode_index = AreaIndex::new(postcode_areas);
-    let locality_index = LocalityIndex::new(localities);
-    let mut country_names: HashMap<String, String> = HashMap::new();
-    for a in &area_index.areas {
-        if let Some(cc) = &a.country_code {
-            country_names
-                .entry(cc.clone())
-                .or_insert_with(|| units[a.unit as usize].name.clone());
-        }
-    }
-    for (place, own) in places.iter_mut().zip(&self_unit) {
+impl Hierarchy {
+    /// Read-only apart from the caller's cache, so workers run it in parallel.
+    fn assign(&self, cache: &mut HierCache, place: &mut Place, own: Option<u32>) {
         let mut best: BTreeMap<Layer, (u8, u32)> = BTreeMap::new();
         let mut country = None;
-        for ai in area_index.containing(place.center) {
-            let a = &area_index.areas[ai];
+        for ai in self.areas.containing(&mut cache.areas, place.center) {
+            let a = &self.areas.areas[ai];
             if a.layer == Layer::Country && country.is_none() {
                 country = a.country_code.clone();
             }
-            if a.layer <= place.layer || Some(a.unit) == *own {
+            if a.layer <= place.layer || Some(a.unit) == own {
                 continue;
             }
             let e = best.entry(a.layer).or_insert((a.rank, a.unit));
@@ -408,9 +218,10 @@ fn build(raw: RawData, opts: &ImportOptions) -> Vec<CountryData> {
         for layer in [Layer::City, Layer::District] {
             if place.layer < layer
                 && !best.contains_key(&layer)
-                && let Some(u) = locality_index
+                && let Some(u) = self
+                    .localities
                     .best(place.center, layer)
-                    .filter(|u| Some(*u) != *own)
+                    .filter(|u| Some(*u) != own)
             {
                 best.insert(layer, (0, u));
             }
@@ -418,97 +229,368 @@ fn build(raw: RawData, opts: &ImportOptions) -> Vec<CountryData> {
         place.parents = best.values().map(|(_, u)| *u).collect();
         place.country_code = country.or(place.country_code.take());
         if place.postcode.is_none() && place.layer <= Layer::Street {
-            place.postcode = postcode_index
-                .containing(place.center)
+            place.postcode = self
+                .postcodes
+                .containing(&mut cache.postcodes, place.center)
                 .first()
-                .map(|&i| postcodes[postcode_index.areas[i].unit as usize].clone());
+                .map(|&i| self.postcode_names[self.postcodes.areas[i].unit as usize].clone());
         }
     }
-    if !postcodes.is_empty() {
-        info!(postcode_areas = postcodes.len(), "postcode boundaries used");
-    }
 
-    let places = streets::merge(places, |p| {
-        p.parents
+    fn city_of(&self, place: &Place) -> Option<u32> {
+        place
+            .parents
             .iter()
             .copied()
-            .find(|&u| units[u as usize].layer == Layer::City)
-    });
-
-    partition(places, &units, &country_names, opts)
+            .find(|&u| self.units[u as usize].layer == Layer::City)
+    }
 }
 
-pub(crate) fn partition(
-    places: Vec<Place>,
-    units: &[AdminUnit],
-    country_names: &HashMap<String, String>,
-    opts: &ImportOptions,
-) -> Vec<CountryData> {
-    let mut by_cc: BTreeMap<String, Vec<Place>> = BTreeMap::new();
-    let mut unknown = 0usize;
-    for mut p in places {
-        match p
-            .country_code
-            .clone()
-            .or_else(|| opts.default_country.clone())
+/// Routes finished places (on the consumer thread): streets to the street
+/// store for merging, everything else to the country spills.
+struct Router {
+    sink: CountrySink,
+    streets: StreetStore,
+    count: u64,
+    started: Instant,
+}
+
+impl Router {
+    /// `city` is the street's city unit (from [`Hierarchy::city_of`]).
+    fn route(&mut self, place: Place, city: Option<u32>) -> Result<()> {
+        if streets::is_mergeable(&place) {
+            self.streets.push(&place, city)?;
+        } else {
+            self.sink.push(place)?;
+        }
+        self.count += 1;
+        if self.count.is_multiple_of(1_000_000) {
+            info!(places = self.count, elapsed = ?self.started.elapsed(), "progress");
+        }
+        Ok(())
+    }
+}
+
+fn unit(units: &mut Vec<AdminUnit>, t: &Tags, layer: Layer) -> u32 {
+    units.push(AdminUnit {
+        layer,
+        name: t.name().unwrap_or_default().to_string(),
+        names: t.localized_names(),
+    });
+    (units.len() - 1) as u32
+}
+
+fn area(
+    units: &mut Vec<AdminUnit>,
+    areas: &mut Vec<Area>,
+    t: &Tags,
+    layer: Layer,
+    rank: u8,
+    polygon: &MultiPolygon<f64>,
+) -> Option<u32> {
+    let bbox = bbox_of(polygon)?;
+    let unit = unit(units, t, layer);
+    let country_code = (layer == Layer::Country)
+        .then(|| t.country_code())
+        .flatten();
+    areas.push(Area {
+        unit,
+        layer,
+        rank,
+        polygon: BandedPolygon::new(polygon),
+        bbox,
+        country_code,
+    });
+    Some(unit)
+}
+
+fn interior(mp: &MultiPolygon<f64>) -> Option<LonLat> {
+    mp.interior_point().map(|p| LonLat::new(p.x(), p.y()))
+}
+
+/// A relation that is a searchable place. Emitted at the end unless a
+/// matching `place=*` node (its label / admin centre) absorbs it.
+struct RelFeature {
+    rel: usize,
+    class: Class,
+    center: Option<LonLat>,
+    extent: Option<BBox>,
+    polygons: Vec<PolygonRings>,
+    own: Option<u32>,
+    absorbed: bool,
+}
+
+/// Build the place for a way feature (geometry from `coords`).
+fn way_place(id: i64, refs: &[i64], t: &Tags, c: &Class, coords: &NodeCoords) -> Option<Place> {
+    let pts = coords.line(refs);
+    let first = *pts.first()?;
+    let linear = !reader::is_closed(refs) || c.layer == Layer::Street || c.key == "waterway";
+    if linear {
+        let line = simplify(&pts);
+        let center = streets::line_midpoint(&line).unwrap_or(first);
+        let mut p = make_place(OsmType::Way, id, t, c, center);
+        p.lines = vec![line];
+        Some(p)
+    } else {
+        let polygon = geo::Polygon::new(rings::to_linestring(&pts), vec![]);
+        let mp = MultiPolygon::new(vec![polygon]);
+        let mut p = make_place(OsmType::Way, id, t, c, interior(&mp).unwrap_or(first));
+        p.extent = bbox_of(&mp);
+        p.polygons = polygon_rings(&mp);
+        Some(p)
+    }
+}
+
+pub fn import_pbf(path: &Path, opts: &ImportOptions) -> Result<Import> {
+    let started = Instant::now();
+    let work = work_dir(opts)?;
+
+    // Pass 1-2: what is needed.
+    let (index, relations) = reader::read_relations(path)?;
+    let member_ways: HashSet<i64> = relations
+        .iter()
+        .flat_map(|r| r.outer.iter().chain(&r.inner).copied())
+        .collect();
+    let mut ids = IdSink::create(&work.path.join("node-ids"))?;
+    for r in &relations {
+        ids.extend(r.label.into_iter().chain(r.admin_centre))?;
+    }
+    let scan = reader::scan_ways(&index, &member_ways, &mut ids)?;
+    drop(member_ways);
+
+    // Pass 3: coordinates, and place nodes for the locality fallback.
+    let mut coords = NodeCoords::build(ids, &work.path.join("node-coords"))?;
+    let mut units: Vec<AdminUnit> = Vec::new();
+    let mut localities: Vec<LocalityPoint> = Vec::new();
+    let mut node_units: HashMap<i64, u32> = HashMap::new();
+    let place_nodes = reader::scan_nodes(&index, &mut coords)?;
+    let place_node_info: HashMap<i64, (Layer, Option<String>)> = place_nodes
+        .iter()
+        .map(|n| (n.id, (n.class.layer, n.tags.name().map(str::to_string))))
+        .collect();
+    for n in place_nodes {
+        if matches!(n.class.layer, Layer::City | Layer::District)
+            && let Some(radius_m) = areas::place_radius_m(&n.class.value)
         {
-            Some(cc) => {
-                p.country_code = Some(cc.to_ascii_uppercase());
-                by_cc.entry(cc).or_default().push(p);
-            }
-            None => unknown += 1,
+            let u = unit(&mut units, &n.tags, n.class.layer);
+            localities.push(LocalityPoint {
+                unit: u,
+                layer: n.class.layer,
+                point: n.point,
+                radius_m,
+            });
+            node_units.insert(n.id, u);
         }
     }
-    if unknown > 0 {
+
+    // Areas: place=* ways, admin / postcode / place relations.
+    let mut admin_areas: Vec<Area> = Vec::new();
+    let mut way_units: HashMap<i64, u32> = HashMap::new();
+    for w in &scan.area_ways {
+        let pts = coords.line(&w.refs);
+        if pts.len() == w.refs.len() {
+            let mp = MultiPolygon::new(vec![geo::Polygon::new(rings::to_linestring(&pts), vec![])]);
+            if let Some(u) = area(
+                &mut units,
+                &mut admin_areas,
+                &w.tags,
+                w.class.layer,
+                11,
+                &mp,
+            ) {
+                way_units.insert(w.id, u);
+            }
+        }
+    }
+    let mut postcode_names = Vec::new();
+    let mut postcode_areas = Vec::new();
+    let mut rel_features: Vec<RelFeature> = Vec::new();
+    let mut broken = 0usize;
+    for (ri, r) in relations.iter().enumerate() {
+        let refs = |ids: &[i64]| -> Vec<&[i64]> {
+            ids.iter()
+                .filter_map(|id| scan.member_refs.get(id).map(Vec::as_slice))
+                .collect()
+        };
+        let (mp, n_broken) = rings::assemble(refs(&r.outer), refs(&r.inner), &coords);
+        if mp.is_none() && n_broken > 0 {
+            broken += 1;
+        }
+        let admin = if r.is_admin_boundary() {
+            r.tags
+                .admin_level()
+                .and_then(|l| tags::admin_level_layer(l).map(|layer| (layer, l)))
+        } else {
+            r.class
+                .as_ref()
+                .filter(|c| c.key == "place" && c.layer.is_admin())
+                .map(|c| (c.layer, 11))
+        };
+        let mut own = None;
+        if let (Some((layer, rank)), Some(mp)) = (admin, &mp) {
+            own = area(&mut units, &mut admin_areas, &r.tags, layer, rank, mp);
+        }
+        if let (Some(code), Some(mp)) = (r.postal_code(), &mp)
+            && let Some(bbox) = bbox_of(mp)
+        {
+            // Postcode areas reuse `Area`; `unit` indexes `postcode_names`.
+            postcode_names.push(code.to_string());
+            postcode_areas.push(Area {
+                unit: (postcode_names.len() - 1) as u32,
+                layer: Layer::Locality,
+                rank: 0,
+                polygon: BandedPolygon::new(mp),
+                bbox,
+                country_code: None,
+            });
+        }
+        if let Some(class) = &r.class {
+            let center = r
+                .label
+                .or(r.admin_centre)
+                .and_then(|id| coords.get(id))
+                .or_else(|| mp.as_ref().and_then(interior));
+            rel_features.push(RelFeature {
+                rel: ri,
+                class: class.clone(),
+                center,
+                extent: mp.as_ref().and_then(bbox_of),
+                polygons: mp.as_ref().map(polygon_rings).unwrap_or_default(),
+                own,
+                absorbed: false,
+            });
+        }
+    }
+    drop(scan);
+    if broken > 0 {
         warn!(
-            unknown,
-            "places outside any country boundary were skipped (use --default-country to keep them)"
+            broken,
+            "relations with incomplete geometry (probably clipped by the extract); they are not used for the hierarchy"
         );
     }
-    let total: usize = by_cc.values().map(Vec::len).sum();
-    let found: Vec<String> = by_cc
-        .iter()
-        .map(|(cc, v)| format!("{cc}={}", v.len()))
-        .collect();
-    info!(countries = %found.join(" "), "places per country");
-
-    if !opts.countries.is_empty() {
-        for cc in &opts.countries {
-            if !by_cc.contains_key(cc) {
-                warn!(country = %cc, "requested country has no places in this extract");
-            }
+    let mut country_names: HashMap<String, String> = HashMap::new();
+    for a in &admin_areas {
+        if let Some(cc) = &a.country_code {
+            country_names
+                .entry(cc.clone())
+                .or_insert_with(|| units[a.unit as usize].name.clone());
         }
-        by_cc.retain(|cc, _| opts.countries.contains(cc));
-    } else if !opts.all_countries {
-        by_cc.retain(|cc, v| {
-            let keep = v.len() as f64 >= opts.min_share * total as f64;
-            if !keep {
-                info!(country = %cc, places = v.len(), "skipping border sliver (use --all-countries or --countries to keep it)");
-            }
-            keep
-        });
     }
+    info!(
+        admin_areas = admin_areas.len(),
+        postcode_areas = postcode_areas.len(),
+        localities = localities.len(),
+        "areas built"
+    );
 
-    by_cc
-        .into_iter()
-        .map(|(cc, mut places)| {
-            // Each partition gets its own compact admin table.
-            let mut remap: HashMap<u32, u32> = HashMap::new();
-            let mut admins = Vec::new();
-            for p in &mut places {
-                for u in &mut p.parents {
-                    *u = *remap.entry(*u).or_insert_with(|| {
-                        admins.push(units[*u as usize].clone());
-                        (admins.len() - 1) as u32
-                    });
+    // A boundary whose label (or same-named admin centre) is a matching
+    // `place=*` node is the same real-world place: the node is kept and
+    // gets the boundary's extent and polygon. Decided up front, from the
+    // sorted place nodes, so the result does not depend on thread timing.
+    let mut twins: HashMap<i64, Vec<usize>> = HashMap::new();
+    for (i, f) in rel_features.iter_mut().enumerate() {
+        let r = &relations[f.rel];
+        let layer_ok = |id: &i64| {
+            place_node_info
+                .get(id)
+                .is_some_and(|(l, _)| *l == f.class.layer)
+        };
+        let twin = r.label.filter(layer_ok).or_else(|| {
+            r.admin_centre
+                .filter(|id| layer_ok(id) && place_node_info[id].1.as_deref() == r.tags.name())
+        });
+        if let Some(node) = twin {
+            twins.entry(node).or_default().push(i);
+            f.absorbed = true;
+        }
+    }
+    drop(place_node_info);
+
+    let hierarchy = Hierarchy {
+        units,
+        areas: AreaIndex::new(admin_areas),
+        postcodes: AreaIndex::new(postcode_areas),
+        postcode_names,
+        localities: LocalityIndex::new(localities),
+    };
+    let mut router = Router {
+        sink: CountrySink::new(work.path.clone(), opts.default_country.clone()),
+        streets: StreetStore::create(&work.path.join("streets.spill"))?,
+        count: 0,
+        started,
+    };
+    // Builds a place's hierarchy on a worker; returns it with its city unit.
+    let finish = |cache: &mut HierCache, mut p: Place, own: Option<u32>| {
+        hierarchy.assign(cache, &mut p, own);
+        let city = if p.layer == Layer::Street {
+            hierarchy.city_of(&p)
+        } else {
+            None
+        };
+        (p, city)
+    };
+
+    // Pass 4: way features.
+    reader::stream_ways(
+        &index,
+        HierCache::default,
+        |cache, id, refs, t, c| {
+            Ok(way_place(id, refs, &t, &c, &coords)
+                .map(|p| finish(cache, p, way_units.get(&id).copied())))
+        },
+        |(p, city)| router.route(p, city),
+    )?;
+    drop(coords);
+
+    // Pass 5: node features.
+    reader::stream_nodes(
+        &index,
+        HierCache::default,
+        |cache, id, point, t, c| {
+            let p = make_place(OsmType::Node, id, &t, &c, point);
+            Ok(Some(finish(cache, p, node_units.get(&id).copied())))
+        },
+        |(mut place, city)| {
+            for i in twins.remove(&place.osm_id).unwrap_or_default() {
+                let f = &mut rel_features[i];
+                place.extent = place.extent.or(f.extent);
+                if place.polygons.is_empty() {
+                    place.polygons = std::mem::take(&mut f.polygons);
                 }
             }
-            CountryData {
-                country_name: country_names.get(&cc).cloned(),
-                country_code: cc,
-                places,
-                admins,
-            }
-        })
-        .collect()
+            router.route(place, city)
+        },
+    )?;
+
+    // Relation features that no node absorbed.
+    let mut cache = HierCache::default();
+    for f in rel_features.into_iter().filter(|f| !f.absorbed) {
+        let Some(center) = f.center else { continue };
+        let r = &relations[f.rel];
+        let mut place = make_place(OsmType::Relation, r.id, &r.tags, &f.class, center);
+        place.extent = f.extent;
+        place.polygons = f.polygons;
+        let (p, city) = finish(&mut cache, place, f.own);
+        router.route(p, city)?;
+    }
+
+    let Router {
+        mut sink,
+        streets,
+        count,
+        ..
+    } = router;
+    let (segments, merged) = streets.finish(|p| sink.push(p))?;
+    info!(
+        places = count,
+        street_segments = segments,
+        streets = merged,
+        elapsed = ?started.elapsed(),
+        "features extracted"
+    );
+    let countries = sink.finish(opts, hierarchy.units, &country_names)?;
+    Ok(Import {
+        countries,
+        _work: work,
+    })
 }

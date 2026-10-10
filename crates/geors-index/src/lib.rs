@@ -10,7 +10,7 @@ pub mod writer;
 
 pub use engine::{Address, Engine, EngineConfig, Hit, NearestRequest, SearchRequest, Shape};
 pub use partition::Partition;
-pub use writer::{PartitionInput, write_partition};
+pub use writer::{PartitionInput, write_partition, write_partition_from_places};
 
 #[derive(Debug, thiserror::Error)]
 pub enum IndexError {

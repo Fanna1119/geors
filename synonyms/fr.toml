@@ -1,0 +1,12 @@
+# French.
+
+[words]
+st = ["saint"]
+ste = ["sainte"]
+av = ["avenue"]
+bd = ["boulevard"]
+ch = ["chemin"]
+rte = ["route"]
+pl = ["place"]
+mt = ["mont"]
+imp = ["impasse"]

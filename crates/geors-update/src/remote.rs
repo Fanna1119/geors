@@ -99,6 +99,27 @@ impl Http {
         }
     }
 
+    /// GET a small text resource that must exist.
+    pub fn get_text_required(&self, url: &str) -> Result<String> {
+        self.get_text(url)?
+            .ok_or_else(|| anyhow::anyhow!("{url} not found"))
+    }
+
+    /// GET a binary resource into memory (diff files: a few MB).
+    pub fn get_bytes(&self, url: &str) -> Result<Vec<u8>> {
+        let mut resp = self
+            .agent
+            .get(url)
+            .call()
+            .with_context(|| format!("GET {url}"))?;
+        let mut out = Vec::new();
+        resp.body_mut()
+            .as_reader()
+            .read_to_end(&mut out)
+            .with_context(|| format!("download of {url} interrupted"))?;
+        Ok(out)
+    }
+
     fn md5_sidecar(&self, url: &str) -> Option<String> {
         match self.get_text(&format!("{url}.md5")) {
             Ok(Some(t)) => parse_md5(&t),

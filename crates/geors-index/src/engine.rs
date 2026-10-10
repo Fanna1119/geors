@@ -268,7 +268,13 @@ impl Engine {
             (None, None) => None,
         };
 
+        // A query of only punctuation (e.g. "(" while typing) has no words:
+        // nothing can match, which is not a client error.
+        let no_words = req.query.as_deref().is_some_and(|q| !q.trim().is_empty());
         let Some(parsed) = parsed else {
+            if no_words && filter_box.is_none() {
+                return Ok(Vec::new());
+            }
             return match (filter_box, req.focus) {
                 (Some(fb), _) => self.spatial_only(req, &fb, limit),
                 (None, Some(point)) => self.nearest(&NearestRequest {
@@ -286,28 +292,38 @@ impl Engine {
 
         let parts = self.select(&req.countries)?;
         let fetch = (limit * 5).clamp(20, 200);
-        let mut cands = Vec::new();
-        for slack in [0usize, 1] {
-            if slack > 0 && (parsed.tokens.len() < 2 || cands.len() >= limit) {
+        // Hard spatial filter per partition, computed once for all phases.
+        // `None` = no filter; partitions with an empty candidate set are skipped.
+        let mut filters: Vec<(usize, Option<Arc<BitSet>>)> = Vec::new();
+        for &pi in &parts {
+            match &filter_box {
+                Some(fb) => {
+                    let set = self.spatial_candidates(&self.partitions[pi], fb, req)?;
+                    if !set.is_empty() {
+                        filters.push((pi, Some(Arc::new(set))));
+                    }
+                }
+                None => filters.push((pi, None)),
+            }
+        }
+        // Cheapest first; a later phase only runs if the earlier ones found
+        // nothing (a precise address legitimately has a single hit, so
+        // "fewer than limit" would make every such query pay for fuzzy
+        // matching): (fuzzy, words allowed to be missing, penalty).
+        let phases = [(false, 0usize, 1.0f32), (true, 0, 1.0), (true, 1, 0.5)];
+        let mut cands: Vec<Candidate> = Vec::new();
+        for (phase, &(fuzzy, slack, penalty)) in phases.iter().enumerate() {
+            if phase > 0 && !cands.is_empty() {
                 break;
             }
-            // Relaxed matches (one word missing) are penalised.
-            let penalty = if slack == 0 { 1.0 } else { 0.5 };
-            for &pi in &parts {
-                let part = &self.partitions[pi];
-                let filter = match &filter_box {
-                    Some(fb) => {
-                        let set = self.spatial_candidates(part, fb, req)?;
-                        if set.is_empty() {
-                            continue;
-                        }
-                        Some(Arc::new(set))
-                    }
-                    None => None,
-                };
-                let query = part
-                    .text
-                    .build_query(&parsed, &req.layers, slack, &self.synonyms);
+            if slack > 0 && parsed.tokens.len() < 2 {
+                break;
+            }
+            for (pi, filter) in &filters {
+                let part = &self.partitions[*pi];
+                let query =
+                    part.text
+                        .build_query(&parsed, &req.layers, slack, fuzzy, &self.synonyms);
                 let scorer_part = part.clone();
                 let ranking = self.ranking.clone();
                 let focus = req.focus;
@@ -320,12 +336,12 @@ impl Engine {
                 });
                 let hits = part
                     .text
-                    .search(query.as_ref(), filter, scorer, fetch)
+                    .search(query.as_ref(), filter.clone(), scorer, fetch)
                     .map_err(IndexError::from)?;
                 for (score, id) in hits {
-                    if !cands.iter().any(|c: &Candidate| c.part == pi && c.id == id) {
+                    if !cands.iter().any(|c| c.part == *pi && c.id == id) {
                         cands.push(Candidate {
-                            part: pi,
+                            part: *pi,
                             id,
                             score,
                             distance_m: None,
@@ -363,7 +379,7 @@ impl Engine {
         fb: &BBox,
         req: &SearchRequest,
     ) -> Result<BitSet, EngineError> {
-        let mut set = BitSet::new(part.len() as usize);
+        let mut ids = Vec::new();
         for id in part.search_bbox(fb)? {
             let Some(rec) = part.record(id) else { continue };
             if !req.layers.is_empty() && !req.layers.contains(&rec.layer) {
@@ -374,9 +390,9 @@ impl Engine {
             {
                 continue;
             }
-            set.insert(id);
+            ids.push(id);
         }
-        Ok(set)
+        Ok(BitSet::from_ids(ids, part.len() as usize))
     }
 
     /// No query text: everything inside the filter, nearest first when a
@@ -426,62 +442,94 @@ impl Engine {
     pub fn nearest(&self, req: &NearestRequest) -> Result<Vec<Hit>, EngineError> {
         let limit = req.limit.max(1);
         let p = req.point;
+        let max = req.max_distance_m.unwrap_or(f64::INFINITY);
         let passes = |layer: Layer| req.layers.is_empty() || req.layers.contains(&layer);
-        let mut cands: Vec<Candidate> = Vec::new();
-        for pi in self.select(&req.countries)? {
+        // Nearest partitions first: once the k-th best distance is below a
+        // partition's distance, it and all later ones can be skipped.
+        let mut parts: Vec<(f64, usize)> = self
+            .select(&req.countries)?
+            .into_iter()
+            .map(|pi| (lower_bound_m(&self.partitions[pi].meta.bbox, p), pi))
+            .collect();
+        parts.sort_by(|a, b| a.0.total_cmp(&b.0));
+        // Best so far, ascending: (distance, partition, id).
+        let mut best: Vec<(f64, usize, u32)> = Vec::with_capacity(limit + 1);
+        let bound = |best: &Vec<(f64, usize, u32)>| {
+            if best.len() == limit {
+                best[limit - 1].0.min(max)
+            } else {
+                max
+            }
+        };
+        // Seed the bound from every partition's first few candidates. Country
+        // bboxes overlap along borders, so a partition whose box contains
+        // the point may still have nothing nearby; without a seed its walk
+        // would have to grow until it found `limit` places far away.
+        for &(_, pi) in &parts {
             let part = &self.partitions[pi];
-            let radius = match req.max_distance_m {
-                Some(r) => Some(r),
-                None => {
-                    // Grow the approximate search until it yields `limit` matches.
-                    let mut want = (limit * 4).max(16);
-                    loop {
-                        let ids = part.approx_neighbors(p, want)?;
-                        let mut ds: Vec<f64> = ids
-                            .iter()
-                            .filter_map(|&id| part.record(id))
-                            .filter(|r| passes(r.layer))
-                            .map(|r| part.distance(&r, p))
-                            .collect();
-                        let exhausted = ids.len() < want;
-                        if ds.len() >= limit {
-                            ds.sort_by(f64::total_cmp);
-                            break Some(ds[limit - 1]);
-                        }
-                        if exhausted {
-                            // Every item was examined: no radius bound needed.
-                            break ds.into_iter().max_by(f64::total_cmp);
-                        }
-                        want *= 4;
-                    }
-                }
-            };
-            let Some(radius) = radius else { continue };
-            for id in part.search_bbox(&BBox::around(p, radius))? {
+            for (id, _) in part.neighbors_lower_bound(p, limit * 2, bound(&best))? {
                 let Some(rec) = part.record(id) else { continue };
-                if !passes(rec.layer) {
+                if !passes(rec.layer) || best.iter().any(|b| b.1 == pi && b.2 == id) {
                     continue;
                 }
                 let d = part.distance(&rec, p);
-                if d <= radius {
-                    cands.push(Candidate {
-                        part: pi,
-                        id,
-                        score: 0.0,
-                        distance_m: Some(d),
-                    });
+                if d <= bound(&best) {
+                    let at = best.partition_point(|b| b.0 <= d);
+                    best.insert(at, (d, pi, id));
+                    best.truncate(limit);
                 }
             }
         }
-        cands.sort_by(|a, b| {
-            a.distance_m
-                .partial_cmp(&b.distance_m)
-                .unwrap_or(Ordering::Equal)
-        });
-        cands.truncate(limit);
-        for c in &mut cands {
-            c.score = self.ranking.proximity(c.distance_m.unwrap_or(0.0));
+        for (lower, pi) in parts {
+            if lower > bound(&best) {
+                continue;
+            }
+            let part = &self.partitions[pi];
+            // Best-first k-NN: walk places in order of a lower bound on their
+            // distance; stop once the bound exceeds the k-th exact distance.
+            // (Long rivers have huge bboxes, so bbox order alone is no good.)
+            let mut want = (limit * 4).max(32);
+            let (mut visited, mut rounds) = (0usize, 0usize);
+            loop {
+                rounds += 1;
+                let list = part.neighbors_lower_bound(p, want, bound(&best))?;
+                let mut done = list.len() < want;
+                for &(id, lower) in &list {
+                    if lower > bound(&best) {
+                        done = true;
+                        break;
+                    }
+                    if best.iter().any(|b| b.1 == pi && b.2 == id) {
+                        continue;
+                    }
+                    let Some(rec) = part.record(id) else { continue };
+                    if !passes(rec.layer) {
+                        continue;
+                    }
+                    visited += 1;
+                    let d = part.distance(&rec, p);
+                    if d <= bound(&best) {
+                        let at = best.partition_point(|b| b.0 <= d);
+                        best.insert(at, (d, pi, id));
+                        best.truncate(limit);
+                    }
+                }
+                if done {
+                    break;
+                }
+                want *= 4;
+            }
+            debug!(partition = part.code(), visited, rounds, want, "nearest");
         }
+        let cands = best
+            .into_iter()
+            .map(|(d, part, id)| Candidate {
+                part,
+                id,
+                score: self.ranking.proximity(d),
+                distance_m: Some(d),
+            })
+            .collect();
         self.load(cands, Some(p))
     }
 
@@ -539,6 +587,17 @@ impl Engine {
             .collect::<Result<_, _>>()
             .map_err(EngineError::from)
     }
+}
+
+/// A conservative lower bound (metres) on the distance from `p` to any
+/// point in `b`: haversine to the clamped point, reduced by 10 % because
+/// on a sphere the clamped point is not always the closest one.
+fn lower_bound_m(b: &BBox, p: LonLat) -> f64 {
+    let c = LonLat::new(
+        p.lon.clamp(b.min_lon, b.max_lon),
+        p.lat.clamp(b.min_lat, b.max_lat),
+    );
+    geors_core::geom::haversine(p, c) * 0.9
 }
 
 fn sort_by_score(cands: &mut [Candidate]) {

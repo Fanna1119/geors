@@ -101,6 +101,41 @@ pub struct SourceState {
     pub checked_at: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_error: Option<String>,
+    /// Local PBF that replication diffs are applied to.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base: Option<String>,
+    /// Replication state of `base`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub replication: Option<ReplicationState>,
+}
+
+/// Where a base file's diffs come from and how far it is applied.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ReplicationState {
+    pub base_url: String,
+    pub sequence: u64,
+    /// Unix seconds of the data.
+    pub timestamp: i64,
+}
+
+impl From<crate::pbf_write::Replication> for ReplicationState {
+    fn from(r: crate::pbf_write::Replication) -> Self {
+        Self {
+            base_url: r.base_url,
+            sequence: r.sequence,
+            timestamp: r.timestamp,
+        }
+    }
+}
+
+impl From<&ReplicationState> for crate::pbf_write::Replication {
+    fn from(r: &ReplicationState) -> Self {
+        Self {
+            base_url: r.base_url.clone(),
+            sequence: r.sequence,
+            timestamp: r.timestamp,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -115,8 +150,16 @@ pub struct Source {
     pub all_countries: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_country: Option<String>,
+    /// Keep the PBF and apply replication diffs instead of downloading the
+    /// whole extract again (when the extract publishes diffs).
+    #[serde(default = "yes")]
+    pub diffs: bool,
     #[serde(default)]
     pub state: SourceState,
+}
+
+fn yes() -> bool {
+    true
 }
 
 impl Source {

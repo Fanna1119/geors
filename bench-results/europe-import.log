@@ -1,0 +1,65 @@
+[2m2026-10-10T05:46:58.020560Z[0m [32m INFO[0m [2mgeors_update[0m[2m:[0m importing [3minput[0m[2m=[0m/Users/langeveld/Downloads/europe-latest.osm.pbf [3mformat[0m[2m=[0mPbf
+[2m2026-10-10T05:48:21.679692Z[0m [32m INFO[0m [2mgeors_ingest::reader[0m[2m:[0m pass 1/5: relations [3mrelations[0m[2m=[0m862053 [3mnode_blobs[0m[2m=[0m480820 [3mway_blobs[0m[2m=[0m58817 [3melapsed[0m[2m=[0m83.658757167s
+[2m2026-10-10T05:49:25.439059Z[0m [32m INFO[0m [2mgeors_ingest::reader[0m[2m:[0m pass 2/5: ways [3mfeature_ways[0m[2m=[0m84968254 [3mmember_ways[0m[2m=[0m3847084 [3melapsed[0m[2m=[0m63.332177875s
+[2m2026-10-10T05:58:48.654145Z[0m [32m INFO[0m [2mgeors_ingest::reader[0m[2m:[0m pass 3/5: node coordinates [3mneeded_nodes[0m[2m=[0m805673764 [3mmissing_nodes[0m[2m=[0m196 [3mplace_nodes[0m[2m=[0m3743988 [3melapsed[0m[2m=[0m119.137532166s
+[2m2026-10-10T06:01:09.388081Z[0m [33m WARN[0m [2mgeo::algorithm::relate::geomgraph::geometry_graph[0m[2m:[0m polygon had no winding order. Results are undefined.
+[2m2026-10-10T06:01:25.111659Z[0m [33m WARN[0m [2mgeo::algorithm::relate::geomgraph::geometry_graph[0m[2m:[0m polygon had no winding order. Results are undefined.
+[2m2026-10-10T06:01:50.221423Z[0m [33m WARN[0m [2mgeo::algorithm::relate::geomgraph::geometry_graph[0m[2m:[0m polygon had no winding order. Results are undefined.
+[2m2026-10-10T06:02:46.301617Z[0m [33m WARN[0m [2mgeo::algorithm::relate::geomgraph::geometry_graph[0m[2m:[0m polygon had no winding order. Results are undefined.
+[2m2026-10-10T06:03:51.347223Z[0m [33m WARN[0m [2mgeo::algorithm::relate::geomgraph::geometry_graph[0m[2m:[0m polygon had no winding order. Results are undefined.
+[2m2026-10-10T06:04:15.172852Z[0m [33m WARN[0m [2mgeo::algorithm::relate::geomgraph::geometry_graph[0m[2m:[0m polygon had no winding order. Results are undefined.
+[2m2026-10-10T06:04:42.274062Z[0m [33m WARN[0m [2mgeo::algorithm::relate::geomgraph::geometry_graph[0m[2m:[0m polygon had no winding order. Results are undefined.
+[2m2026-10-10T06:05:22.616841Z[0m [33m WARN[0m [2mgeo::algorithm::relate::geomgraph::geometry_graph[0m[2m:[0m polygon had no winding order. Results are undefined.
+[2m2026-10-10T06:05:34.200605Z[0m [33m WARN[0m [2mgeo::algorithm::relate::geomgraph::geometry_graph[0m[2m:[0m polygon had no winding order. Results are undefined.
+[2m2026-10-10T06:06:25.260480Z[0m [33m WARN[0m [2mgeo::algorithm::relate::geomgraph::geometry_graph[0m[2m:[0m polygon had no winding order. Results are undefined.
+[2m2026-10-10T06:06:43.414752Z[0m [33m WARN[0m [2mgeo::algorithm::relate::geomgraph::geometry_graph[0m[2m:[0m polygon had no winding order. Results are undefined.
+[2m2026-10-10T06:06:46.813506Z[0m [33m WARN[0m [2mgeo::algorithm::relate::geomgraph::geometry_graph[0m[2m:[0m polygon had no winding order. Results are undefined.
+[2m2026-10-10T06:08:29.449004Z[0m [33m WARN[0m [2mgeo::algorithm::relate::geomgraph::geometry_graph[0m[2m:[0m polygon had no winding order. Results are undefined.
+[2m2026-10-10T06:08:52.035755Z[0m [33m WARN[0m [2mgeo::algorithm::relate::geomgraph::geometry_graph[0m[2m:[0m polygon had no winding order. Results are undefined.
+[2m2026-10-10T06:09:01.241097Z[0m [33m WARN[0m [2mgeo::algorithm::relate::geomgraph::geometry_graph[0m[2m:[0m polygon had no winding order. Results are undefined.
+[2m2026-10-10T06:09:06.820462Z[0m [33m WARN[0m [2mgeo::algorithm::relate::geomgraph::geometry_graph[0m[2m:[0m polygon had no winding order. Results are undefined.
+[2m2026-10-10T06:09:18.484457Z[0m [33m WARN[0m [2mgeo::algorithm::relate::geomgraph::geometry_graph[0m[2m:[0m polygon had no winding order. Results are undefined.
+[2m2026-10-10T06:09:29.253570Z[0m [33m WARN[0m [2mgeo::algorithm::relate::geomgraph::geometry_graph[0m[2m:[0m polygon had no winding order. Results are undefined.
+[2m2026-10-10T06:09:44.471789Z[0m [33m WARN[0m [2mgeors_ingest[0m[2m:[0m relations with incomplete geometry (probably clipped by the extract); they are not used for the hierarchy [3mbroken[0m[2m=[0m588
+[2m2026-10-10T06:09:44.511815Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m areas built [3madmin_areas[0m[2m=[0m472336 [3mpostcode_areas[0m[2m=[0m22465 [3mlocalities[0m[2m=[0m1317273
+[2m2026-10-10T06:10:03.886567Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m1000000 [3melapsed[0m[2m=[0m1385.817133166s
+[2m2026-10-10T06:10:21.322747Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m2000000 [3melapsed[0m[2m=[0m1403.253151083s
+[2m2026-10-10T06:10:39.054716Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m3000000 [3melapsed[0m[2m=[0m1420.984980041s
+[2m2026-10-10T06:10:57.370877Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m4000000 [3melapsed[0m[2m=[0m1439.301006541s
+[2m2026-10-10T06:11:15.839667Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m5000000 [3melapsed[0m[2m=[0m1457.769622041s
+[2m2026-10-10T06:11:35.533086Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m6000000 [3melapsed[0m[2m=[0m1477.462761s
+[2m2026-10-10T06:11:56.484150Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m7000000 [3melapsed[0m[2m=[0m1498.407395083s
+[2m2026-10-10T06:12:19.408587Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m8000000 [3melapsed[0m[2m=[0m1521.322944s
+[2m2026-10-10T06:12:41.016211Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m9000000 [3melapsed[0m[2m=[0m1542.928398208s
+[2m2026-10-10T06:13:05.895352Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m10000000 [3melapsed[0m[2m=[0m1567.806776125s
+[2m2026-10-10T06:13:28.288553Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m11000000 [3melapsed[0m[2m=[0m1590.199518083s
+[2m2026-10-10T06:13:49.199274Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m12000000 [3melapsed[0m[2m=[0m1611.110111666s
+[2m2026-10-10T06:14:10.497657Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m13000000 [3melapsed[0m[2m=[0m1632.408283916s
+[2m2026-10-10T06:14:30.905557Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m14000000 [3melapsed[0m[2m=[0m1652.815980208s
+[2m2026-10-10T06:14:53.351233Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m15000000 [3melapsed[0m[2m=[0m1675.261384666s
+[2m2026-10-10T06:15:16.774425Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m16000000 [3melapsed[0m[2m=[0m1698.684329958s
+[2m2026-10-10T06:15:39.198105Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m17000000 [3melapsed[0m[2m=[0m1721.107797916s
+[2m2026-10-10T06:16:00.611178Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m18000000 [3melapsed[0m[2m=[0m1742.520643333s
+[2m2026-10-10T06:16:20.507324Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m19000000 [3melapsed[0m[2m=[0m1762.416573916s
+[2m2026-10-10T06:16:42.537771Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m20000000 [3melapsed[0m[2m=[0m1784.446758s
+[2m2026-10-10T06:17:07.246386Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m21000000 [3melapsed[0m[2m=[0m1809.155133708s
+[2m2026-10-10T06:17:30.729403Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m22000000 [3melapsed[0m[2m=[0m1832.637897958s
+time: command terminated abnormally
+     1835.02 real      2254.85 user      1149.22 sys
+         10240032768  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+            24705363  page reclaims
+            24406538  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+              611983  voluntary context switches
+            45148130  involuntary context switches
+      22754577263308  instructions retired
+      10045050838518  cycles elapsed
+         13441716672  peak memory footprint

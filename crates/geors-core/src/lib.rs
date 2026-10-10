@@ -4,9 +4,11 @@
 //! This crate has no heavy dependencies so that every other crate (ingestion,
 //! indexing, ranking, HTTP) can agree on the same vocabulary.
 
+pub mod doc;
 pub mod geom;
 pub mod layer;
 pub mod model;
+pub mod spill;
 pub mod storage;
 
 pub use geom::{BBox, LonLat};

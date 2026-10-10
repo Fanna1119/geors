@@ -2,7 +2,6 @@
 //! partitions, keep them current with `update`, `serve` them over HTTP, and
 //! inspect them with `info` / `sources`.
 
-use std::collections::BTreeMap;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -12,7 +11,7 @@ use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 use geors_api::{ApiConfig, AppState, DataConfig};
 use geors_index::EngineConfig;
-use geors_index::synonyms::Synonyms;
+use geors_index::synonyms::{SynonymConfig, Synonyms};
 use geors_update::{AddOptions, Outcome, Registry, UpdateOptions};
 use serde::Deserialize;
 use tracing::{error, info, warn};
@@ -30,6 +29,14 @@ const DEFAULT_BIND: &str = "127.0.0.1:2322";
 struct Cli {
     #[command(subcommand)]
     command: Command,
+    /// Worker threads for import and search. Default: the CPUs available
+    /// to the process (container CPU limits are respected).
+    #[arg(long, global = true, env = "GEORS_THREADS")]
+    threads: Option<usize>,
+    /// Memory budget for building the text index during import, in MB
+    /// (default 48 per thread, at most 4 threads; minimum 15).
+    #[arg(long, global = true, env = "GEORS_INDEX_MEMORY_MB")]
+    index_memory_mb: Option<usize>,
 }
 
 #[derive(Subcommand)]
@@ -63,8 +70,15 @@ enum Command {
         /// Keep downloaded files in <data>/.downloads.
         #[arg(long)]
         keep_download: bool,
+        /// Do not keep the extract for diff updates: `update` then always
+        /// downloads it in full (saves the disk space of the extract).
+        #[arg(long)]
+        no_diffs: bool,
     },
     /// Check registered sources for new versions and re-import changed ones.
+    ///
+    /// Sources with a kept extract that publishes diffs (Geofabrik) are
+    /// updated by downloading only the daily diffs and applying them.
     Update {
         #[arg(long, env = "GEORS_DATA", default_value = DEFAULT_DATA_DIR)]
         data: PathBuf,
@@ -74,6 +88,13 @@ enum Command {
         /// Re-import even when nothing changed.
         #[arg(long)]
         force: bool,
+        /// Download extracts in full even when diffs are available.
+        #[arg(long)]
+        full: bool,
+        /// After a diff update, delete the local extract a source was
+        /// imported from (its newer copy in <data>/.base replaces it).
+        #[arg(long)]
+        prune_originals: bool,
         #[arg(long)]
         keep_download: bool,
     },
@@ -103,6 +124,26 @@ enum Command {
         #[arg(long, value_name = "DURATION")]
         update_interval: Option<String>,
     },
+    /// Write a partition's places as JSON lines (for inspection and diffs).
+    Export {
+        #[arg(long, env = "GEORS_DATA", default_value = DEFAULT_DATA_DIR)]
+        data: PathBuf,
+        /// Country code of the partition.
+        country: String,
+        /// Only every Nth place (places are in spatial order, so this is an
+        /// even sample).
+        #[arg(long, default_value_t = 1)]
+        every: u32,
+    },
+    /// Show how words expand with the synonym rules (for checking rules).
+    Synonyms {
+        /// Words, e.g. `kerkstr cres hbf`.
+        #[arg(required = true)]
+        words: Vec<String>,
+        /// Server config whose [synonyms] section to use (default: built-ins).
+        #[arg(long, short)]
+        config: Option<PathBuf>,
+    },
     /// Show the partitions in a data directory.
     Info {
         #[arg(long, env = "GEORS_DATA", default_value = DEFAULT_DATA_DIR)]
@@ -119,8 +160,9 @@ struct ServeConfig {
     countries: Vec<String>,
     api: ApiConfig,
     ranking: geors_rank::RankingConfig,
-    /// Extra abbreviations / synonyms, e.g. `"bhf" = ["bahnhof"]`, `"*gs" = ["gasse"]`.
-    synonyms: BTreeMap<String, Vec<String>>,
+    /// Abbreviation / synonym rules: built-in languages, extra rule files,
+    /// inline rules (see synonyms/README.md).
+    synonyms: SynonymConfig,
     updates: UpdatesConfig,
 }
 
@@ -134,6 +176,9 @@ struct UpdatesConfig {
     /// How often to check the data directory for partitions changed by an
     /// external `geors import` / `geors update` ("0" disables).
     watch_interval: String,
+    /// After a diff update, delete the local extract a source was imported
+    /// from; the newer managed copy in `<data>/.base` replaces it.
+    prune_originals: bool,
 }
 
 impl Default for UpdatesConfig {
@@ -142,6 +187,7 @@ impl Default for UpdatesConfig {
             enabled: false,
             interval: "6h".into(),
             watch_interval: "30s".into(),
+            prune_originals: false,
         }
     }
 }
@@ -201,7 +247,13 @@ fn info_cmd(data: &Path) -> Result<()> {
         println!("no partitions in {}", data.display());
     }
     for cc in codes {
-        let p = geors_index::Partition::open(&data.join(&cc))?;
+        let p = match geors_index::Partition::open(&data.join(&cc)) {
+            Ok(p) => p,
+            Err(e) => {
+                println!("{cc}  unusable: {e}");
+                continue;
+            }
+        };
         let m = &p.meta;
         println!(
             "{cc}  {:<20} {:>9} places  {:>8.1} MiB  source={}  bbox=[{:.4},{:.4},{:.4},{:.4}]",
@@ -220,17 +272,65 @@ fn info_cmd(data: &Path) -> Result<()> {
     Ok(())
 }
 
+fn export_cmd(data: &Path, country: &str, every: u32) -> Result<()> {
+    use std::io::Write;
+    let cc = country_codes(&[country.to_string()])?.remove(0);
+    let p = geors_index::Partition::open(&data.join(&cc))?;
+    let mut out = std::io::BufWriter::new(std::io::stdout().lock());
+    for id in (0..p.len()).step_by(every.max(1) as usize) {
+        let rec = p.record(id).context("corrupt record")?;
+        let place = p.doc(&rec, false)?;
+        let mut v = serde_json::to_value(&place)?;
+        // Resolve admin indices, which are partition-specific.
+        let parents: Vec<String> = place
+            .parents
+            .iter()
+            .filter_map(|&u| p.admins.get(u as usize))
+            .map(|a| format!("{}:{}", a.layer, a.name))
+            .collect();
+        v["parents"] = serde_json::json!(parents);
+        serde_json::to_writer(&mut out, &v)?;
+        out.write_all(b"\n")?;
+    }
+    out.flush()?;
+    Ok(())
+}
+
+fn synonyms_cmd(words: &[String], config: Option<PathBuf>) -> Result<()> {
+    let file: ServeConfig = match &config {
+        Some(path) => toml::from_str(&std::fs::read_to_string(path)?)
+            .with_context(|| format!("invalid config file '{}'", path.display()))?,
+        None => ServeConfig::default(),
+    };
+    let synonyms = Synonyms::load(&file.synonyms)
+        .map_err(|e| anyhow::anyhow!("invalid synonym rules: {e}"))?;
+    println!(
+        "built-in languages: {}",
+        geors_index::synonyms::builtin_languages().join(", ")
+    );
+    let mut analyzer = geors_index::text::analyzer();
+    for word in words {
+        for token in geors_index::text::tokenize(&mut analyzer, word) {
+            let alts = synonyms.expand(&token);
+            if alts.is_empty() {
+                println!("{token}  (no expansion)");
+            } else {
+                println!("{token}  ->  {}", alts.join(", "));
+            }
+        }
+    }
+    Ok(())
+}
+
 fn sources_cmd(data: &Path, remove: Option<String>) -> Result<()> {
-    let mut reg = Registry::load(data)?;
     if let Some(name) = remove {
-        let _lock = geors_update::lock(data)?;
-        if reg.remove(&name).is_none() {
+        if !geors_update::remove_source(data, &name)? {
             bail!("no source named '{name}'");
         }
-        reg.save()?;
-        println!("removed source '{name}' (its partitions were kept)");
+        println!("removed source '{name}' and its base file (its partitions were kept)");
         return Ok(());
     }
+    let reg = Registry::load(data)?;
     if reg.sources.is_empty() {
         println!("no sources registered in {}", data.display());
     }
@@ -246,6 +346,19 @@ fn sources_cmd(data: &Path, remove: Option<String>) -> Result<()> {
             opt(s.state.imported_at.map(iso_time)),
             opt(s.state.checked_at.map(iso_time)),
         );
+        match (&s.state.base, &s.state.replication) {
+            (Some(base), Some(r)) => println!(
+                "    diffs: sequence {} ({})  base={base}",
+                r.sequence,
+                if r.timestamp > 0 {
+                    iso_time(r.timestamp as u64)
+                } else {
+                    "-".into()
+                }
+            ),
+            _ if !s.diffs => println!("    diffs: disabled (--no-diffs)"),
+            _ => println!("    diffs: not available (full downloads)"),
+        }
         if let Some(e) = &s.state.last_error {
             println!("    last error: {e}");
         }
@@ -288,15 +401,16 @@ fn dir_size(dir: &Path) -> u64 {
 }
 
 /// Background loop: run `update`, then hot-reload if anything changed.
-fn spawn_updater(state: Arc<AppState>, every: Duration) {
+fn spawn_updater(state: Arc<AppState>, every: Duration, opts: UpdateOptions) {
     tokio::spawn(async move {
         let mut tick = tokio::time::interval(every);
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         loop {
             tick.tick().await;
             let s = state.clone();
+            let opts = opts.clone();
             let result = tokio::task::spawn_blocking(move || {
-                let reports = geors_update::update(&s.data.data_dir, &UpdateOptions::default())?;
+                let reports = geors_update::update(&s.data.data_dir, &opts)?;
                 if reports.iter().any(|r| r.updated()) {
                     s.reload_if_changed()?;
                 }
@@ -359,7 +473,8 @@ async fn serve(
     let t = Instant::now();
     let engine = EngineConfig {
         ranking: file.ranking,
-        synonyms: Synonyms::new(&file.synonyms),
+        synonyms: Synonyms::load(&file.synonyms)
+            .map_err(|e| anyhow::anyhow!("invalid synonym rules: {e}"))?,
     };
     let data = DataConfig {
         data_dir,
@@ -374,7 +489,11 @@ async fn serve(
     }
     if let Some(every) = update_every {
         info!(every = ?every, "automatic updates enabled");
-        spawn_updater(state.clone(), every);
+        let opts = UpdateOptions {
+            prune_originals: file.updates.prune_originals,
+            ..Default::default()
+        };
+        spawn_updater(state.clone(), every, opts);
     }
 
     let listener = tokio::net::TcpListener::bind(bind)
@@ -397,7 +516,21 @@ fn main() -> Result<()> {
         )
         .with_writer(std::io::stderr)
         .init();
-    match Cli::parse().command {
+    let cli = Cli::parse();
+    let threads = cli
+        .threads
+        .unwrap_or_else(|| std::thread::available_parallelism().map_or(1, |n| n.get()))
+        .max(1);
+    // One pool size for everything CPU-bound: PBF decoding, index writing
+    // (rayon) and the tantivy indexer derive from it.
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(threads)
+        .build_global()
+        .context("cannot configure thread pool")?;
+    if let Some(mb) = cli.index_memory_mb {
+        geors_index::text::set_index_memory(mb * 1024 * 1024);
+    }
+    match cli.command {
         Command::Import {
             inputs,
             data,
@@ -407,6 +540,7 @@ fn main() -> Result<()> {
             name,
             no_track,
             keep_download,
+            no_diffs,
         } => {
             if name.is_some() && inputs.len() > 1 {
                 bail!("--name can only be used with a single input");
@@ -421,6 +555,7 @@ fn main() -> Result<()> {
                     .and_then(|v| v.into_iter().next()),
                 track: !no_track,
                 keep_download,
+                no_diffs,
             };
             for input in &inputs {
                 geors_update::import_location(&data, input, &opts)?;
@@ -431,17 +566,27 @@ fn main() -> Result<()> {
             data,
             sources,
             force,
+            full,
+            prune_originals,
             keep_download,
         } => update_cmd(
             &data,
             &UpdateOptions {
                 force,
+                full,
                 sources,
                 keep_download,
+                prune_originals,
             },
         ),
         Command::Sources { data, remove } => sources_cmd(&data, remove),
         Command::Info { data } => info_cmd(&data),
+        Command::Synonyms { words, config } => synonyms_cmd(&words, config),
+        Command::Export {
+            data,
+            country,
+            every,
+        } => export_cmd(&data, &country, every),
         Command::Serve {
             config,
             data,
@@ -449,6 +594,11 @@ fn main() -> Result<()> {
             bind,
             update_interval,
         } => tokio::runtime::Builder::new_multi_thread()
+            // Network I/O needs few threads; searches run on the blocking
+            // pool, capped at `threads` so concurrent requests queue instead
+            // of oversubscribing the CPUs (tokio's default cap is 512).
+            .worker_threads(threads.min(2))
+            .max_blocking_threads(threads)
             .enable_all()
             .build()?
             .block_on(serve(config, data, countries, bind, update_interval)),
@@ -481,6 +631,7 @@ mod tests {
         let text = include_str!("../geors.example.toml");
         let cfg: ServeConfig = toml::from_str(text).unwrap();
         assert!(!cfg.updates.enabled);
-        assert!(cfg.synonyms.contains_key("bhf"));
+        assert!(cfg.synonyms.words.contains_key("kh"));
+        assert!(Synonyms::load(&cfg.synonyms).is_ok());
     }
 }

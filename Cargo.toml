@@ -14,7 +14,9 @@ geors-core = { version = "0.1.0", path = "crates/geors-core" }
 geors-index = { version = "0.1.0", path = "crates/geors-index" }
 geors-rank = { version = "0.1.0", path = "crates/geors-rank" }
 geors-update = { version = "0.1.0", path = "crates/geors-update" }
+rayon = "1.12.0"
 serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
 tokio = { version = "1.53.2", features = ["full"] }
 toml = "1.1.8"
 tracing = "0.1.44"

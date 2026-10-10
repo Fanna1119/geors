@@ -1,0 +1,18 @@
+# German. Abbreviations in addresses and names -> full words.
+
+[words]
+str = ["strasse"]
+pl = ["platz"]
+hbf = ["hauptbahnhof"]
+bhf = ["bahnhof"]
+st = ["sankt"]
+hl = ["heilige", "heiligen"]
+dr = ["doktor"]
+prof = ["professor"]
+gr = ["gross", "grosse"]
+kl = ["klein", "kleine"]
+
+[suffixes]
+# "Hauptstr" -> "Hauptstrasse", "Marktpl" -> "Marktplatz"
+str = ["strasse"]
+pl = ["platz"]

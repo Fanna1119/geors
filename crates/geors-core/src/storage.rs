@@ -4,10 +4,11 @@
 //! <data>/<cc>/
 //!   meta.json     PartitionMeta (format version, counts, bbox, source)
 //!   places.bin    fixed size PlaceRecord per place, indexed by place id
-//!   docs.bin      concatenated JSON encoded `Place` documents
+//!   docs.bin      compact binary `Place` documents (see `doc`)
 //!   geom.bin      line / polygon geometry as little-endian i32 (lon_e7, lat_e7) pairs
-//!   spatial.idx   packed Hilbert R-tree (flatbush ABI) over place bboxes
+//!   spatial.idx   packed Hilbert R-tree (flatbush ABI, f32) over place bboxes
 //!   admin.json    admin units referenced by `Place::parents`
+//!   tags.json     (osm_key, osm_value) pairs referenced by documents
 //!   text/         tantivy full text index
 //! ```
 //!
@@ -23,7 +24,7 @@ use crate::geom::{BBox, LonLat, from_e7, to_e7};
 use crate::layer::Layer;
 
 /// Bump whenever the layout of any partition file changes.
-pub const FORMAT_VERSION: u32 = 2;
+pub const FORMAT_VERSION: u32 = 7;
 
 pub const META_FILE: &str = "meta.json";
 pub const PLACES_FILE: &str = "places.bin";
@@ -31,6 +32,7 @@ pub const DOCS_FILE: &str = "docs.bin";
 pub const GEOM_FILE: &str = "geom.bin";
 pub const SPATIAL_FILE: &str = "spatial.idx";
 pub const ADMIN_FILE: &str = "admin.json";
+pub const TAGS_FILE: &str = "tags.json";
 pub const TEXT_DIR: &str = "text";
 
 /// `<data>/GENERATION`: changes whenever any partition is (re)written, so a
@@ -187,32 +189,91 @@ fn pairs(bytes: &[u8]) -> impl Iterator<Item = (i32, i32)> + '_ {
 
 /// Encode multi-part line geometry into the `geom.bin` i32 stream.
 /// Returns the number of i32 values written.
+///
+/// Each part starts with a header of three pairs:
+/// `(GEOM_SEPARATOR, n_points)`, `(min_lon, min_lat)`, `(max_lon, max_lat)`,
+/// so distance checks can skip whole parts of long merged features
+/// (rivers made of hundreds of ways) by their bounding box.
 pub fn encode_lines(lines: &[Vec<LonLat>], out: &mut Vec<u8>) -> u32 {
     let start = out.len();
-    for (i, line) in lines.iter().enumerate() {
-        if i > 0 {
-            push_pair(out, GEOM_SEPARATOR, SEP_PART);
+    for line in lines.iter().filter(|l| !l.is_empty()) {
+        let mut b = BBox::empty();
+        for q in line {
+            b.extend(*q);
         }
+        push_pair(out, GEOM_SEPARATOR, line.len() as i32);
+        push_pair(out, to_e7(b.min_lon), to_e7(b.min_lat));
+        push_pair(out, to_e7(b.max_lon), to_e7(b.max_lat));
         push_points(out, line);
     }
     ((out.len() - start) / 4) as u32
 }
 
+/// Parts of an encoded line stream: (bbox, points as (lon_e7, lat_e7)).
+fn line_parts(bytes: &[u8]) -> impl Iterator<Item = (BBox, &[[u8; 8]])> {
+    let all = bytes.as_chunks::<8>().0;
+    let mut i = 0;
+    std::iter::from_fn(move || {
+        let header = all.get(i..i + 3)?;
+        let (_, n) = pair(&header[0]);
+        let (x0, y0) = pair(&header[1]);
+        let (x1, y1) = pair(&header[2]);
+        let n = n.max(0) as usize;
+        let points = all.get(i + 3..i + 3 + n)?;
+        i += 3 + n;
+        let b = BBox::new(from_e7(x0), from_e7(y0), from_e7(x1), from_e7(y1));
+        Some((b, points))
+    })
+}
+
+fn pair(c: &[u8; 8]) -> (i32, i32) {
+    (
+        i32::from_le_bytes(c[0..4].try_into().unwrap()),
+        i32::from_le_bytes(c[4..8].try_into().unwrap()),
+    )
+}
+
+fn point(c: &[u8; 8]) -> LonLat {
+    let (lon, lat) = pair(c);
+    LonLat::new(from_e7(lon), from_e7(lat))
+}
+
 /// Decode a `geom.bin` slice produced by [`encode_lines`].
 pub fn decode_lines(bytes: &[u8]) -> Vec<Vec<LonLat>> {
-    let mut lines = vec![Vec::new()];
-    for (lon, lat) in pairs(bytes) {
-        if lon == GEOM_SEPARATOR {
-            lines.push(Vec::new());
-        } else {
-            lines
-                .last_mut()
-                .unwrap()
-                .push(LonLat::new(from_e7(lon), from_e7(lat)));
+    line_parts(bytes)
+        .map(|(_, pts)| pts.iter().map(point).collect())
+        .collect()
+}
+
+/// Distance from `p` to encoded line geometry, without decoding it into
+/// vectors (hot path of reverse / nearest). Parts whose bounding box is
+/// farther than the best distance so far are skipped. `None` if empty.
+pub fn lines_distance(bytes: &[u8], p: LonLat) -> Option<f64> {
+    let mut best: Option<f64> = None;
+    for (b, pts) in line_parts(bytes) {
+        if let Some(d) = best {
+            let c = LonLat::new(
+                p.lon.clamp(b.min_lon, b.max_lon),
+                p.lat.clamp(b.min_lat, b.max_lat),
+            );
+            // Conservative: on a sphere the clamped point is not always the
+            // closest point of the box.
+            if crate::geom::haversine(p, c) * 0.9 >= d {
+                continue;
+            }
+        }
+        let mut prev: Option<LonLat> = None;
+        for c in pts {
+            let q = point(c);
+            let d = match prev {
+                Some(a) => crate::geom::point_segment_distance(p, a, q),
+                None => crate::geom::haversine(p, q),
+            };
+            best = Some(best.map_or(d, |b: f64| b.min(d)));
+            prev = Some(q);
         }
     }
-    lines.retain(|l| !l.is_empty());
-    lines
+    best
 }
 
 /// A polygon as rings; the first ring is the exterior, the rest are holes.
@@ -287,6 +348,29 @@ mod tests {
         let n = encode_lines(&lines, &mut buf);
         assert_eq!(n as usize * 4, buf.len());
         assert_eq!(decode_lines(&buf), lines);
+    }
+
+    #[test]
+    fn lines_distance_matches_decoded() {
+        let lines = vec![
+            vec![LonLat::new(9.50, 47.10), LonLat::new(9.51, 47.10)],
+            vec![LonLat::new(9.60, 47.20), LonLat::new(9.61, 47.21)],
+        ];
+        let mut buf = Vec::new();
+        encode_lines(&lines, &mut buf);
+        for p in [
+            LonLat::new(9.505, 47.101),
+            LonLat::new(9.605, 47.2),
+            LonLat::new(9.0, 46.0),
+        ] {
+            let want = lines
+                .iter()
+                .filter_map(|l| crate::geom::point_line_distance(p, l))
+                .min_by(f64::total_cmp);
+            let got = lines_distance(&buf, p);
+            assert!((want.unwrap() - got.unwrap()).abs() < 0.01);
+        }
+        assert_eq!(lines_distance(&[], LonLat::new(0.0, 0.0)), None);
     }
 
     #[test]

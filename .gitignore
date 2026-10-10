@@ -2,3 +2,4 @@
 /data
 /osm
 *.osm.pbf
+.DS_Store

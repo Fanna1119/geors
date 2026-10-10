@@ -1,0 +1,12 @@
+# Afrikaans (South Africa, Namibia).
+
+[words]
+str = ["straat"]
+ln = ["laan"]
+wg = ["weg"]
+pres = ["president"]
+
+[suffixes]
+# "Kerkstr" -> "Kerkstraat", "Voortrekkerwg" -> "Voortrekkerweg"
+str = ["straat"]
+wg = ["weg"]

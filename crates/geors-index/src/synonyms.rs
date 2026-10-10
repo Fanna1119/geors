@@ -1,42 +1,46 @@
 //! Query-time abbreviation and synonym expansion ("str" -> "strasse").
 //!
-//! Rules work on normalised tokens (lowercase, accents folded). A rule key
-//! starting with `*` is a suffix rule: `*str = ["strasse"]` turns
-//! "hauptstr" into "hauptstrasse".
+//! The rules are data, not code: one TOML file per language in
+//! `<workspace>/synonyms/` (embedded at build time, see `build.rs`), plus
+//! optional rule files and inline rules from the server configuration.
+//! See `synonyms/README.md` for the file format.
 
 use std::collections::{BTreeMap, HashMap};
+use std::path::{Path, PathBuf};
 
+use serde::Deserialize;
 use tantivy::tokenizer::TextAnalyzer;
-use tracing::warn;
 
 use crate::text;
 
-const WORDS: &[(&str, &[&str])] = &[
-    ("str", &["strasse"]),
-    ("st", &["sankt", "saint", "street"]),
-    ("ste", &["sainte"]),
-    ("pl", &["platz", "place", "plaza"]),
-    ("av", &["avenue", "avinguda", "avenida"]),
-    ("ave", &["avenue"]),
-    ("avda", &["avenida", "avinguda"]),
-    ("bd", &["boulevard"]),
-    ("blvd", &["boulevard"]),
-    ("rd", &["road"]),
-    ("dr", &["drive", "doktor", "doctor"]),
-    ("ln", &["lane"]),
-    ("sq", &["square"]),
-    ("mt", &["mount", "mont", "monte"]),
-    ("hbf", &["hauptbahnhof"]),
-    ("bhf", &["bahnhof"]),
-    ("pza", &["plaza", "piazza"]),
-    ("rte", &["route"]),
-    ("ch", &["chemin"]),
-    ("stn", &["station"]),
-    ("ctra", &["carretera"]),
-    ("hl", &["heilige", "heiligen"]),
-];
+mod builtin {
+    include!(concat!(env!("OUT_DIR"), "/builtin_synonyms.rs"));
+}
 
-const SUFFIXES: &[(&str, &[&str])] = &[("str", &["strasse"]), ("pl", &["platz"])];
+/// One rule file (or the inline rules of the configuration).
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RuleSet {
+    /// Whole words: typed word -> what it may stand for.
+    #[serde(default)]
+    pub words: BTreeMap<String, Vec<String>>,
+    /// Word endings: "hauptstr" -> "hauptstrasse" for `str = ["strasse"]`.
+    #[serde(default)]
+    pub suffixes: BTreeMap<String, Vec<String>>,
+}
+
+/// Which rules to load (the `[synonyms]` section of the server config).
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct SynonymConfig {
+    /// Built-in languages to use (e.g. `["de", "en"]`); empty = all.
+    pub languages: Vec<String>,
+    /// Directory with additional rule files (`*.toml`, same format).
+    pub dir: Option<PathBuf>,
+    /// Inline rules (`[synonyms.words]`, `[synonyms.suffixes]`).
+    pub words: BTreeMap<String, Vec<String>>,
+    pub suffixes: BTreeMap<String, Vec<String>>,
+}
 
 #[derive(Debug, Clone, Default)]
 pub struct Synonyms {
@@ -45,72 +49,107 @@ pub struct Synonyms {
     suffixes: Vec<(String, Vec<String>)>,
 }
 
+/// Languages with built-in rule files.
+pub fn builtin_languages() -> Vec<&'static str> {
+    builtin::BUILTIN.iter().map(|(lang, _)| *lang).collect()
+}
+
+fn normalize(analyzer: &mut TextAnalyzer, word: &str) -> Result<String, String> {
+    match text::tokenize(analyzer, word).as_slice() {
+        [one] => Ok(one.clone()),
+        [] => Err(format!("'{word}' has no letters or digits")),
+        _ => Err(format!("'{word}' is not a single word")),
+    }
+}
+
 impl Synonyms {
-    /// Built-in rules plus `extra` from configuration (keys and values are
-    /// normalised with the index analyzer; multi-word values are ignored).
-    pub fn new(extra: &BTreeMap<String, Vec<String>>) -> Self {
+    /// All built-in rules.
+    pub fn builtin() -> Self {
+        Self::load(&SynonymConfig::default()).expect("built-in synonym files are valid")
+    }
+
+    /// Built-in rules (optionally limited to some languages), rule files
+    /// from `dir`, and inline rules. Errors name the offending file.
+    pub fn load(config: &SynonymConfig) -> Result<Self, String> {
         let mut analyzer = text::analyzer();
         let mut s = Self::default();
-        for (k, vs) in WORDS {
-            s.add(&mut analyzer, k, vs.iter().copied());
-        }
-        for (k, vs) in SUFFIXES {
-            s.add(&mut analyzer, &format!("*{k}"), vs.iter().copied());
-        }
-        for (k, vs) in extra {
-            s.add(&mut analyzer, k, vs.iter().map(String::as_str));
-        }
-        s.suffixes.sort_by_key(|(k, _)| std::cmp::Reverse(k.len()));
-        s
-    }
-
-    fn normalize(analyzer: &mut TextAnalyzer, word: &str) -> Option<String> {
-        match text::tokenize(analyzer, word).as_slice() {
-            [one] => Some(one.clone()),
-            _ => {
-                warn!(word, "ignoring synonym that is not a single word");
-                None
+        for lang in &config.languages {
+            if !builtin_languages().contains(&lang.as_str()) {
+                return Err(format!(
+                    "no built-in synonyms for language '{lang}' (available: {})",
+                    builtin_languages().join(", ")
+                ));
             }
         }
+        for (lang, text) in builtin::BUILTIN {
+            if config.languages.is_empty() || config.languages.iter().any(|l| l == lang) {
+                s.add_file(&mut analyzer, &format!("built-in {lang}.toml"), text)?;
+            }
+        }
+        if let Some(dir) = &config.dir {
+            for path in rule_files(dir)? {
+                let text = std::fs::read_to_string(&path)
+                    .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+                s.add_file(&mut analyzer, &path.display().to_string(), &text)?;
+            }
+        }
+        let inline = RuleSet {
+            words: config.words.clone(),
+            suffixes: config.suffixes.clone(),
+        };
+        s.add_rules(&mut analyzer, "[synonyms] in the config", &inline)?;
+        s.suffixes.sort_by_key(|(k, _)| std::cmp::Reverse(k.len()));
+        Ok(s)
     }
 
-    fn add<'a>(
+    fn add_file(
         &mut self,
         analyzer: &mut TextAnalyzer,
-        key: &str,
-        values: impl Iterator<Item = &'a str>,
-    ) {
-        let (suffix, key) = match key.strip_prefix('*') {
-            Some(k) => (true, k),
-            None => (false, key),
+        name: &str,
+        text: &str,
+    ) -> Result<(), String> {
+        let rules: RuleSet = toml::from_str(text).map_err(|e| format!("{name}: {e}"))?;
+        self.add_rules(analyzer, name, &rules)
+    }
+
+    fn add_rules(
+        &mut self,
+        analyzer: &mut TextAnalyzer,
+        name: &str,
+        rules: &RuleSet,
+    ) -> Result<(), String> {
+        let mut normalized = |key: &str,
+                              values: &[String]|
+         -> Result<(String, Vec<String>), String> {
+            let key = normalize(analyzer, key).map_err(|e| format!("{name}: key {e}"))?;
+            let values = values
+                .iter()
+                .map(|v| {
+                    normalize(analyzer, v).map_err(|e| format!("{name}: value {e} (for '{key}')"))
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok((key, values))
         };
-        let Some(key) = Self::normalize(analyzer, key) else {
-            return;
-        };
-        let values: Vec<String> = values
-            .filter_map(|v| Self::normalize(analyzer, v))
-            .collect();
-        let slot = if suffix {
-            match self.suffixes.iter_mut().find(|(k, _)| *k == key) {
-                Some((_, v)) => v,
+        for (key, values) in &rules.words {
+            let (key, values) = normalized(key, values)?;
+            merge_into(self.words.entry(key).or_default(), values);
+        }
+        for (key, values) in &rules.suffixes {
+            let (key, values) = normalized(key, values)?;
+            let slot = match self.suffixes.iter().position(|(k, _)| *k == key) {
+                Some(i) => &mut self.suffixes[i].1,
                 None => {
                     self.suffixes.push((key, Vec::new()));
                     &mut self.suffixes.last_mut().unwrap().1
                 }
-            }
-        } else {
-            self.words.entry(key).or_default()
-        };
-        for v in values {
-            if !slot.contains(&v) {
-                slot.push(v);
-            }
+            };
+            merge_into(slot, values);
         }
+        Ok(())
     }
 
-    /// The built-in rules only.
-    pub fn builtin() -> Self {
-        Self::new(&BTreeMap::new())
+    pub fn is_empty(&self) -> bool {
+        self.words.is_empty() && self.suffixes.is_empty()
     }
 
     /// Alternatives for a normalised token (never includes the token itself).
@@ -128,23 +167,94 @@ impl Synonyms {
     }
 }
 
+fn merge_into(slot: &mut Vec<String>, values: Vec<String>) {
+    for v in values {
+        if !slot.contains(&v) {
+            slot.push(v);
+        }
+    }
+}
+
+/// `*.toml` files in `dir`, sorted (deterministic rule order).
+fn rule_files(dir: &Path) -> Result<Vec<PathBuf>, String> {
+    let mut files: Vec<PathBuf> = std::fs::read_dir(dir)
+        .map_err(|e| format!("cannot read synonyms dir {}: {e}", dir.display()))?
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|x| x == "toml"))
+        .collect();
+    files.sort();
+    Ok(files)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    /// Every shipped rule file must parse and contain only single words.
     #[test]
-    fn builtin_and_custom_rules() {
-        let mut extra = BTreeMap::new();
-        extra.insert("Gr.".to_string(), vec!["Groß".to_string()]);
-        extra.insert("*gs".to_string(), vec!["gasse".to_string()]);
-        let s = Synonyms::new(&extra);
-        assert_eq!(s.expand("str"), vec!["strasse"]);
-        assert_eq!(s.expand("hauptstr"), vec!["hauptstrasse"]);
-        assert_eq!(s.expand("marktpl"), vec!["marktplatz"]);
-        assert_eq!(s.expand("gr"), vec!["gross"]);
-        assert_eq!(s.expand("kirchgs"), vec!["kirchgasse"]);
+    fn builtin_files_are_valid() {
+        assert!(builtin_languages().len() >= 5);
+        for (lang, text) in builtin::BUILTIN {
+            let mut s = Synonyms::default();
+            s.add_file(&mut text::analyzer(), lang, text)
+                .unwrap_or_else(|e| panic!("synonyms/{lang}.toml: {e}"));
+            assert!(!s.is_empty(), "synonyms/{lang}.toml has no rules");
+        }
+    }
+
+    #[test]
+    fn builtin_rules_across_languages() {
+        let s = Synonyms::builtin();
+        let hauptstr = s.expand("hauptstr");
+        assert!(hauptstr.contains(&"hauptstrasse".to_string()));
+        assert!(hauptstr.contains(&"hauptstraat".to_string()));
+        assert!(s.expand("st").contains(&"street".to_string()));
+        assert!(s.expand("st").contains(&"sankt".to_string()));
+        assert_eq!(s.expand("cres"), vec!["crescent"]);
         assert!(s.expand("vaduz").is_empty());
-        // "str" itself is too short to be treated as a suffix.
-        assert!(!s.expand("st").is_empty());
+    }
+
+    #[test]
+    fn languages_dir_and_inline_rules() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("local.toml"),
+            "[words]\nkh = [\"krankenhaus\"]\n",
+        )
+        .unwrap();
+        let mut config = SynonymConfig {
+            languages: vec!["de".into()],
+            dir: Some(dir.path().to_path_buf()),
+            ..Default::default()
+        };
+        config.words.insert("Gr.".into(), vec!["Groß".into()]);
+        config.suffixes.insert("gs".into(), vec!["gasse".into()]);
+        let s = Synonyms::load(&config).unwrap();
+        // Only German built-ins: no English "street".
+        assert_eq!(s.expand("st"), vec!["sankt"]);
+        assert_eq!(s.expand("kh"), vec!["krankenhaus"]);
+        assert_eq!(s.expand("kirchgs"), vec!["kirchgasse"]);
+        assert!(s.expand("gr").contains(&"gross".to_string()));
+    }
+
+    #[test]
+    fn bad_rules_are_reported() {
+        let bad = |cfg: SynonymConfig| Synonyms::load(&cfg).unwrap_err();
+        let e = bad(SynonymConfig {
+            languages: vec!["xx".into()],
+            ..Default::default()
+        });
+        assert!(e.contains("available"), "{e}");
+        let mut cfg = SynonymConfig::default();
+        cfg.words.insert("rue".into(), vec!["rue de la".into()]);
+        assert!(bad(cfg).contains("not a single word"));
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("x.toml"), "[wrods]\na = [\"b\"]\n").unwrap();
+        let e = bad(SynonymConfig {
+            dir: Some(dir.path().to_path_buf()),
+            ..Default::default()
+        });
+        assert!(e.contains("x.toml"), "{e}");
     }
 }
