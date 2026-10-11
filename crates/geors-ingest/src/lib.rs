@@ -20,6 +20,7 @@
 pub mod areas;
 pub mod dump;
 pub use geors_core::extsort;
+pub mod hierarchy;
 pub mod interpolation;
 pub mod join;
 pub use geors_core::mem;
@@ -45,7 +46,8 @@ use geors_core::{AdminUnit, Layer, OsmType, Place};
 use rayon::prelude::*;
 use tracing::{info, warn};
 
-use crate::areas::{Area, AreaIndex, CellCache, LocalityIndex, LocalityPoint};
+use crate::areas::{Area, AreaIndex, LocalityIndex, LocalityPoint};
+use crate::hierarchy::{HierCache, Hierarchy};
 use crate::join::{RefSink, WayCursor};
 use crate::nodes::{IdSink, NodeCoords};
 use crate::pip::{BandedPolygon, PolygonStore, StoredPolygon};
@@ -71,6 +73,9 @@ pub struct ImportOptions {
     pub work_dir: Option<PathBuf>,
     /// How ways find their nodes' coordinates.
     pub node_lookup: NodeLookup,
+    /// Keep the address hierarchy (boundary polygons, units, localities)
+    /// here, for incremental updates (see `hierarchy::Hierarchy::load`).
+    pub state_dir: Option<PathBuf>,
 }
 
 /// How ways get their nodes' coordinates during import.
@@ -146,6 +151,7 @@ impl Default for ImportOptions {
             min_share: 0.01,
             work_dir: None,
             node_lookup: default_node_lookup(),
+            state_dir: None,
         }
     }
 }
@@ -253,82 +259,6 @@ fn simplify(line: &[LonLat]) -> Vec<LonLat> {
         .iter()
         .map(|c| LonLat::new(c.x, c.y))
         .collect()
-}
-
-/// Assigns parents (admin units), country and postcode to places.
-struct Hierarchy {
-    units: Vec<AdminUnit>,
-    areas: AreaIndex,
-    postcodes: AreaIndex,
-    postcode_names: Vec<String>,
-    localities: LocalityIndex,
-}
-
-/// Per-worker point-in-polygon caches.
-#[derive(Default)]
-struct HierCache {
-    areas: CellCache,
-    postcodes: CellCache,
-}
-
-impl Hierarchy {
-    /// Read-only apart from the caller's cache, so workers run it in parallel.
-    fn assign(&self, cache: &mut HierCache, place: &mut Place, own: Option<u32>) {
-        let mut best: BTreeMap<Layer, (u8, u32)> = BTreeMap::new();
-        let mut country = None;
-        let mut region_country = None;
-        for ai in self.areas.containing(&mut cache.areas, place.center) {
-            let a = &self.areas.areas[ai];
-            if let Some(cc) = &a.country_code {
-                let slot = if a.layer == Layer::Country {
-                    &mut country
-                } else {
-                    &mut region_country
-                };
-                if slot.is_none() {
-                    *slot = Some(cc.clone());
-                }
-            }
-            if a.layer <= place.layer || Some(a.unit) == own {
-                continue;
-            }
-            let e = best.entry(a.layer).or_insert((a.rank, a.unit));
-            if a.rank > e.0 {
-                *e = (a.rank, a.unit);
-            }
-        }
-        for layer in [Layer::City, Layer::District] {
-            if place.layer < layer
-                && !best.contains_key(&layer)
-                && let Some(u) = self
-                    .localities
-                    .best(place.center, layer)
-                    .filter(|u| Some(*u) != own)
-            {
-                best.insert(layer, (0, u));
-            }
-        }
-        place.parents = best.values().map(|(_, u)| *u).collect();
-        // A country boundary cut by the extract's edge is unusable, but the
-        // regions inside it (states, provinces) usually are complete and
-        // name their country in `ISO3166-2`.
-        place.country_code = country.or(region_country).or(place.country_code.take());
-        if place.postcode.is_none() && place.layer <= Layer::Street {
-            place.postcode = self
-                .postcodes
-                .containing(&mut cache.postcodes, place.center)
-                .first()
-                .map(|&i| self.postcode_names[self.postcodes.areas[i].unit as usize].clone());
-        }
-    }
-
-    fn city_of(&self, place: &Place) -> Option<u32> {
-        place
-            .parents
-            .iter()
-            .copied()
-            .find(|&u| self.units[u as usize].layer == Layer::City)
-    }
 }
 
 /// Routes finished places (on the consumer thread): streets to the street
@@ -644,8 +574,20 @@ pub fn import_pbf(path: &Path, opts: &ImportOptions) -> Result<Import> {
     // on all cores; units are then numbered sequentially, in relation
     // order, so the result does not depend on thread timing.
     let t_areas = Instant::now();
-    let mut admin_store = PolygonStore::create(&work.path.join("admin-polygons"))?;
-    let mut postcode_store = PolygonStore::create(&work.path.join("postcode-polygons"))?;
+    // Kept in the state directory for incremental updates, else scratch.
+    let (mut admin_store, mut postcode_store) = match &opts.state_dir {
+        Some(dir) => {
+            std::fs::create_dir_all(dir)?;
+            (
+                PolygonStore::create_kept(&dir.join(hierarchy::ADMIN_POLYGONS))?,
+                PolygonStore::create_kept(&dir.join(hierarchy::POSTCODE_POLYGONS))?,
+            )
+        }
+        None => (
+            PolygonStore::create(&work.path.join("admin-polygons"))?,
+            PolygonStore::create(&work.path.join("postcode-polygons"))?,
+        ),
+    };
     let mut admin_areas: Vec<Area> = Vec::new();
     let mut way_units: HashMap<i64, u32> = HashMap::new();
     let way_polys: Vec<Option<(BandedPolygon, BBox)>> = scan
@@ -847,6 +789,10 @@ pub fn import_pbf(path: &Path, opts: &ImportOptions) -> Result<Import> {
         localities: LocalityIndex::new(localities),
     };
     mem::mark("hierarchy indexes");
+    if let Some(dir) = &opts.state_dir {
+        hierarchy.save(dir)?;
+        info!(dir = %dir.display(), "address hierarchy kept for incremental updates");
+    }
     let mut router = Router {
         sink: CountrySink::new(work.path.clone(), opts.default_country.clone()),
         streets: StreetStore::create(&work.path.join("streets.spill"))?,

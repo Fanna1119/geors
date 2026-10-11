@@ -145,8 +145,15 @@ diffs; then hourly diffs.
    (`load_changes` / `save_changes`, later diffs win). Verified on Germany
    with `examples/verify_elements`: 1.41 M elements read through base +
    changes, all identical to the merged file.
-3. **Kept import state:** boundary stores, area metadata, units, localities
-   saved with the partition data.
+3. **Kept import state** (done for the hierarchy): with
+   `ImportOptions::state_dir`, the boundary polygon stores are created there
+   and kept, and `Hierarchy::save` writes the area metadata, admin units
+   (JSON) and locality points; `Hierarchy::load` opens them (8 ms). Austria:
+   86 MB. `examples/verify_hierarchy` re-assigns every place's parents from
+   the kept hierarchy: 2,358,537 of 2,358,538 houses identical (the one
+   lies within 1 cm of a district border, and the stored centre is rounded
+   to 1e-7°); POIs and streets differ where merged rivers and streets get
+   their parents from a segment, as the import does.
 4. **Diff → patch** for direct changes, streets, moved nodes, interpolation;
    verification harness ("patch = rebuild").
 5. **Boundary and locality changes** (parent re-assignment).

@@ -8,6 +8,7 @@
 use geo::kernels::{Kernel, Orientation, RobustKernel};
 use geo::{Coord, MultiPolygon};
 use geors_core::geom::{BBox, from_e7, to_e7};
+use serde::{Deserialize, Serialize};
 
 /// Average number of edges per band to aim for.
 const EDGES_PER_BAND: usize = 8;
@@ -26,7 +27,7 @@ pub struct BandedPolygon {
 }
 
 /// Band layout of a polygon.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Serialize, Deserialize)]
 struct Bands {
     min_y: f64,
     height: f64,
@@ -193,7 +194,7 @@ impl PolygonView<'_> {
 
 /// Where a polygon's arrays are in a [`PolygonStore`]: 4-byte word offsets
 /// and lengths. About 80 bytes per polygon stay on the heap.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Serialize, Deserialize)]
 pub struct StoredPolygon {
     pts: (u64, u32),
     offsets: (u64, u32),
@@ -213,6 +214,8 @@ pub struct PolygonStore {
     words: u64,
     map: Option<memmap2::Mmap>,
     path: std::path::PathBuf,
+    /// Keep the file when dropped (kept import state).
+    keep: bool,
 }
 
 impl PolygonStore {
@@ -231,6 +234,33 @@ impl PolygonStore {
             words: 0,
             map: None,
             path: path.to_path_buf(),
+            keep: false,
+        })
+    }
+
+    /// Like [`PolygonStore::create`], but the file is kept when the store is
+    /// dropped (state kept for incremental updates).
+    pub fn create_kept(path: &std::path::Path) -> std::io::Result<Self> {
+        let mut s = Self::create(path)?;
+        s.keep = true;
+        Ok(s)
+    }
+
+    /// Open a store written earlier (and kept).
+    pub fn open(path: &std::path::Path) -> std::io::Result<Self> {
+        let file = std::fs::File::open(path)?;
+        let len = file.metadata()?.len();
+        // SAFETY: kept state files are only replaced as a whole, not
+        // modified in place.
+        let map = (len > 0)
+            .then(|| unsafe { memmap2::Mmap::map(&file) })
+            .transpose()?;
+        Ok(Self {
+            writer: None,
+            words: len / 4,
+            map,
+            path: path.to_path_buf(),
+            keep: true,
         })
     }
 
@@ -313,7 +343,9 @@ impl Drop for PolygonStore {
     fn drop(&mut self) {
         self.map = None;
         self.writer = None;
-        let _ = std::fs::remove_file(&self.path);
+        if !self.keep {
+            let _ = std::fs::remove_file(&self.path);
+        }
     }
 }
 

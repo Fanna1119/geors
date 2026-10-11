@@ -7,6 +7,7 @@ use geo_index::rtree::sort::HilbertSort;
 use geo_index::rtree::{RTree, RTreeBuilder, RTreeIndex};
 use geors_core::Layer;
 use geors_core::geom::{self, BBox, LonLat};
+use serde::{Deserialize, Serialize};
 
 use crate::pip::{PolygonStore, StoredPolygon};
 
@@ -16,6 +17,7 @@ const CACHE_CAP: usize = 1 << 20;
 /// Size of the grid cells used to cache point-in-polygon results, degrees.
 const CELL: f64 = 0.02;
 
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Area {
     pub unit: u32,
     pub layer: Layer,
@@ -139,6 +141,7 @@ impl AreaIndex {
     }
 }
 
+#[derive(Clone, Serialize, Deserialize)]
 pub struct LocalityPoint {
     pub unit: u32,
     pub layer: Layer,
@@ -165,7 +168,7 @@ pub fn place_radius_m(value: &str) -> Option<f64> {
 const MAX_PLACE_RADIUS_M: f64 = 15_000.0;
 
 pub struct LocalityIndex {
-    points: Vec<LocalityPoint>,
+    pub points: Vec<LocalityPoint>,
     tree: Option<RTree<f64>>,
 }
 
