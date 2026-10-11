@@ -370,3 +370,31 @@ fn words_written_together_are_split() {
     // Unrelated words do not combine into matches.
     assert_eq!(first("markthecke"), None);
 }
+
+#[test]
+fn partitions_without_a_typed_word_are_skipped_safely() {
+    let (_d, engine, _) = fixture();
+    // "vaduz" is in both partitions, "andorra" only in one: the other is
+    // skipped in the exact phase, and the result is the same as without.
+    assert_eq!(
+        search(&engine, |r| r.query = Some("vaduz andorra".into()))[0],
+        "Vaduz Andorra"
+    );
+    // A word only reachable through an abbreviation, a split, or as a
+    // house number still matches.
+    assert_eq!(
+        search(&engine, |r| r.query = Some("hauptstr. park".into()))[0],
+        "Hauptstrasse Park"
+    );
+    assert_eq!(
+        search(&engine, |r| r.query = Some("hauptstrassepark p".into()))[0],
+        "Hauptstrasse Park"
+    );
+    // Misspelled: no partition has it exactly, the typo phase still runs.
+    assert_eq!(
+        search(&engine, |r| r.query = Some("kunstmusem liechtenstein".into()))
+            .first()
+            .map(String::as_str),
+        Some("Kunstmuseum")
+    );
+}

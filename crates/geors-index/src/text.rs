@@ -636,6 +636,34 @@ impl TextIndex {
             .collect()
     }
 
+    /// Whether the exact phase of `q` can match anything here. Every fully
+    /// typed word must then occur in some field: as typed, as an
+    /// abbreviation expansion, or split into words that do. Lets the engine
+    /// skip partitions without, say, "wien" before building the query.
+    /// Mirrors `token_clause` with `fuzzy` and `relaxed` off; the word being
+    /// typed is not checked.
+    pub fn may_match_exact(&self, q: &ParsedQuery, synonyms: &Synonyms) -> bool {
+        let n = q.tokens.len();
+        q.tokens.iter().enumerate().all(|(i, t)| {
+            if q.last_is_prefix && i + 1 == n {
+                return true;
+            }
+            self.is_known(t)
+                || self.is_housenumber(t)
+                || synonyms.expand(t).iter().any(|e| self.is_known(e))
+                || (t.chars().count() >= 2 * MIN_COMPOUND_PART
+                    && !t.chars().any(|c| c.is_ascii_digit())
+                    && !self.split_compound(t, false).is_empty())
+        })
+    }
+
+    fn is_housenumber(&self, token: &str) -> bool {
+        self.reader
+            .searcher()
+            .doc_freq(&Term::from_field_text(self.fields.housenumber, token))
+            .is_ok_and(|n| n > 0)
+    }
+
     /// Whether some name word starts with `part`.
     fn starts_name_word(&self, part: &str) -> bool {
         let searcher = self.reader.searcher();
