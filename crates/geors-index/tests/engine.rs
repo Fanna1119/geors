@@ -4,7 +4,7 @@
 use geors_core::geom::{self, BBox, LonLat};
 use geors_core::{AdminUnit, Layer, OsmType, Place};
 use geors_index::{
-    Engine, EngineConfig, EngineError, NearestRequest, SearchRequest, Shape,
+    Engine, EngineConfig, EngineError, NearestRequest, PlaceRef, SearchRequest, Shape,
     write_partition_from_places,
 };
 
@@ -30,6 +30,7 @@ fn place(id: i64, layer: Layer, name: Option<&str>, lon: f64, lat: f64) -> Place
         lines: vec![],
         polygons: Vec::new(),
         merged_ids: Vec::new(),
+        nominatim_id: None,
     }
 }
 
@@ -267,7 +268,8 @@ fn lookup_by_osm_id_including_merged_segments() {
         (OsmType::Node, 999_999),
         (OsmType::Way, 5),
     ];
-    let hits = engine.lookup(&ids, &[]).unwrap();
+    let refs: Vec<PlaceRef> = ids.iter().map(|&(t, id)| PlaceRef::Osm(t, id)).collect();
+    let hits = engine.lookup(&refs, &[]).unwrap();
     let names: Vec<_> = hits.iter().map(|h| h.place.name.clone().unwrap()).collect();
     // Request order, unknown ids skipped, merged id resolves to the street.
     assert_eq!(names, vec!["Landstrasse", "Vaduz", "Landstrasse"]);
@@ -292,7 +294,11 @@ fn shapes_are_stored() {
     let (_d, engine, _) = fixture();
     let hits = engine
         .lookup(
-            &[(OsmType::Way, 6), (OsmType::Way, 5), (OsmType::Node, 1)],
+            &[
+                PlaceRef::Osm(OsmType::Way, 6),
+                PlaceRef::Osm(OsmType::Way, 5),
+                PlaceRef::Osm(OsmType::Node, 1),
+            ],
             &[],
         )
         .unwrap();
@@ -513,4 +519,31 @@ fn osm_tag_filter() {
     // Spatial-only search and nearest apply it too.
     assert!(!names(None, &[":cafe"]).is_empty());
     assert!(names(None, &["amenity:bar"]).is_empty());
+}
+
+#[test]
+fn lookup_by_nominatim_place_id() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut a = place(10, Layer::Poi, Some("Rathaus"), 9.52, 47.14);
+    a.nominatim_id = Some(123_456);
+    let b = place(11, Layer::Poi, Some("Post"), 9.53, 47.14);
+    let admins = vec![AdminUnit {
+        layer: Layer::Country,
+        name: "Liechtenstein".into(),
+        names: Default::default(),
+    }];
+    write_partition_from_places(dir.path(), "li", None, "test", &[a, b], admins).unwrap();
+    let engine = Engine::open(dir.path(), &[], EngineConfig::default()).unwrap();
+    let hits = engine
+        .lookup(
+            &[
+                PlaceRef::Osm(OsmType::Node, 11),
+                PlaceRef::Nominatim(123_456),
+                PlaceRef::Nominatim(999),
+            ],
+            &[],
+        )
+        .unwrap();
+    let names: Vec<_> = hits.iter().map(|h| h.place.name.clone().unwrap()).collect();
+    assert_eq!(names, vec!["Post", "Rathaus"]);
 }

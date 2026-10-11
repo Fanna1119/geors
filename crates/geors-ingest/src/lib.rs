@@ -235,6 +235,7 @@ fn make_place(osm_type: OsmType, osm_id: i64, t: &Tags, c: &Class, center: LonLa
         lines: Vec::new(),
         polygons: Vec::new(),
         merged_ids: Vec::new(),
+        nominatim_id: None,
     }
 }
 

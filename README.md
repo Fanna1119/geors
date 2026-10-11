@@ -354,7 +354,9 @@ any distance.
 
 `osm_ids=N123,W456,R789` (required, up to `max_limit` ids), `country`, `lang`,
 `geometry`. Results come back in request order; unknown ids are skipped. A
-merged street can be found by the id of any of its OSM way segments.
+merged street can be found by the id of any of its OSM way segments. Data
+imported from a Nominatim dump can also be looked up by Nominatim
+`place_id`: `osm_ids=P123456`.
 
 ### `GET /contains`
 

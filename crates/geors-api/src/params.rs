@@ -2,7 +2,7 @@
 
 use geors_core::geom::{BBox, LonLat};
 use geors_core::{Layer, OsmType, normalize_country_code};
-use geors_index::{NearestRequest, SearchRequest, TagFilter};
+use geors_index::{NearestRequest, PlaceRef, SearchRequest, TagFilter};
 use serde::Deserialize;
 
 use crate::render::Output;
@@ -68,7 +68,7 @@ impl ContainsParams {
     }
 }
 
-pub type OsmIds = Vec<(OsmType, i64)>;
+pub type OsmIds = Vec<PlaceRef>;
 
 #[derive(Debug, Deserialize)]
 pub struct LookupParams {
@@ -99,26 +99,28 @@ impl LookupParams {
         output(&self.lang, &self.geometry)
     }
 
-    /// Parse `osm_ids=N123,W456,R789`.
+    /// Parse `osm_ids=N123,W456,R789` (OSM ids) and `P123` (Nominatim
+    /// `place_id`, for data imported from a Nominatim dump).
     /// Returns the requested ids and country filter.
     pub fn into_ids(self, cfg: &ApiConfig) -> Result<(OsmIds, Vec<String>), ApiError> {
-        let ids: Vec<(OsmType, i64)> = comma_list(&self.osm_ids)
+        let ids: Vec<PlaceRef> = comma_list(&self.osm_ids)
             .map(|s| {
-                let (t, n) = s.split_at(1);
-                let t = match t.to_ascii_uppercase().as_str() {
-                    "N" => OsmType::Node,
-                    "W" => OsmType::Way,
-                    "R" => OsmType::Relation,
-                    _ => {
-                        return Err(ApiError::bad_request(format!(
-                            "invalid OSM id '{s}' (expected e.g. N123, W456, R789)"
-                        )));
-                    }
-                };
-                n.parse::<i64>().map(|n| (t, n)).map_err(|_| {
+                let bad = || {
                     ApiError::bad_request(format!(
-                        "invalid OSM id '{s}' (expected e.g. N123, W456, R789)"
+                        "invalid id '{s}' (expected e.g. N123, W456, R789, or P123 for a Nominatim place_id)"
                     ))
+                };
+                if !s.is_char_boundary(1) {
+                    return Err(bad());
+                }
+                let (t, n) = s.split_at(1);
+                let n = n.parse::<i64>().map_err(|_| bad())?;
+                Ok(match t.to_ascii_uppercase().as_str() {
+                    "N" => PlaceRef::Osm(OsmType::Node, n),
+                    "W" => PlaceRef::Osm(OsmType::Way, n),
+                    "R" => PlaceRef::Osm(OsmType::Relation, n),
+                    "P" => PlaceRef::Nominatim(n),
+                    _ => return Err(bad()),
                 })
             })
             .collect::<Result<_, _>>()?;
@@ -350,15 +352,17 @@ mod tests {
             let p: LookupParams = serde_urlencoded::from_str(q).unwrap();
             p.into_ids(&ApiConfig::default())
         };
-        let (ids, _) = parse("osm_ids=N1,w22,R333").unwrap();
+        let (ids, _) = parse("osm_ids=N1,w22,R333,P44").unwrap();
         assert_eq!(
             ids,
             vec![
-                (OsmType::Node, 1),
-                (OsmType::Way, 22),
-                (OsmType::Relation, 333)
+                PlaceRef::Osm(OsmType::Node, 1),
+                PlaceRef::Osm(OsmType::Way, 22),
+                PlaceRef::Osm(OsmType::Relation, 333),
+                PlaceRef::Nominatim(44),
             ]
         );
+        assert!(parse("osm_ids=é1").is_err());
         assert!(parse("osm_ids=X1").is_err());
         assert!(parse("osm_ids=Nabc").is_err());
         assert!(parse("").is_err());

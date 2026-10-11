@@ -47,6 +47,7 @@ struct Full {
     lon: f64,
     lat: f64,
     core: Core,
+    nominatim_id: Option<i64>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -140,6 +141,7 @@ fn place_of(c: Core, o: Outer, implied_cc: Option<&str>) -> Result<Place, DocErr
         lines: Vec::new(),
         polygons: Vec::new(),
         merged_ids: c.merged_ids,
+        nominatim_id: None,
     })
 }
 
@@ -153,6 +155,7 @@ pub fn encode_full(p: &Place, out: &mut Vec<u8>) -> Result<(), DocError> {
         lon: p.center.lon,
         lat: p.center.lat,
         core: core_of(p, None),
+        nominatim_id: p.nominatim_id,
     };
     let bytes = postcard::to_extend(&full, std::mem::take(out))?;
     *out = bytes;
@@ -168,7 +171,9 @@ pub fn decode_full(bytes: &[u8]) -> Result<Place, DocError> {
         importance: f.importance,
         center: LonLat::new(f.lon, f.lat),
     };
-    place_of(f.core, outer, None)
+    let mut place = place_of(f.core, outer, None)?;
+    place.nominatim_id = f.nominatim_id;
+    Ok(place)
 }
 
 /// Interns `(osm_key, osm_value)` pairs while writing a partition.
@@ -259,6 +264,7 @@ mod tests {
             lines: Vec::new(),
             polygons: Vec::new(),
             merged_ids: vec![5, 6],
+            nominatim_id: None,
         }
     }
 
@@ -268,6 +274,12 @@ mod tests {
         let mut buf = Vec::new();
         encode_full(&p, &mut buf).unwrap();
         assert_eq!(decode_full(&buf).unwrap(), p);
+        // The Nominatim id survives the scratch format.
+        let mut p = p;
+        p.nominatim_id = Some(42);
+        buf.clear();
+        encode_full(&p, &mut buf).unwrap();
+        assert_eq!(decode_full(&buf).unwrap().nominatim_id, Some(42));
     }
 
     #[test]
