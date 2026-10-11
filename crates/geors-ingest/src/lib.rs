@@ -76,6 +76,10 @@ pub struct ImportOptions {
     /// Keep the address hierarchy (boundary polygons, units, localities)
     /// here, for incremental updates (see `hierarchy::Hierarchy::load`).
     pub state_dir: Option<PathBuf>,
+    /// Assign parents with this (kept) hierarchy instead of one built from
+    /// the extract: for importing the small extract of an incremental
+    /// update, whose boundaries are incomplete.
+    pub hierarchy: Option<Arc<Hierarchy>>,
 }
 
 /// How ways get their nodes' coordinates during import.
@@ -152,6 +156,7 @@ impl Default for ImportOptions {
             work_dir: None,
             node_lookup: default_node_lookup(),
             state_dir: None,
+            hierarchy: None,
         }
     }
 }
@@ -621,6 +626,7 @@ pub fn import_pbf(path: &Path, opts: &ImportOptions) -> Result<Import> {
     let mut postcode_names = Vec::new();
     let mut postcode_areas = Vec::new();
     let mut rel_features: Vec<RelFeature> = Vec::new();
+    let mut rel_units: HashMap<i64, u32> = HashMap::new();
     let mut outlines = Outlines::create(&work.path.join("outlines"))?;
     let mut broken = 0usize;
     // Countries with a region cut by the extract's edge: the extract holds
@@ -645,7 +651,7 @@ pub fn import_pbf(path: &Path, opts: &ImportOptions) -> Result<Import> {
             let mut own = None;
             if let Some((layer, rank, polygon, bbox)) = g.admin {
                 let polygon = admin_store.push(polygon)?;
-                own = Some(add_area(
+                let u = add_area(
                     &mut units,
                     &mut admin_areas,
                     &r.tags,
@@ -653,7 +659,9 @@ pub fn import_pbf(path: &Path, opts: &ImportOptions) -> Result<Import> {
                     rank,
                     polygon,
                     bbox,
-                ));
+                );
+                rel_units.insert(r.id, u);
+                own = Some(u);
             }
             if let Some((code, polygon, bbox)) = g.postcode {
                 // Postcode areas reuse `Area`; `unit` indexes `postcode_names`.
@@ -781,17 +789,45 @@ pub fn import_pbf(path: &Path, opts: &ImportOptions) -> Result<Import> {
     }
 
     let outlines = outlines.finish()?;
-    let hierarchy = Hierarchy {
+    let owners: HashMap<(OsmType, i64), u32> = node_units
+        .iter()
+        .map(|(&id, &u)| ((OsmType::Node, id), u))
+        .chain(way_units.iter().map(|(&id, &u)| ((OsmType::Way, id), u)))
+        .chain(
+            rel_units
+                .iter()
+                .map(|(&id, &u)| ((OsmType::Relation, id), u)),
+        )
+        .collect();
+    drop(rel_units);
+    let mut hierarchy = Arc::new(Hierarchy {
         units,
         areas: AreaIndex::new(admin_areas, admin_store)?,
         postcodes: AreaIndex::new(postcode_areas, postcode_store)?,
         postcode_names,
         localities: LocalityIndex::new(localities),
-    };
+        owners,
+    });
     mem::mark("hierarchy indexes");
     if let Some(dir) = &opts.state_dir {
         hierarchy.save(dir)?;
         info!(dir = %dir.display(), "address hierarchy kept for incremental updates");
+    }
+    // A provided hierarchy replaces the one built from this extract; places
+    // that are areas look up their own unit in it.
+    if let Some(kept) = &opts.hierarchy {
+        hierarchy = kept.clone();
+        node_units = node_units
+            .keys()
+            .filter_map(|&id| Some((id, hierarchy.owner(OsmType::Node, id)?)))
+            .collect();
+        way_units = way_units
+            .keys()
+            .filter_map(|&id| Some((id, hierarchy.owner(OsmType::Way, id)?)))
+            .collect();
+        for f in &mut rel_features {
+            f.own = hierarchy.owner(OsmType::Relation, relations[f.rel].id);
+        }
     }
     let mut router = Router {
         sink: CountrySink::new(work.path.clone(), opts.default_country.clone()),
@@ -889,12 +925,8 @@ pub fn import_pbf(path: &Path, opts: &ImportOptions) -> Result<Import> {
     // Every place has its hierarchy now: free the boundary indexes, the
     // relations and the lookup maps before street merging and writing,
     // which would otherwise run with all of that still in memory.
-    // Move it into a block: moving one field out of `hierarchy` would keep
-    // the others (the polygon indexes) alive until the end of the function.
-    let units = {
-        let h = hierarchy;
-        h.units
-    };
+    let units = hierarchy.units.clone();
+    drop(hierarchy);
     drop(relations);
     drop(twins);
     drop(node_units);

@@ -221,6 +221,51 @@ impl<'a> ElementSource<'a> {
     }
 }
 
+impl ElementSource<'_> {
+    /// Ids of current elements of `kind` for which `keep` holds: one
+    /// parallel pass over the base's blocks of that kind (changed elements
+    /// are judged by their new version, deleted ones skipped).
+    pub fn scan(
+        &self,
+        kind: Kind,
+        keep: impl Fn(&Elem) -> bool + Sync,
+    ) -> Result<std::collections::BTreeSet<i64>> {
+        let changed = match kind {
+            Kind::Node => &self.changes.nodes,
+            Kind::Way => &self.changes.ways,
+            Kind::Relation => &self.changes.relations,
+        };
+        let offsets: Vec<u64> = self
+            .index
+            .blocks
+            .iter()
+            .filter(|b| b.kind == kind)
+            .map(|b| b.offset)
+            .collect();
+        let found: Vec<Vec<i64>> = offsets
+            .into_par_iter()
+            .map_init(
+                || BlobReader::seekable_from_path(&self.pbf),
+                |reader, offset| -> Result<Vec<i64>> {
+                    let reader = reader.as_mut().map_err(|e| anyhow::anyhow!("{e}"))?;
+                    let block = reader
+                        .blob_from_offset(ByteOffset(offset))?
+                        .to_primitiveblock()?;
+                    Ok(block
+                        .elements()
+                        .filter_map(|el| Elem::from_pbf(&el))
+                        .filter(|e| !changed.contains_key(&e.id()) && keep(e))
+                        .map(|e| e.id())
+                        .collect())
+                },
+            )
+            .collect::<Result<_>>()?;
+        let mut out: std::collections::BTreeSet<i64> = found.into_iter().flatten().collect();
+        out.extend(changed.values().flatten().filter(|e| keep(e)).map(Elem::id));
+        Ok(out)
+    }
+}
+
 /// The change store: all changes since the base, saved between updates.
 pub fn load_changes(path: &Path) -> Result<ChangeSet> {
     let mut bytes = Vec::new();

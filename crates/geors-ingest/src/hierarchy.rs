@@ -3,11 +3,11 @@
 //! nodes; can be kept on disk ([`Hierarchy::save`]) so incremental updates
 //! assign parents to changed places exactly as the import did.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 
 use anyhow::{Context, Result};
-use geors_core::{AdminUnit, Layer, Place};
+use geors_core::{AdminUnit, Layer, OsmType, Place};
 use serde::{Deserialize, Serialize};
 
 use crate::areas::{Area, AreaIndex, CellCache, LocalityIndex, LocalityPoint};
@@ -29,6 +29,7 @@ struct Meta {
     postcodes: Vec<Area>,
     postcode_names: Vec<String>,
     localities: Vec<LocalityPoint>,
+    owners: Vec<(OsmType, i64, u32)>,
 }
 
 /// Assigns parents (admin units), country and postcode to places.
@@ -38,6 +39,9 @@ pub struct Hierarchy {
     pub postcodes: AreaIndex,
     pub postcode_names: Vec<String>,
     pub localities: LocalityIndex,
+    /// The unit each area element defines (a boundary relation, a `place=*`
+    /// way or node): a place is not its own parent.
+    pub owners: HashMap<(OsmType, i64), u32>,
 }
 
 /// Per-worker point-in-polygon caches.
@@ -107,6 +111,17 @@ impl Hierarchy {
     }
 }
 
+impl std::fmt::Debug for Hierarchy {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Hierarchy")
+            .field("units", &self.units.len())
+            .field("areas", &self.areas.areas.len())
+            .field("postcodes", &self.postcodes.areas.len())
+            .field("localities", &self.localities.points.len())
+            .finish()
+    }
+}
+
 impl Hierarchy {
     /// Save the metadata to `dir`. The polygon stores must have been created
     /// there with [`PolygonStore::create_kept`] ([`ADMIN_POLYGONS`],
@@ -120,6 +135,15 @@ impl Hierarchy {
             postcodes: self.postcodes.areas.clone(),
             postcode_names: self.postcode_names.clone(),
             localities: self.localities.points.clone(),
+            owners: {
+                let mut v: Vec<(OsmType, i64, u32)> = self
+                    .owners
+                    .iter()
+                    .map(|(&(t, id), &u)| (t, id, u))
+                    .collect();
+                v.sort_unstable_by_key(|&(t, id, _)| (t as u8, id));
+                v
+            },
         };
         let tmp = dir.join(format!("{META}.tmp"));
         std::fs::write(&tmp, postcard::to_allocvec(&meta)?)?;
@@ -143,6 +167,16 @@ impl Hierarchy {
             )?,
             postcode_names: meta.postcode_names,
             localities: LocalityIndex::new(meta.localities),
+            owners: meta
+                .owners
+                .into_iter()
+                .map(|(t, id, u)| ((t, id), u))
+                .collect(),
         })
+    }
+
+    /// The unit `element` defines, if it is an area of this hierarchy.
+    pub fn owner(&self, kind: OsmType, id: i64) -> Option<u32> {
+        self.owners.get(&(kind, id)).copied()
     }
 }

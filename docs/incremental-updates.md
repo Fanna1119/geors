@@ -154,8 +154,23 @@ diffs; then hourly diffs.
    lies within 1 cm of a district border, and the stored centre is rounded
    to 1e-7°); POIs and streets differ where merged rivers and streets get
    their parents from a segment, as the import does.
-4. **Diff → patch** for direct changes, streets, moved nodes, interpolation;
-   verification harness ("patch = rebuild").
+4. **Diff → patch** (done): `geors_update::patch::build_patch`. Roots are
+   the changed elements, ways using a changed node, relations using either,
+   label nodes of root relations, and every segment of affected merged
+   streets (old merged places, same-named ones nearby). Those plus all
+   they reference go into a small PBF, which the normal importer imports
+   with the kept hierarchy (`ImportOptions::hierarchy`; owners map
+   element → unit). Places of roots form the patch; main places of roots
+   and of rebuilt places are tombstoned (`<cc>/tombstones.bin`, also valid
+   without a patch partition). `examples/verify_patch` compares with a
+   full import of the merged extract, streaming through sorted files:
+   - South Africa, one diff: patch in 3.0 s (full: 9.7 s + 6.7 s merge);
+     all 524,995 places identical.
+   - Germany, one daily diff: patch in 48 s (full: 4 min 20 s + 74 s merge).
+     Of 24.6 M places, 144 k differ (0.6 %), all from changed areas: a new
+     state-level area "Bayerischer Wald" (140 k parents), a changed
+     postcode area (3.7 k postcodes), district edits, 3 streets whose city
+     changed. Milestone 5 handles these.
 5. **Boundary and locality changes** (parent re-assignment).
 6. **Policy:** `geors update` patches by default, folds into a full rebuild
    by size / age, `--full` forces one.

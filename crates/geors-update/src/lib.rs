@@ -9,6 +9,7 @@
 pub mod elements;
 pub mod osc;
 pub mod osm;
+pub mod patch;
 pub mod pbf_write;
 pub mod remote;
 pub mod replicate;

@@ -145,15 +145,10 @@ impl Partition {
     }
 
     /// Open a partition and, if it has one, its patch partition. The main
-    /// partition then skips the places the patch deletes or replaces.
+    /// partition skips the places in its tombstones (deleted or replaced).
     pub fn open_with_patch(dir: &Path) -> Result<(Self, Option<Self>), IndexError> {
         let mut main = Self::open(dir)?;
-        let patch_dir = dir.join(storage::PATCH_DIR);
-        if !patch_dir.join(storage::META_FILE).is_file() {
-            return Ok((main, None));
-        }
-        let patch = Self::open(&patch_dir)?;
-        let bytes = std::fs::read(patch_dir.join(storage::TOMBSTONES_FILE)).unwrap_or_default();
+        let bytes = std::fs::read(dir.join(storage::TOMBSTONES_FILE)).unwrap_or_default();
         let ids: Vec<u32> = bytes
             .as_chunks::<4>()
             .0
@@ -162,7 +157,13 @@ impl Partition {
             .filter(|&id| id < main.len())
             .collect();
         main.set_deleted(ids);
-        Ok((main, Some(patch)))
+        let patch_dir = dir.join(storage::PATCH_DIR);
+        let patch = if patch_dir.join(storage::META_FILE).is_file() {
+            Some(Self::open(&patch_dir)?)
+        } else {
+            None
+        };
+        Ok((main, patch))
     }
 
     fn set_deleted(&mut self, ids: Vec<u32>) {

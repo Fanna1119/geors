@@ -37,8 +37,9 @@ pub const TEXT_DIR: &str = "text";
 /// Patch partition inside a partition directory: places changed since the
 /// partition was built (incremental updates).
 pub const PATCH_DIR: &str = "patch";
-/// In a patch directory: sorted little-endian u32 ids of main-partition
-/// places that the patch deletes or replaces.
+/// In a partition directory: sorted little-endian u32 ids of its places
+/// that incremental updates deleted or replaced (the replacements are in
+/// the patch partition). Also possible without a patch (deletions only).
 pub const TOMBSTONES_FILE: &str = "tombstones.bin";
 
 /// `<data>/GENERATION`: changes whenever any partition is (re)written, so a
