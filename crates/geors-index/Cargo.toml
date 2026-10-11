@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+bytemuck = "1.25.2"
 deunicode = "1.6.2"
 geo-index = "0.4.0"
 geors-core = { version = "0.1.0", path = "../geors-core" }

@@ -164,6 +164,7 @@ mod tests {
             lines: Vec::new(),
             polygons: Vec::new(),
             merged_ids: vec![],
+            nominatim_id: None,
         }
     }
 

@@ -2,18 +2,17 @@
 
 use std::collections::{BTreeMap, HashMap};
 use std::fs;
-use std::io::{BufWriter, Read, Write};
+use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use rayon::prelude::*;
 
-use geo_index::rtree::sort::HilbertSort;
-use geo_index::rtree::{RTreeBuilder, RTreeIndex};
 use geors_core::doc::{self, TagTable};
+use geors_core::extsort::{ExternalSorter, Sorted, buffer_bytes};
 use geors_core::geom::{f32_down, f32_up};
-use geors_core::spill::{Spill, SpillReader, SpillWriter, WorkDir, decode_record};
+use geors_core::spill::{Spill, SpillEntry, SpillReader, SpillWriter, WorkDir, decode_record};
 use geors_core::storage::{self, FORMAT_VERSION, GeomKind, PartitionMeta, PlaceRecord};
 use geors_core::{AdminUnit, BBox, Place};
 use tracing::{info, warn};
@@ -47,8 +46,20 @@ fn morton(lon: f64, lat: f64) -> u32 {
     spread(x) | (spread(y) << 1)
 }
 
-/// `(morton, osm type, osm id, record number in file order)`.
-type SortKey = (u32, u8, i64, u32);
+/// Sort key of a place: `[morton << 8 | osm type, osm id (order-preserving
+/// as unsigned), spill offset, record length]`. Spatial order; ties broken
+/// by OSM id, then by file position, so the output is deterministic
+/// whatever order the import produced places in.
+type Key = [u64; 4];
+
+fn key(e: &SpillEntry) -> Key {
+    [
+        (u64::from(morton(e.center.lon, e.center.lat)) << 8) | u64::from(e.osm_type),
+        (e.osm_id as u64) ^ (1 << 63),
+        e.offset,
+        u64::from(e.len),
+    ]
+}
 
 /// Places decoded per parallel chunk.
 const CHUNK: usize = 8192;
@@ -84,68 +95,124 @@ pub fn set_writer_memory(direct_max: u64, bucket_bytes: usize) {
     };
 }
 
-/// Reads the places of a spill file in sort order.
+/// Reads the places of a spill file in sort order. The sort keys are sorted
+/// externally (sorted runs on disk, merged sequentially), so no per-place
+/// data stays in RAM: 32 bytes per place would be 790 MB for Germany.
 enum Ordered {
-    /// Random reads from the spill file; `offsets` by record number.
-    Direct { offsets: Vec<u64> },
-    /// The records regrouped into buckets of consecutive `order` ranges.
+    /// Sorted keys streamed; records read from the spill file in place.
+    Direct { keys: Sorted<Key> },
+    /// The records regrouped into buckets of consecutive sort ranges.
     Buckets {
         file: fs::File,
         path: PathBuf,
-        /// Per bucket: range in `order`, byte range in `file`.
-        buckets: Vec<(std::ops::Range<usize>, std::ops::Range<u64>)>,
+        /// The sorted keys, written once while assigning buckets.
+        keys: std::io::BufReader<fs::File>,
+        keys_path: PathBuf,
+        /// Per bucket: number of places, byte range in `file`.
+        buckets: Vec<(usize, std::ops::Range<u64>)>,
     },
 }
 
 impl Ordered {
-    /// `sizes`: record sizes by record number.
+    /// Sort the spill file's keys. With `direct`, records are later read in
+    /// place; otherwise they are regrouped into buckets of at most
+    /// `bucket_bytes` (see [`set_writer_memory`]). Scratch files go to `dir`.
+    fn open(
+        spill: &SpillReader,
+        direct: bool,
+        bucket_bytes: usize,
+        dir: &Path,
+    ) -> std::io::Result<Self> {
+        let mut sorter = ExternalSorter::<Key>::new(dir, "sort-keys", buffer_bytes(), false);
+        let mut result = Ok(());
+        spill.advise_sequential();
+        spill.for_each_entry(|e| {
+            if result.is_ok() {
+                result = sorter.push(key(&e));
+            }
+        })?;
+        result?;
+        let keys = sorter.finish()?;
+        if direct {
+            Ok(Self::Direct { keys })
+        } else {
+            Self::bucketed(spill, keys, bucket_bytes, dir)
+        }
+    }
+
     fn bucketed(
         spill: &SpillReader,
-        order: &[SortKey],
-        mut sizes: Vec<u64>,
+        mut sorted: Sorted<Key>,
         bucket_bytes: usize,
-        path: &Path,
+        dir: &Path,
     ) -> std::io::Result<Self> {
+        use std::io::{BufReader, Write};
         use std::os::unix::fs::FileExt;
-        // Cut the sorted order into buckets of at most `bucket_bytes`.
-        let mut buckets = Vec::new();
-        let (mut start, mut bytes, mut at) = (0usize, 0u64, 0u64);
-        for (i, &(.., rec)) in order.iter().enumerate() {
-            let size = sizes[rec as usize];
-            if i > start && bytes + size > bucket_bytes as u64 {
-                buckets.push((start..i, at..at + bytes));
-                (start, at, bytes) = (i, at + bytes, 0);
+        // Pass 1 over the sorted keys: cut them into buckets of at most
+        // `bucket_bytes`, keep the keys in a file for reading the buckets
+        // back, and note each record's bucket by spill offset.
+        let keys_path = dir.join("sort-keys.tmp");
+        let mut keys_out = BufWriter::with_capacity(1 << 20, fs::File::create(&keys_path)?);
+        let mut route = ExternalSorter::<[u64; 2]>::new(dir, "route", buffer_bytes(), false);
+        let mut sizes: Vec<(usize, u64)> = Vec::new();
+        let (mut n, mut bytes) = (0usize, 0u64);
+        while let Some(k) = sorted.next_record()? {
+            let len = k[3];
+            if n > 0 && bytes + len > bucket_bytes as u64 {
+                sizes.push((n, bytes));
+                (n, bytes) = (0, 0);
             }
-            bytes += size;
+            keys_out.write_all(bytemuck::bytes_of(&k))?;
+            route.push([k[2], sizes.len() as u64])?;
+            n += 1;
+            bytes += len;
         }
-        buckets.push((start..order.len(), at..at + bytes));
-        // From here on `sizes` holds each record's bucket.
-        for (b, (range, _)) in buckets.iter().enumerate() {
-            for &(.., rec) in &order[range.clone()] {
-                sizes[rec as usize] = b as u64;
-            }
+        if n > 0 {
+            sizes.push((n, bytes));
         }
-        let bucket_of = sizes;
+        drop(sorted);
+        keys_out.flush()?;
+        drop(keys_out);
+        let mut at = 0u64;
+        let buckets: Vec<(usize, std::ops::Range<u64>)> = sizes
+            .into_iter()
+            .map(|(n, b)| {
+                at += b;
+                (n, at - b..at)
+            })
+            .collect();
 
-        // One sequential pass: append each record to its bucket's region,
-        // through a small buffer per bucket (all buffers: `bucket_bytes`).
+        // Pass 2, sequential over the spill file: append each record to its
+        // bucket's region, through a small buffer per bucket (all buffers:
+        // `bucket_bytes`). The route is sorted by offset, as the file is.
+        let path = dir.join("reorder.tmp");
         let file = fs::OpenOptions::new()
             .read(true)
             .write(true)
             .create(true)
             .truncate(true)
-            .open(path)?;
-        let buf_size = (bucket_bytes / buckets.len()).clamp(4 << 10, 1 << 20);
+            .open(&path)?;
+        let mut route = route.finish()?;
+        let nb = buckets.len().max(1);
+        let buf_size = (bucket_bytes / nb).clamp(4 << 10, 1 << 20);
         let mut cursors: Vec<u64> = buckets.iter().map(|(_, r)| r.start).collect();
         let mut bufs: Vec<Vec<u8>> = vec![Vec::new(); buckets.len()];
-        let mut rec = 0usize;
         let mut result = Ok(());
         spill.for_each_entry(|e| {
             if result.is_err() {
                 return;
             }
-            let b = bucket_of[rec] as usize;
-            rec += 1;
+            let b = match route.next_record() {
+                Ok(Some([offset, b])) if offset == e.offset => b as usize,
+                Ok(_) => {
+                    result = Err(std::io::Error::other("spill file and sort keys disagree"));
+                    return;
+                }
+                Err(err) => {
+                    result = Err(err);
+                    return;
+                }
+            };
             let buf = &mut bufs[b];
             buf.extend_from_slice(spill.record(&e));
             if buf.len() >= buf_size {
@@ -155,6 +222,7 @@ impl Ordered {
             }
         })?;
         result?;
+        drop(route);
         for (b, buf) in bufs.iter().enumerate() {
             file.write_all_at(buf, cursors[b])?;
         }
@@ -168,41 +236,60 @@ impl Ordered {
         );
         Ok(Self::Buckets {
             file,
-            path: path.to_path_buf(),
+            path,
+            keys: BufReader::with_capacity(1 << 20, fs::File::open(&keys_path)?),
+            keys_path,
             buckets,
         })
     }
 
-    /// Decode all places in `order`, handing them to `f` in chunks.
+    /// Decode all places in sort order, handing them to `f` in chunks.
     fn for_each_chunk(
-        &self,
+        &mut self,
         spill: &SpillReader,
-        order: &[SortKey],
         mut f: impl FnMut(Vec<Place>) -> Result<(), IndexError>,
     ) -> Result<(), IndexError> {
         match self {
-            Self::Direct { offsets } => {
-                for chunk in order.chunks(CHUNK) {
+            Self::Direct { keys } => {
+                let mut chunk: Vec<Key> = Vec::with_capacity(CHUNK);
+                loop {
+                    chunk.clear();
+                    while chunk.len() < CHUNK {
+                        match keys.next_record()? {
+                            Some(k) => chunk.push(k),
+                            None => break,
+                        }
+                    }
+                    if chunk.is_empty() {
+                        break;
+                    }
                     f(chunk
                         .par_iter()
-                        .map(|&(.., rec)| spill.get(offsets[rec as usize]))
+                        .map(|k| spill.get(k[2]))
                         .collect::<std::io::Result<_>>()?)?;
                 }
             }
-            Self::Buckets { file, buckets, .. } => {
+            Self::Buckets {
+                file,
+                keys,
+                buckets,
+                ..
+            } => {
+                use std::io::Read;
                 use std::os::unix::fs::FileExt;
                 let mut data = Vec::new();
-                for (range, bytes) in buckets {
-                    let keys = &order[range.clone()];
+                for (n, bytes) in buckets.iter() {
+                    let mut bucket_keys = vec![[0u64; 4]; *n];
+                    keys.read_exact(bytemuck::cast_slice_mut(&mut bucket_keys))?;
                     data.resize((bytes.end - bytes.start) as usize, 0);
                     file.read_exact_at(&mut data, bytes.start)?;
                     // Records are in file order within the bucket: walk
-                    // them by record number to find each one's position.
-                    let mut by_rec: Vec<u32> = (0..keys.len() as u32).collect();
-                    by_rec.sort_unstable_by_key(|&k| keys[k as usize].3);
-                    let mut pos = vec![0u32; keys.len()];
+                    // them by spill offset to find each one's position.
+                    let mut by_offset: Vec<u32> = (0..*n as u32).collect();
+                    by_offset.sort_unstable_by_key(|&k| bucket_keys[k as usize][2]);
+                    let mut pos = vec![0u32; *n];
                     let mut at = 0usize;
-                    for k in by_rec {
+                    for k in by_offset {
                         pos[k as usize] = at as u32;
                         let len = data
                             .get(at..at + 4)
@@ -225,8 +312,12 @@ impl Ordered {
 
 impl Drop for Ordered {
     fn drop(&mut self) {
-        if let Self::Buckets { path, .. } = self {
+        if let Self::Buckets {
+            path, keys_path, ..
+        } = self
+        {
             let _ = fs::remove_file(path);
+            let _ = fs::remove_file(keys_path);
         }
     }
 }
@@ -262,9 +353,10 @@ pub fn write_partition_from_places(
 /// Build all partition files in a temporary directory, then atomically swap
 /// it into `<data_dir>/<cc>`.
 ///
-/// Memory use is independent of the partition size apart from a 12 byte
-/// sort key per place: places are streamed from the spill file in spatial
-/// (Z-order) order.
+/// Memory use is independent of the partition size, apart from the R-tree
+/// builder (built last, after the text index): sort keys are sorted on
+/// disk, and places are streamed from the spill file in spatial (Z-order)
+/// order.
 pub fn write_partition(data_dir: &Path, input: PartitionInput) -> Result<PathBuf, IndexError> {
     let cc = input.country_code.clone();
     let count = input.places.count;
@@ -291,36 +383,12 @@ pub fn write_partition(data_dir: &Path, input: PartitionInput) -> Result<PathBuf
     let spill = SpillReader::open(&input.places)?;
     let file_len = fs::metadata(&input.places.path)?.len();
     let mem = memory();
-    let direct = file_len <= mem.direct_max;
-    // Spatial order; ties broken by OSM id so the output is deterministic
-    // whatever order the import produced places in. Records are numbered in
-    // file order; `info` holds each record's offset (direct reads) or size
-    // (bucketed reads).
-    let mut order: Vec<SortKey> = Vec::with_capacity(count as usize);
-    let mut info: Vec<u64> = Vec::with_capacity(count as usize);
-    spill.advise_sequential();
-    spill.for_each_entry(|e| {
-        order.push((
-            morton(e.center.lon, e.center.lat),
-            e.osm_type,
-            e.osm_id,
-            order.len() as u32,
-        ));
-        info.push(if direct { e.offset } else { e.len as u64 });
-    })?;
-    order.sort_unstable();
-    geors_core::mem::mark("writer: sort keys");
-    let reader = if direct {
-        Ordered::Direct { offsets: info }
-    } else {
-        Ordered::bucketed(
-            &spill,
-            &order,
-            info,
-            mem.bucket_bytes,
-            &tmp_dir.join("reorder.tmp"),
-        )?
-    };
+    let mut reader = Ordered::open(
+        &spill,
+        file_len <= mem.direct_max,
+        mem.bucket_bytes,
+        &tmp_dir,
+    )?;
     geors_core::mem::mark("writer: reader ready");
 
     let mut docs =
@@ -354,7 +422,7 @@ pub fn write_partition(data_dir: &Path, input: PartitionInput) -> Result<PathBuf
 
     // Decode on all cores in chunks, write sequentially in order.
     let mut id = 0usize;
-    reader.for_each_chunk(&spill, &order, |decoded| {
+    reader.for_each_chunk(&spill, |decoded| {
         for mut place in decoded {
             let place = &mut place;
             place.parents.retain(|&u| (u as usize) < input.admins.len());
@@ -428,7 +496,6 @@ pub fn write_partition(data_dir: &Path, input: PartitionInput) -> Result<PathBuf
         Ok(())
     })?;
     drop(reader);
-    drop(order);
     geors_core::mem::mark("writer: places written");
     docs.flush()?;
     places_out.flush()?;
@@ -438,20 +505,15 @@ pub fn write_partition(data_dir: &Path, input: PartitionInput) -> Result<PathBuf
     text.finish()?;
     geors_core::mem::mark("writer: text index merged");
 
-    let mut rtree = RTreeBuilder::<f32>::new(count as u32);
-    let mut boxes = std::io::BufReader::with_capacity(1 << 20, fs::File::open(&boxes_path)?);
-    let mut b = [0u8; 16];
-    for _ in 0..count {
-        boxes.read_exact(&mut b)?;
-        let v = |i: usize| f32::from_le_bytes(b[i * 4..i * 4 + 4].try_into().unwrap());
-        rtree.add(v(0), v(1), v(2), v(3));
-    }
-    drop(boxes);
+    // Streamed: leaves sorted on disk, only inner nodes in RAM.
+    crate::rtree_writer::write(
+        &boxes_path,
+        count as usize,
+        &tmp_dir.join(storage::SPATIAL_FILE),
+        &tmp_dir,
+    )?;
     fs::remove_file(&boxes_path)?;
-    let tree = rtree.finish::<HilbertSort>();
     geors_core::mem::mark("writer: R-tree built");
-    debug_assert_eq!(tree.num_items() as u64, count);
-    fs::write(tmp_dir.join(storage::SPATIAL_FILE), tree.into_inner())?;
 
     fs::write(
         tmp_dir.join(storage::TAGS_FILE),
@@ -529,12 +591,13 @@ mod tests {
             lines: Vec::new(),
             polygons: Vec::new(),
             merged_ids: vec![],
+            nominatim_id: None,
         }
     }
 
-    fn read_all(o: &Ordered, spill: &SpillReader, order: &[SortKey]) -> Vec<Place> {
+    fn read_all(o: &mut Ordered, spill: &SpillReader) -> Vec<Place> {
         let mut out = Vec::new();
-        o.for_each_chunk(spill, order, |c| {
+        o.for_each_chunk(spill, |c| {
             out.extend(c);
             Ok(())
         })
@@ -546,36 +609,36 @@ mod tests {
     fn bucketed_reads_match_direct_reads() {
         let dir = WorkDir::create(&std::env::temp_dir(), "geors-writer-test").unwrap();
         let mut w = SpillWriter::create(&dir.path.join("p.spill")).unwrap();
-        for id in 0..5000 {
+        // Reverse id order, so file order differs from sort order.
+        for id in (0..5000).rev() {
             w.push(&place(id)).unwrap();
         }
         let spill = SpillReader::open(&w.finish().unwrap()).unwrap();
-        let (mut order, mut offsets, mut sizes) = (Vec::new(), Vec::new(), Vec::new());
-        spill
-            .for_each_entry(|e| {
-                order.push((
-                    morton(e.center.lon, e.center.lat),
-                    e.osm_type,
-                    e.osm_id,
-                    order.len() as u32,
-                ));
-                offsets.push(e.offset);
-                sizes.push(e.len as u64);
-            })
-            .unwrap();
-        order.sort_unstable();
-        let direct = read_all(&Ordered::Direct { offsets }, &spill, &order);
-        let path = dir.path.join("reorder.tmp");
+        let direct = read_all(
+            &mut Ordered::open(&spill, true, 0, &dir.path).unwrap(),
+            &spill,
+        );
+        assert_eq!(direct.len(), 5000);
+        // Spatial order, ties by OSM id.
+        let sort_key = |p: &Place| (morton(p.center.lon, p.center.lat), p.osm_id);
+        assert!(
+            direct
+                .windows(2)
+                .all(|w| sort_key(&w[0]) <= sort_key(&w[1]))
+        );
         // Tiny buckets: many of them, and records larger than the share of
         // buffer per bucket.
-        let bucketed = Ordered::bucketed(&spill, &order, sizes, 4096, &path).unwrap();
+        let mut bucketed = Ordered::open(&spill, false, 4096, &dir.path).unwrap();
         let Ordered::Buckets { buckets, .. } = &bucketed else {
             unreachable!()
         };
         assert!(buckets.len() > 20);
-        assert_eq!(read_all(&bucketed, &spill, &order), direct);
-        assert_eq!(direct.len(), 5000);
+        assert_eq!(read_all(&mut bucketed, &spill), direct);
         drop(bucketed);
-        assert!(!path.exists());
+        let left: Vec<_> = std::fs::read_dir(&dir.path)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().to_string())
+            .collect();
+        assert_eq!(left, vec!["p.spill"], "scratch files removed");
     }
 }

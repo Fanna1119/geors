@@ -396,6 +396,7 @@ impl DumpBuilder {
             lines: lines.into_iter().filter(|l| l.len() >= 2).collect(),
             polygons,
             merged_ids: Vec::new(),
+            nominatim_id: id_string(&d.place_id).and_then(|s| s.parse().ok()),
         })
     }
 }
