@@ -384,12 +384,21 @@ suffix rules (`kerkstr` → `kerkstraat`) are **data, not code**:
   the binary at build time, so adding a language means adding a file. The
   test suite validates each file; see [`synonyms/README.md`](synonyms/README.md)
   for the format.
+- **Per country:** each file lists the countries whose partitions use it
+  (German: de, at, ch, li, lu, be, it; English: everywhere), so in South
+  Africa `hauptstr` expands to *hauptstraat* (Afrikaans) and `st` to
+  *street* / *saint*, without the German *strasse* and *sankt*.
+  `everywhere = true` in the config applies every language everywhere.
+- **Phrases:** a word may stand for several (`olv` → *onze lieve vrouw*,
+  `nyc` → *new york city*); a place matches when all of them occur in one
+  field.
 - **Configuration:** the `[synonyms]` section of the server config can
   restrict the built-in languages (`languages = ["de", "en"]`), load extra
   rule files from a directory (`dir = ...`), and add inline rules
   (`[synonyms.words]`, `[synonyms.suffixes]`).
-- **Checking rules:** `geors synonyms <words...> [-c geors.toml]` shows how
-  words expand, for example `kerkstr  ->  kerkstraat, kerkstrasse`.
+- **Checking rules:** `geors synonyms <words...> [-c geors.toml] [--country
+  de]` shows how words expand, for example `kerkstr  ->  kerkstraat,
+  kerkstrasse`.
 
 ```sh
 geors serve --config geors.toml

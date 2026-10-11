@@ -21,7 +21,11 @@ mod builtin {
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RuleSet {
-    /// Whole words: typed word -> what it may stand for.
+    /// Countries (ISO codes) whose partitions use these rules; empty = all.
+    #[serde(default)]
+    pub countries: Vec<String>,
+    /// Whole words: typed word -> what it may stand for (a word or a
+    /// phrase: `olv = ["onze lieve vrouw"]`).
     #[serde(default)]
     pub words: BTreeMap<String, Vec<String>>,
     /// Word endings: "hauptstr" -> "hauptstrasse" for `str = ["strasse"]`.
@@ -37,16 +41,48 @@ pub struct SynonymConfig {
     pub languages: Vec<String>,
     /// Directory with additional rule files (`*.toml`, same format).
     pub dir: Option<PathBuf>,
-    /// Inline rules (`[synonyms.words]`, `[synonyms.suffixes]`).
+    /// Inline rules (`[synonyms.words]`, `[synonyms.suffixes]`); they apply
+    /// to all countries.
     pub words: BTreeMap<String, Vec<String>>,
     pub suffixes: BTreeMap<String, Vec<String>>,
+    /// Apply every rule file to every country, ignoring their `countries`
+    /// (the behaviour before rule files could name countries).
+    pub everywhere: bool,
+}
+
+#[derive(Debug, Clone, Default)]
+struct Rules {
+    /// Word -> alternatives; a phrase alternative is space-separated.
+    words: HashMap<String, Vec<String>>,
+    /// (suffix, replacements), longest suffix first.
+    suffixes: Vec<(String, Vec<String>)>,
+}
+
+impl Rules {
+    fn is_empty(&self) -> bool {
+        self.words.is_empty() && self.suffixes.is_empty()
+    }
+
+    fn expand_into(&self, token: &str, out: &mut Vec<String>) {
+        if let Some(alts) = self.words.get(token) {
+            merge_into(out, alts.iter().cloned());
+        }
+        for (suffix, repl) in &self.suffixes {
+            if token.len() > suffix.len() + 1 && token.ends_with(suffix.as_str()) {
+                let stem = &token[..token.len() - suffix.len()];
+                merge_into(out, repl.iter().map(|r| format!("{stem}{r}")));
+                break;
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default)]
 pub struct Synonyms {
-    words: HashMap<String, Vec<String>>,
-    /// (suffix, replacements), longest suffix first.
-    suffixes: Vec<(String, Vec<String>)>,
+    /// Rules for every country.
+    global: Rules,
+    /// Rules limited to some countries, by lowercase country code.
+    by_country: HashMap<String, Rules>,
 }
 
 /// Languages with built-in rule files.
@@ -73,6 +109,7 @@ impl Synonyms {
     pub fn load(config: &SynonymConfig) -> Result<Self, String> {
         let mut analyzer = text::analyzer();
         let mut s = Self::default();
+        let everywhere = config.everywhere;
         for lang in &config.languages {
             if !builtin_languages().contains(&lang.as_str()) {
                 return Err(format!(
@@ -83,22 +120,37 @@ impl Synonyms {
         }
         for (lang, text) in builtin::BUILTIN {
             if config.languages.is_empty() || config.languages.iter().any(|l| l == lang) {
-                s.add_file(&mut analyzer, &format!("built-in {lang}.toml"), text)?;
+                s.add_file(
+                    &mut analyzer,
+                    &format!("built-in {lang}.toml"),
+                    text,
+                    everywhere,
+                )?;
             }
         }
         if let Some(dir) = &config.dir {
             for path in rule_files(dir)? {
                 let text = std::fs::read_to_string(&path)
                     .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
-                s.add_file(&mut analyzer, &path.display().to_string(), &text)?;
+                s.add_file(
+                    &mut analyzer,
+                    &path.display().to_string(),
+                    &text,
+                    everywhere,
+                )?;
             }
         }
         let inline = RuleSet {
+            countries: Vec::new(),
             words: config.words.clone(),
             suffixes: config.suffixes.clone(),
         };
-        s.add_rules(&mut analyzer, "[synonyms] in the config", &inline)?;
-        s.suffixes.sort_by_key(|(k, _)| std::cmp::Reverse(k.len()));
+        s.add_rules(&mut analyzer, "[synonyms] in the config", &inline, true)?;
+        for rules in std::iter::once(&mut s.global).chain(s.by_country.values_mut()) {
+            rules
+                .suffixes
+                .sort_by_key(|(k, _)| std::cmp::Reverse(k.len()));
+        }
         Ok(s)
     }
 
@@ -107,67 +159,128 @@ impl Synonyms {
         analyzer: &mut TextAnalyzer,
         name: &str,
         text: &str,
+        everywhere: bool,
     ) -> Result<(), String> {
         let rules: RuleSet = toml::from_str(text).map_err(|e| format!("{name}: {e}"))?;
-        self.add_rules(analyzer, name, &rules)
+        self.add_rules(analyzer, name, &rules, everywhere)
     }
 
+    /// `everywhere`: ignore the rule set's `countries`.
     fn add_rules(
         &mut self,
         analyzer: &mut TextAnalyzer,
         name: &str,
         rules: &RuleSet,
+        everywhere: bool,
     ) -> Result<(), String> {
-        let mut normalized = |key: &str,
-                              values: &[String]|
-         -> Result<(String, Vec<String>), String> {
-            let key = normalize(analyzer, key).map_err(|e| format!("{name}: key {e}"))?;
+        let mut targets: Vec<&mut Rules> = Vec::new();
+        if everywhere || rules.countries.is_empty() {
+            targets.push(&mut self.global);
+        } else {
+            let mut codes = Vec::new();
+            for cc in &rules.countries {
+                let code = geors_core::normalize_country_code(cc)
+                    .ok_or_else(|| format!("{name}: '{cc}' is not a two-letter country code"))?;
+                codes.push(code);
+            }
+            for code in codes {
+                self.by_country.entry(code).or_default();
+            }
+            // Distinct entries, so they can be borrowed together.
+            for (code, rules_for) in self.by_country.iter_mut() {
+                if rules.countries.iter().any(|c| c.eq_ignore_ascii_case(code)) {
+                    targets.push(rules_for);
+                }
+            }
+        }
+        let key = |analyzer: &mut TextAnalyzer, k: &str| {
+            normalize(analyzer, k).map_err(|e| format!("{name}: key {e}"))
+        };
+        for (k, values) in &rules.words {
+            let k = key(analyzer, k)?;
             let values = values
                 .iter()
                 .map(|v| {
-                    normalize(analyzer, v).map_err(|e| format!("{name}: value {e} (for '{key}')"))
+                    normalize_phrase(analyzer, v)
+                        .map_err(|e| format!("{name}: value {e} (for '{k}')"))
                 })
                 .collect::<Result<Vec<_>, _>>()?;
-            Ok((key, values))
-        };
-        for (key, values) in &rules.words {
-            let (key, values) = normalized(key, values)?;
-            merge_into(self.words.entry(key).or_default(), values);
+            for t in targets.iter_mut() {
+                merge_into(
+                    t.words.entry(k.clone()).or_default(),
+                    values.iter().cloned(),
+                );
+            }
         }
-        for (key, values) in &rules.suffixes {
-            let (key, values) = normalized(key, values)?;
-            let slot = match self.suffixes.iter().position(|(k, _)| *k == key) {
-                Some(i) => &mut self.suffixes[i].1,
-                None => {
-                    self.suffixes.push((key, Vec::new()));
-                    &mut self.suffixes.last_mut().unwrap().1
-                }
-            };
-            merge_into(slot, values);
+        for (k, values) in &rules.suffixes {
+            let k = key(analyzer, k)?;
+            let values = values
+                .iter()
+                .map(|v| {
+                    normalize(analyzer, v)
+                        .map_err(|e| format!("{name}: suffix value {e} (for '{k}')"))
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            for t in targets.iter_mut() {
+                let slot = match t.suffixes.iter().position(|(s, _)| *s == k) {
+                    Some(i) => &mut t.suffixes[i].1,
+                    None => {
+                        t.suffixes.push((k.clone(), Vec::new()));
+                        &mut t.suffixes.last_mut().unwrap().1
+                    }
+                };
+                merge_into(slot, values.iter().cloned());
+            }
         }
         Ok(())
     }
 
     pub fn is_empty(&self) -> bool {
-        self.words.is_empty() && self.suffixes.is_empty()
+        self.global.is_empty() && self.by_country.values().all(Rules::is_empty)
     }
 
-    /// Alternatives for a normalised token (never includes the token itself).
-    pub fn expand(&self, token: &str) -> Vec<String> {
-        let mut out: Vec<String> = self.words.get(token).cloned().unwrap_or_default();
-        for (suffix, repl) in &self.suffixes {
-            if token.len() > suffix.len() + 1 && token.ends_with(suffix.as_str()) {
-                let stem = &token[..token.len() - suffix.len()];
-                out.extend(repl.iter().map(|r| format!("{stem}{r}")));
-                break;
+    /// Alternatives for a normalised token in the partition of `country`
+    /// (lowercase ISO code; `None`: rules of every country). A phrase
+    /// alternative is space-separated. Never includes the token itself.
+    pub fn expand(&self, token: &str, country: Option<&str>) -> Vec<String> {
+        let mut out = Vec::new();
+        self.global.expand_into(token, &mut out);
+        match country {
+            Some(cc) => {
+                if let Some(rules) = self.by_country.get(cc) {
+                    rules.expand_into(token, &mut out);
+                }
+            }
+            None => {
+                let mut codes: Vec<&String> = self.by_country.keys().collect();
+                codes.sort();
+                for cc in codes {
+                    self.by_country[cc].expand_into(token, &mut out);
+                }
             }
         }
         out.retain(|t| t != token);
         out
     }
+
+    /// Countries with rules of their own (sorted).
+    pub fn countries(&self) -> Vec<&str> {
+        let mut codes: Vec<&str> = self.by_country.keys().map(String::as_str).collect();
+        codes.sort_unstable();
+        codes
+    }
 }
 
-fn merge_into(slot: &mut Vec<String>, values: Vec<String>) {
+/// A rule value: one or more words, normalised and space-separated.
+fn normalize_phrase(analyzer: &mut TextAnalyzer, value: &str) -> Result<String, String> {
+    let words = text::tokenize(analyzer, value);
+    if words.is_empty() {
+        return Err(format!("'{value}' has no letters or digits"));
+    }
+    Ok(words.join(" "))
+}
+
+fn merge_into(slot: &mut Vec<String>, values: impl IntoIterator<Item = String>) {
     for v in values {
         if !slot.contains(&v) {
             slot.push(v);
@@ -191,13 +304,14 @@ fn rule_files(dir: &Path) -> Result<Vec<PathBuf>, String> {
 mod tests {
     use super::*;
 
-    /// Every shipped rule file must parse and contain only single words.
+    /// Every shipped rule file must parse: valid country codes, single-word
+    /// keys and suffix values.
     #[test]
     fn builtin_files_are_valid() {
         assert!(builtin_languages().len() >= 5);
         for (lang, text) in builtin::BUILTIN {
             let mut s = Synonyms::default();
-            s.add_file(&mut text::analyzer(), lang, text)
+            s.add_file(&mut text::analyzer(), lang, text, false)
                 .unwrap_or_else(|e| panic!("synonyms/{lang}.toml: {e}"));
             assert!(!s.is_empty(), "synonyms/{lang}.toml has no rules");
         }
@@ -206,13 +320,50 @@ mod tests {
     #[test]
     fn builtin_rules_across_languages() {
         let s = Synonyms::builtin();
-        let hauptstr = s.expand("hauptstr");
+        let hauptstr = s.expand("hauptstr", None);
         assert!(hauptstr.contains(&"hauptstrasse".to_string()));
         assert!(hauptstr.contains(&"hauptstraat".to_string()));
-        assert!(s.expand("st").contains(&"street".to_string()));
-        assert!(s.expand("st").contains(&"sankt".to_string()));
-        assert_eq!(s.expand("cres"), vec!["crescent"]);
-        assert!(s.expand("vaduz").is_empty());
+        assert!(s.expand("st", None).contains(&"street".to_string()));
+        assert!(s.expand("st", None).contains(&"sankt".to_string()));
+        assert_eq!(s.expand("cres", None), vec!["crescent"]);
+        assert!(s.expand("vaduz", None).is_empty());
+    }
+
+    #[test]
+    fn rules_apply_to_their_countries() {
+        let s = Synonyms::builtin();
+        // German rules in German-speaking partitions, English everywhere.
+        let st_de = s.expand("st", Some("de"));
+        assert!(st_de.contains(&"sankt".to_string()), "{st_de:?}");
+        assert!(st_de.contains(&"street".to_string()), "{st_de:?}");
+        let st_za = s.expand("st", Some("za"));
+        assert!(!st_za.contains(&"sankt".to_string()), "{st_za:?}");
+        assert!(
+            s.expand("hauptstr", Some("za"))
+                .iter()
+                .all(|e| e != "hauptstrasse")
+        );
+        assert!(
+            s.expand("hauptstr", Some("at"))
+                .contains(&"hauptstrasse".to_string())
+        );
+        assert!(s.countries().contains(&"de"));
+        // `everywhere`: the old behaviour.
+        let all = Synonyms::load(&SynonymConfig {
+            everywhere: true,
+            ..Default::default()
+        })
+        .unwrap();
+        assert!(all.expand("st", Some("za")).contains(&"sankt".to_string()));
+        assert!(all.countries().is_empty());
+    }
+
+    #[test]
+    fn phrase_values() {
+        let s = Synonyms::builtin();
+        assert_eq!(s.expand("olv", Some("be")), vec!["onze lieve vrouw"]);
+        assert!(s.expand("olv", Some("de")).is_empty());
+        assert_eq!(s.expand("nyc", None), vec!["new york city"]);
     }
 
     #[test]
@@ -232,10 +383,12 @@ mod tests {
         config.suffixes.insert("gs".into(), vec!["gasse".into()]);
         let s = Synonyms::load(&config).unwrap();
         // Only German built-ins: no English "street".
-        assert_eq!(s.expand("st"), vec!["sankt"]);
-        assert_eq!(s.expand("kh"), vec!["krankenhaus"]);
-        assert_eq!(s.expand("kirchgs"), vec!["kirchgasse"]);
-        assert!(s.expand("gr").contains(&"gross".to_string()));
+        assert_eq!(s.expand("st", Some("de")), vec!["sankt"]);
+        assert!(s.expand("st", Some("za")).is_empty());
+        // Files without `countries` and inline rules apply everywhere.
+        assert_eq!(s.expand("kh", Some("za")), vec!["krankenhaus"]);
+        assert_eq!(s.expand("kirchgs", Some("za")), vec!["kirchgasse"]);
+        assert!(s.expand("gr", Some("de")).contains(&"gross".to_string()));
     }
 
     #[test]
@@ -247,8 +400,22 @@ mod tests {
         });
         assert!(e.contains("available"), "{e}");
         let mut cfg = SynonymConfig::default();
-        cfg.words.insert("rue".into(), vec!["rue de la".into()]);
+        cfg.words.insert("rue de la".into(), vec!["rue".into()]);
         assert!(bad(cfg).contains("not a single word"));
+        let mut cfg = SynonymConfig::default();
+        cfg.suffixes.insert("str".into(), vec!["stra sse".into()]);
+        assert!(bad(cfg).contains("not a single word"));
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("y.toml"),
+            "countries = [\"xyz\"]\n[words]\na = [\"b\"]\n",
+        )
+        .unwrap();
+        let e = bad(SynonymConfig {
+            dir: Some(dir.path().to_path_buf()),
+            ..Default::default()
+        });
+        assert!(e.contains("country code"), "{e}");
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("x.toml"), "[wrods]\na = [\"b\"]\n").unwrap();
         let e = bad(SynonymConfig {

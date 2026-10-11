@@ -51,6 +51,9 @@ prune_originals = false
 languages = []
 # Directory with extra rule files (*.toml, same format as synonyms/*.toml).
 # dir = "/etc/geors/synonyms"
+# Each language applies to the countries listed in its file (English: all).
+# true = every language in every country, as before files named countries.
+everywhere = false
 
 # Inline rules, added to the above.
 [synonyms.words]

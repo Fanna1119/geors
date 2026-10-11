@@ -1,5 +1,8 @@
 # French.
 
+# Partitions of French-speaking countries and French overseas territories.
+countries = ["fr", "be", "ch", "lu", "mc", "ad", "ca", "re", "gp", "mq", "gf", "yt", "pm", "nc", "pf", "wf", "bl", "mf", "sn", "ci", "cm", "ml", "bf", "ne", "td", "ga", "cg", "cd", "bj", "tg", "gn", "mg", "ht", "ma", "dz", "tn"]
+
 [words]
 st = ["saint"]
 ste = ["sainte"]
@@ -10,3 +13,6 @@ rte = ["route"]
 pl = ["place"]
 mt = ["mont"]
 imp = ["impasse"]
+
+# Phrases: a word may stand for several.
+chu = ["centre hospitalier universitaire"]

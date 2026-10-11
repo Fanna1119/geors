@@ -1,5 +1,8 @@
 # Catalan.
 
+# Partitions of Spain and Andorra.
+countries = ["es", "ad"]
+
 [words]
 av = ["avinguda"]
 avda = ["avinguda"]

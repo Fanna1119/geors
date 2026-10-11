@@ -1,9 +1,15 @@
 # Dutch.
 
+# Partitions of the Netherlands, Belgium, Suriname and the Dutch Caribbean.
+countries = ["nl", "be", "sr", "aw", "cw", "sx", "bq"]
+
 [words]
 str = ["straat"]
 ln = ["laan"]
 pl = ["plein"]
+
+# Phrases: a word may stand for several.
+olv = ["onze lieve vrouw"]
 
 [suffixes]
 # "Kerkstr" -> "Kerkstraat"

@@ -148,6 +148,9 @@ enum Command {
         /// Server config whose [synonyms] section to use (default: built-ins).
         #[arg(long, short)]
         config: Option<PathBuf>,
+        /// Rules as a partition of this country sees them (default: all).
+        #[arg(long)]
+        country: Option<String>,
     },
     /// Show the partitions in a data directory.
     Info {
@@ -301,7 +304,7 @@ fn export_cmd(data: &Path, country: &str, every: u32) -> Result<()> {
     Ok(())
 }
 
-fn synonyms_cmd(words: &[String], config: Option<PathBuf>) -> Result<()> {
+fn synonyms_cmd(words: &[String], config: Option<PathBuf>, country: Option<&str>) -> Result<()> {
     let file: ServeConfig = match &config {
         Some(path) => toml::from_str(&std::fs::read_to_string(path)?)
             .with_context(|| format!("invalid config file '{}'", path.display()))?,
@@ -313,10 +316,15 @@ fn synonyms_cmd(words: &[String], config: Option<PathBuf>) -> Result<()> {
         "built-in languages: {}",
         geors_index::synonyms::builtin_languages().join(", ")
     );
+    let country = country.map(|c| c.to_ascii_lowercase());
+    match &country {
+        Some(cc) => println!("rules for partitions of: {cc}"),
+        None => println!("rules of all countries (use --country to pick one)"),
+    }
     let mut analyzer = geors_index::text::analyzer();
     for word in words {
         for token in geors_index::text::tokenize(&mut analyzer, word) {
-            let alts = synonyms.expand(&token);
+            let alts = synonyms.expand(&token, country.as_deref());
             if alts.is_empty() {
                 println!("{token}  (no expansion)");
             } else {
@@ -603,7 +611,11 @@ fn main() -> Result<()> {
         ),
         Command::Sources { data, remove } => sources_cmd(&data, remove),
         Command::Info { data } => info_cmd(&data),
-        Command::Synonyms { words, config } => synonyms_cmd(&words, config),
+        Command::Synonyms {
+            words,
+            config,
+            country,
+        } => synonyms_cmd(&words, config, country.as_deref()),
         Command::Export {
             data,
             country,

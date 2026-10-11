@@ -89,7 +89,7 @@ impl Partition {
         let admins = serde_json::from_slice(&std::fs::read(dir.join(storage::ADMIN_FILE))?)?;
         let tags = serde_json::from_slice(&std::fs::read(dir.join(storage::TAGS_FILE))?)?;
         let p = Self {
-            text: TextIndex::open(&dir.join(storage::TEXT_DIR))?,
+            text: TextIndex::open(&dir.join(storage::TEXT_DIR), &meta.country_code)?,
             records: Blob::open(&dir.join(storage::PLACES_FILE))?,
             docs: Blob::open(&dir.join(storage::DOCS_FILE))?,
             geom: Blob::open(&dir.join(storage::GEOM_FILE))?,

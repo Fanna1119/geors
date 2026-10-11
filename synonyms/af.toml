@@ -1,5 +1,8 @@
 # Afrikaans (South Africa, Namibia).
 
+# Partitions of South Africa and Namibia.
+countries = ["za", "na"]
+
 [words]
 str = ["straat"]
 ln = ["laan"]

@@ -422,3 +422,22 @@ fn other_scripts_match_in_latin_letters() {
     // A query in another script also matches Latin names.
     assert_eq!(first("Киев").as_deref(), Some("Hotel Kiev"));
 }
+
+#[test]
+fn phrase_synonyms() {
+    let dir = tempfile::tempdir().unwrap();
+    let admins = vec![AdminUnit {
+        layer: Layer::Country,
+        name: "België".into(),
+        names: Default::default(),
+    }];
+    let mut basilica = place(1, Layer::Poi, Some("Onze Lieve Vrouw Basiliek"), 4.40, 51.2);
+    basilica.country_code = Some("BE".into());
+    write_partition_from_places(dir.path(), "be", None, "test", &[basilica], admins).unwrap();
+    let engine = Engine::open(dir.path(), &[], EngineConfig::default()).unwrap();
+    // Dutch rules apply in Belgium: "olv" -> "onze lieve vrouw". A lone
+    // word has no missing-word fallback, so only the phrase can match.
+    let olv = |q: &str| search(&engine, |r| r.query = Some(q.into()));
+    assert_eq!(olv("olv"), vec!["Onze Lieve Vrouw Basiliek"]);
+    assert!(olv("xyz").is_empty());
+}

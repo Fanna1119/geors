@@ -413,10 +413,13 @@ impl Directory for ReadOnlyDirectory {
 pub struct TextIndex {
     reader: IndexReader,
     fields: Fields,
+    /// Lowercase country code of the partition: selects synonym rules.
+    country: String,
 }
 
 impl TextIndex {
-    pub fn open(dir: &Path) -> tantivy::Result<Self> {
+    /// `country`: the partition's country code (selects synonym rules).
+    pub fn open(dir: &Path, country: &str) -> tantivy::Result<Self> {
         // Random access, as for the other index files (see
         // `partition::advise_random`).
         let mmap = MmapDirectory::open_with_madvice(dir, tantivy::directory::Advice::Random)?;
@@ -427,7 +430,11 @@ impl TextIndex {
             .reader_builder()
             .reload_policy(ReloadPolicy::Manual)
             .try_into()?;
-        Ok(Self { reader, fields })
+        Ok(Self {
+            reader,
+            fields,
+            country: country.to_ascii_lowercase(),
+        })
     }
 
     /// One query word: the best matching field counts (dis-max), so a POI
@@ -455,7 +462,7 @@ impl TextIndex {
     ) -> Box<dyn Query> {
         let f = self.fields;
         let distance = if fuzzy { fuzzy_distance(token) } else { 0 };
-        let mut expansions = synonyms.expand(token);
+        let mut expansions = synonyms.expand(token, Some(&self.country));
         // A word in another script also matches its Latin form.
         if let Some(latin) = transliterate(token) {
             let mut a = analyzer();
@@ -499,11 +506,30 @@ impl TextIndex {
                 boost,
             );
             for exp in &expansions {
-                let t = Term::from_field_text(field, exp);
-                push(
-                    Box::new(TermQuery::new(t, IndexRecordOption::WithFreqs)),
-                    boost * 0.9,
-                );
+                let words: Vec<&str> = exp.split(' ').collect();
+                if let [word] = words.as_slice() {
+                    let t = Term::from_field_text(field, word);
+                    push(
+                        Box::new(TermQuery::new(t, IndexRecordOption::WithFreqs)),
+                        boost * 0.9,
+                    );
+                } else {
+                    // A phrase ("olv" -> "onze lieve vrouw"): all its words
+                    // in this field, scored as their average.
+                    let terms: Vec<Box<dyn Query>> = words
+                        .iter()
+                        .map(|w| {
+                            Box::new(TermQuery::new(
+                                Term::from_field_text(field, w),
+                                IndexRecordOption::WithFreqs,
+                            )) as Box<dyn Query>
+                        })
+                        .collect();
+                    push(
+                        Box::new(BooleanQuery::intersection(terms)),
+                        boost * 0.9 / words.len() as f32,
+                    );
+                }
             }
             let is_name = field == f.name;
             if prefix && is_name {
@@ -699,7 +725,10 @@ impl TextIndex {
             }
             self.is_known(t)
                 || self.is_housenumber(t)
-                || synonyms.expand(t).iter().any(|e| self.is_known(e))
+                || synonyms
+                    .expand(t, Some(&self.country))
+                    .iter()
+                    .any(|e| e.split(' ').all(|w| self.is_known(w)))
                 || (t.chars().count() >= 2 * MIN_COMPOUND_PART
                     && !t.chars().any(|c| c.is_ascii_digit())
                     && !self.split_compound(t, false).is_empty())
