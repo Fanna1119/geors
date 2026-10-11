@@ -504,6 +504,62 @@ impl Engine {
     /// The R-tree yields approximate neighbours; the k-th best exact distance
     /// among them bounds the answer, so a second, exact pass over that radius
     /// gives the correct result.
+    /// Areas whose polygon contains `point` (boundaries and `place=*`
+    /// areas: layers locality to country), most specific first. Polygons
+    /// are the stored, simplified outlines (about 1 m for small areas, tens
+    /// of metres for countries), so points right on a border may differ
+    /// from the exact boundary.
+    pub fn containing(
+        &self,
+        point: LonLat,
+        countries: &[String],
+        layers: &[Layer],
+    ) -> Result<Vec<Hit>, EngineError> {
+        let mut found: Vec<(Layer, f64, Candidate)> = Vec::new();
+        for pi in self.select(countries)? {
+            let part = &self.partitions[pi];
+            if !part.meta.bbox.contains(point) {
+                continue;
+            }
+            for id in part.areas_at(point)? {
+                let Some(rec) = part.record(id) else { continue };
+                let area = rec.layer >= Layer::Locality
+                    && (layers.is_empty() || layers.contains(&rec.layer));
+                if !area {
+                    continue;
+                }
+                let polygons = part.polygons(&rec);
+                if polygons
+                    .iter()
+                    .any(|rings| geors_core::geom::polygon_contains(rings, point))
+                {
+                    let b = polygons
+                        .iter()
+                        .flatten()
+                        .flatten()
+                        .fold(BBox::empty(), |mut b, p| {
+                            b.extend(*p);
+                            b
+                        });
+                    let size = (b.max_lon - b.min_lon) * (b.max_lat - b.min_lat);
+                    found.push((
+                        rec.layer,
+                        size,
+                        Candidate {
+                            part: pi,
+                            id,
+                            score: 0.0,
+                            distance_m: Some(0.0),
+                        },
+                    ));
+                }
+            }
+        }
+        // Most specific first: lowest layer, then smallest area.
+        found.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.total_cmp(&b.1)));
+        self.load(found.into_iter().map(|(_, _, c)| c).collect(), Some(point))
+    }
+
     pub fn nearest(&self, req: &NearestRequest) -> Result<Vec<Hit>, EngineError> {
         let limit = req.limit.max(1);
         let p = req.point;

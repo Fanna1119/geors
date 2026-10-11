@@ -799,6 +799,25 @@ impl TextIndex {
 
     /// Run `query`, keeping only place ids in `filter` (if any), ranking by
     /// `scorer(place_id, text_score)`. Returns `(score, place_id)` best first.
+    /// Every place id in one of `layers`.
+    pub fn ids_in_layers(&self, layers: &[Layer]) -> tantivy::Result<Vec<u32>> {
+        let query = BooleanQuery::new_multiterms_query(
+            layers
+                .iter()
+                .map(|l| Term::from_field_text(self.fields.layer, l.as_str()))
+                .collect(),
+        );
+        let all = self.reader.searcher().num_docs() as usize;
+        let scorer = Arc::new(|_: u32, s: Score| s);
+        let mut ids: Vec<u32> = self
+            .search(&query, None, scorer, all)?
+            .into_iter()
+            .map(|(_, id)| id)
+            .collect();
+        ids.sort_unstable();
+        Ok(ids)
+    }
+
     pub fn search(
         &self,
         query: &dyn Query,

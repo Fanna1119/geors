@@ -300,6 +300,9 @@ curl 'localhost:2322/lookup?osm_ids=N1932181216,W28712148'
 # Loaded partitions, data generation, source/update state
 curl 'localhost:2322/status'
 
+# Which areas contain this point: district < city < county < state < country
+curl 'localhost:2322/contains?lat=48.1374&lon=11.5755'
+
 # Prometheus metrics
 curl 'localhost:2322/metrics'
 ```
@@ -347,6 +350,17 @@ any distance.
 `osm_ids=N123,W456,R789` (required, up to `max_limit` ids), `country`, `lang`,
 `geometry`. Results come back in request order; unknown ids are skipped. A
 merged street can be found by the id of any of its OSM way segments.
+
+### `GET /contains`
+
+`lat`, `lon` (required), `layers` (area layers only: `locality`, `district`,
+`city`, `county`, `state`, `country`), `country`, `lang`, `geometry`. All
+areas whose polygon contains the point, most specific first, e.g.
+Marienplatz < Altstadt-Lehel < München < Oberbayern < Bayern < Deutschland.
+Uses the stored outlines, simplified by about 1 m (small areas) up to tens
+of metres (countries), so a point right on a border can land on either side.
+The first request per country builds a small index of its areas (Germany:
+under 2 s); later ones take about a millisecond.
 
 ### `GET /metrics`
 

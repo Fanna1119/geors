@@ -441,3 +441,54 @@ fn phrase_synonyms() {
     assert_eq!(olv("olv"), vec!["Onze Lieve Vrouw Basiliek"]);
     assert!(olv("xyz").is_empty());
 }
+
+#[test]
+fn areas_containing_a_point() {
+    let dir = tempfile::tempdir().unwrap();
+    let square = |a: f64, b: f64| {
+        vec![vec![
+            LonLat::new(a, a + 40.0),
+            LonLat::new(b, a + 40.0),
+            LonLat::new(b, b + 40.0),
+            LonLat::new(a, b + 40.0),
+            LonLat::new(a, a + 40.0),
+        ]]
+    };
+    let area = |id: i64, layer: Layer, name: &str, poly: Vec<Vec<LonLat>>| {
+        let mut p = place(id, layer, Some(name), (poly[0][0].lon + poly[0][1].lon) / 2.0, poly[0][0].lat);
+        p.osm_type = OsmType::Relation;
+        p.extent = Some(BBox::new(poly[0][0].lon, poly[0][0].lat, poly[0][2].lon, poly[0][2].lat));
+        p.polygons = vec![poly];
+        p
+    };
+    let mut big = area(1, Layer::State, "Big", square(0.0, 10.0));
+    // A hole: points in it are outside the state.
+    big.polygons[0].push(square(4.0, 5.0)[0].clone());
+    let places = vec![
+        big,
+        area(2, Layer::City, "Small", square(1.0, 3.0)),
+        area(3, Layer::City, "Elsewhere", square(20.0, 30.0)),
+        place(4, Layer::Poi, Some("Cafe"), 2.0, 42.0),
+    ];
+    let admins = vec![AdminUnit {
+        layer: Layer::Country,
+        name: "Testland".into(),
+        names: Default::default(),
+    }];
+    write_partition_from_places(dir.path(), "li", None, "test", &places, admins).unwrap();
+    let engine = Engine::open(dir.path(), &[], EngineConfig::default()).unwrap();
+    let names = |lon: f64, lat: f64, layers: &[Layer]| -> Vec<String> {
+        engine
+            .containing(LonLat::new(lon, lat), &[], layers)
+            .unwrap()
+            .into_iter()
+            .map(|h| h.place.name.unwrap_or_default())
+            .collect()
+    };
+    // Most specific first; only areas (not the cafe at the same spot).
+    assert_eq!(names(2.0, 42.0, &[]), vec!["Small", "Big"]);
+    assert_eq!(names(2.0, 42.0, &[Layer::State]), vec!["Big"]);
+    assert_eq!(names(4.5, 44.5, &[]), Vec::<String>::new(), "in the hole");
+    assert_eq!(names(8.0, 48.0, &[]), vec!["Big"]);
+    assert!(names(15.0, 55.0, &[]).is_empty());
+}

@@ -1,5 +1,5 @@
-//! HTTP API: `/search`, `/reverse`, `/nearest`, `/lookup`, `/status`,
-//! `/metrics`.
+//! HTTP API: `/search`, `/reverse`, `/nearest`, `/lookup`, `/contains`,
+//! `/status`, `/metrics`.
 //!
 //! All responses are GeoJSON FeatureCollections (except `/status`); errors
 //! are `{"error": "..."}` with a 4xx/5xx status.
@@ -26,7 +26,7 @@ use tower_http::trace::TraceLayer;
 use tracing::debug;
 
 pub use error::ApiError;
-use params::{LookupParams, PointParams, SearchParams};
+use params::{ContainsParams, LookupParams, PointParams, SearchParams};
 pub use state::{AppState, DataConfig, LoadInfo, spawn_watcher};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -62,6 +62,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/reverse", get(reverse))
         .route("/nearest", get(nearest))
         .route("/lookup", get(lookup))
+        .route("/contains", get(contains))
         .route("/status", get(status))
         .route("/metrics", get(metrics))
         .layer(middleware::from_fn_with_state(state.clone(), track))
@@ -160,6 +161,20 @@ async fn lookup(
     let (ids, countries) = params.into_ids(&state.config)?;
     blocking(move || {
         let hits = state.engine().lookup(&ids, &countries)?;
+        Ok(Json(render::collection(&hits, &out)))
+    })
+    .await
+}
+
+async fn contains(
+    State(state): State<Arc<AppState>>,
+    params: Result<Query<ContainsParams>, QueryRejection>,
+) -> GeoJson {
+    let Query(params) = params?;
+    let out = params.output()?;
+    let (point, countries, layers) = params.into_query()?;
+    blocking(move || {
+        let hits = state.engine().containing(point, &countries, &layers)?;
         Ok(Json(render::collection(&hits, &out)))
     })
     .await

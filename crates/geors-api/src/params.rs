@@ -35,6 +35,39 @@ pub struct PointParams {
     pub geometry: Option<String>,
 }
 
+/// `/contains`: which areas contain a point.
+#[derive(Debug, Deserialize)]
+pub struct ContainsParams {
+    pub lat: Option<f64>,
+    pub lon: Option<f64>,
+    pub layers: Option<String>,
+    pub country: Option<String>,
+    pub lang: Option<String>,
+    pub geometry: Option<String>,
+}
+
+impl ContainsParams {
+    pub fn output(&self) -> Result<Output, ApiError> {
+        output(&self.lang, &self.geometry)
+    }
+
+    /// The point, country filter and area layers (locality .. country).
+    pub fn into_query(self) -> Result<(LonLat, Vec<String>, Vec<Layer>), ApiError> {
+        let layers = layers(&self.layers)?;
+        if let Some(l) = layers.iter().find(|l| **l < Layer::Locality) {
+            return Err(ApiError::bad_request(format!(
+                "'{}' is not an area layer (locality, district, city, county, state, country)",
+                l.as_str()
+            )));
+        }
+        Ok((
+            required_point(self.lat, self.lon)?,
+            countries(&self.country)?,
+            layers,
+        ))
+    }
+}
+
 pub type OsmIds = Vec<(OsmType, i64)>;
 
 #[derive(Debug, Deserialize)]
@@ -272,6 +305,18 @@ mod tests {
         assert_eq!(r.countries, vec!["li", "at"]);
         assert_eq!(r.layers, vec![Layer::House, Layer::Street]);
         assert_eq!(r.radius_m, Some(500.0));
+    }
+
+    #[test]
+    fn contains_params() {
+        let parse = |q: &str| {
+            let p: ContainsParams = serde_urlencoded::from_str(q).unwrap();
+            p.into_query()
+        };
+        let (p, _, layers) = parse("lat=47.14&lon=9.52&layers=city,country").unwrap();
+        assert_eq!((p.lat, layers.len()), (47.14, 2));
+        assert!(parse("lat=47.14&lon=9.52&layers=house").is_err());
+        assert!(parse("lat=47.14").is_err());
     }
 
     #[test]
