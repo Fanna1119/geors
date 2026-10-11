@@ -2,15 +2,13 @@
 
 use std::collections::{BTreeMap, HashMap};
 use std::fs;
-use std::io::{BufWriter, Read, Write};
+use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use rayon::prelude::*;
 
-use geo_index::rtree::sort::HilbertSort;
-use geo_index::rtree::{RTreeBuilder, RTreeIndex};
 use geors_core::doc::{self, TagTable};
 use geors_core::extsort::{ExternalSorter, Sorted, buffer_bytes};
 use geors_core::geom::{f32_down, f32_up};
@@ -507,20 +505,15 @@ pub fn write_partition(data_dir: &Path, input: PartitionInput) -> Result<PathBuf
     text.finish()?;
     geors_core::mem::mark("writer: text index merged");
 
-    let mut rtree = RTreeBuilder::<f32>::new(count as u32);
-    let mut boxes = std::io::BufReader::with_capacity(1 << 20, fs::File::open(&boxes_path)?);
-    let mut b = [0u8; 16];
-    for _ in 0..count {
-        boxes.read_exact(&mut b)?;
-        let v = |i: usize| f32::from_le_bytes(b[i * 4..i * 4 + 4].try_into().unwrap());
-        rtree.add(v(0), v(1), v(2), v(3));
-    }
-    drop(boxes);
+    // Streamed: leaves sorted on disk, only inner nodes in RAM.
+    crate::rtree_writer::write(
+        &boxes_path,
+        count as usize,
+        &tmp_dir.join(storage::SPATIAL_FILE),
+        &tmp_dir,
+    )?;
     fs::remove_file(&boxes_path)?;
-    let tree = rtree.finish::<HilbertSort>();
     geors_core::mem::mark("writer: R-tree built");
-    debug_assert_eq!(tree.num_items() as u64, count);
-    fs::write(tmp_dir.join(storage::SPATIAL_FILE), tree.into_inner())?;
 
     fs::write(
         tmp_dir.join(storage::TAGS_FILE),

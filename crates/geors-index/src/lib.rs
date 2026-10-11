@@ -4,6 +4,7 @@
 pub mod bitset;
 pub mod engine;
 pub mod partition;
+pub mod rtree_writer;
 pub mod synonyms;
 pub mod tag_filter;
 pub mod text;
