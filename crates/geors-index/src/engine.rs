@@ -61,6 +61,14 @@ pub struct NearestRequest {
     pub tags: TagFilter,
 }
 
+/// A place to look up: by OSM id, or by Nominatim `place_id` (places
+/// imported from a Nominatim dump).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PlaceRef {
+    Osm(OsmType, i64),
+    Nominatim(i64),
+}
+
 /// A ranked result with its document loaded.
 #[derive(Clone)]
 pub struct Hit {
@@ -675,11 +683,43 @@ impl Engine {
 
     /// Places by OSM id, in request order. Unknown ids are skipped.
     /// Merged street segments are found by any of their way ids.
-    pub fn lookup(
-        &self,
-        ids: &[(OsmType, i64)],
-        countries: &[String],
-    ) -> Result<Vec<Hit>, EngineError> {
+    pub fn lookup(&self, refs: &[PlaceRef], countries: &[String]) -> Result<Vec<Hit>, EngineError> {
+        let ids: Vec<(OsmType, i64)> = refs
+            .iter()
+            .filter_map(|r| match r {
+                PlaceRef::Osm(t, id) => Some((*t, *id)),
+                PlaceRef::Nominatim(_) => None,
+            })
+            .collect();
+        // Nominatim ids are not in the stored document, so a hit cannot be
+        // matched back to its id after loading: look each one up alone.
+        let mut by_place_id: Vec<(i64, Hit)> = Vec::new();
+        for r in refs {
+            let PlaceRef::Nominatim(pid) = r else {
+                continue;
+            };
+            for pi in self.select(countries)? {
+                let part = &self.partitions[pi];
+                let hit = part
+                    .text
+                    .lookup(&[format!("P{pid}")])
+                    .map_err(IndexError::from)?
+                    .into_iter()
+                    .next();
+                if let Some(id) = hit {
+                    let cand = Candidate {
+                        part: pi,
+                        id,
+                        score: 1.0,
+                        distance_m: None,
+                    };
+                    if let Some(h) = self.load(vec![cand], None)?.pop() {
+                        by_place_id.push((*pid, h));
+                        break;
+                    }
+                }
+            }
+        }
         let keys: Vec<String> = ids.iter().map(|(t, id)| text::osm_key(*t, *id)).collect();
         let mut found = Vec::new();
         for pi in self.select(countries)? {
@@ -701,9 +741,15 @@ impl Engine {
         let matches = |h: &Hit, t: OsmType, id: i64| {
             h.place.osm_type == t && (h.place.osm_id == id || h.place.merged_ids.contains(&id))
         };
-        Ok(ids
+        Ok(refs
             .iter()
-            .filter_map(|&(t, id)| found.iter().find(|h| matches(h, t, id)).cloned())
+            .filter_map(|r| match *r {
+                PlaceRef::Osm(t, id) => found.iter().find(|h| matches(h, t, id)).cloned(),
+                PlaceRef::Nominatim(pid) => by_place_id
+                    .iter()
+                    .find(|(p, _)| *p == pid)
+                    .map(|(_, h)| h.clone()),
+            })
             .collect())
     }
 

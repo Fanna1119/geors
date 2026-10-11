@@ -172,6 +172,7 @@ fn house(line: &Line, number: u32, center: LonLat, from: &Endpoint) -> Place {
         lines: Vec::new(),
         polygons: Vec::new(),
         merged_ids: Vec::new(),
+        nominatim_id: None,
     }
 }
 

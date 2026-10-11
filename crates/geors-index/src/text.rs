@@ -249,6 +249,9 @@ impl TextIndexWriter {
         for id in &place.merged_ids {
             doc.add_text(f.osm, osm_key(place.osm_type, *id));
         }
+        if let Some(pid) = place.nominatim_id {
+            doc.add_text(f.osm, format!("P{pid}"));
+        }
         // Unique names only: dozens of identical translations would inflate
         // the field length and depress the BM25 score.
         let mut seen = std::collections::HashSet::new();

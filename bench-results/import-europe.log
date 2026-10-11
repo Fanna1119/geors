@@ -1,314 +1,315 @@
-[2m2026-10-10T15:13:14.183052Z[0m [32m INFO[0m [2mgeors_update[0m[2m:[0m importing [3minput[0m[2m=[0m/Users/langeveld/Downloads/europe-latest.osm.pbf [3mformat[0m[2m=[0mPbf
-[2m2026-10-10T15:14:33.545756Z[0m [32m INFO[0m [2mgeors_ingest::reader[0m[2m:[0m pass 1/5: relations [3mrelations[0m[2m=[0m862053 [3mnode_blobs[0m[2m=[0m480820 [3mway_blobs[0m[2m=[0m58817 [3melapsed[0m[2m=[0m79.360447375s
-[2m2026-10-10T15:14:33.951144Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m node lookup [3mstore_estimate_mb[0m[2m=[0m16767 [3mmemory_mb[0m[2m=[0m16384 [3mmode[0m[2m=[0m"sorted join"
-[2m2026-10-10T15:15:41.824893Z[0m [32m INFO[0m [2mgeors_ingest::reader[0m[2m:[0m pass 2/5: ways [3mfeature_ways[0m[2m=[0m84968254 [3mmember_ways[0m[2m=[0m3847084 [3melapsed[0m[2m=[0m67.871906458s
-[2m2026-10-10T15:15:43.984006Z[0m [32m INFO[0m [2mgeors_ingest::nodes[0m[2m:[0m ids sorted [3mreferences[0m[2m=[0m144633133 [3mneeded_nodes[0m[2m=[0m139283014 [3melapsed[0m[2m=[0m2.158758208s
-[2m2026-10-10T15:21:29.811382Z[0m [32m INFO[0m [2mgeors_ingest::reader[0m[2m:[0m pass 3/5: node coordinates (sorted join) [3mplace_nodes[0m[2m=[0m3743988 [3melapsed[0m[2m=[0m344.31088925s
-[2m2026-10-10T15:22:17.521095Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m way geometry joined [3mreferences[0m[2m=[0m794540206 [3mmatched[0m[2m=[0m794540206
-[2m2026-10-10T15:22:28.851744Z[0m [33m WARN[0m [2mgeo::algorithm::relate::geomgraph::geometry_graph[0m[2m:[0m polygon had no winding order. Results are undefined.
-[2m2026-10-10T15:22:29.124858Z[0m [33m WARN[0m [2mgeo::algorithm::relate::geomgraph::geometry_graph[0m[2m:[0m polygon had no winding order. Results are undefined.
-[2m2026-10-10T15:22:29.430536Z[0m [33m WARN[0m [2mgeo::algorithm::relate::geomgraph::geometry_graph[0m[2m:[0m polygon had no winding order. Results are undefined.
-[2m2026-10-10T15:22:33.219166Z[0m [33m WARN[0m [2mgeo::algorithm::relate::geomgraph::geometry_graph[0m[2m:[0m polygon had no winding order. Results are undefined.
-[2m2026-10-10T15:22:35.128270Z[0m [33m WARN[0m [2mgeo::algorithm::relate::geomgraph::geometry_graph[0m[2m:[0m polygon had no winding order. Results are undefined.
-[2m2026-10-10T15:22:36.233148Z[0m [33m WARN[0m [2mgeo::algorithm::relate::geomgraph::geometry_graph[0m[2m:[0m polygon had no winding order. Results are undefined.
-[2m2026-10-10T15:22:36.560320Z[0m [33m WARN[0m [2mgeo::algorithm::relate::geomgraph::geometry_graph[0m[2m:[0m polygon had no winding order. Results are undefined.
-[2m2026-10-10T15:22:36.835078Z[0m [33m WARN[0m [2mgeo::algorithm::relate::geomgraph::geometry_graph[0m[2m:[0m polygon had no winding order. Results are undefined.
-[2m2026-10-10T15:22:36.861237Z[0m [33m WARN[0m [2mgeo::algorithm::relate::geomgraph::geometry_graph[0m[2m:[0m polygon had no winding order. Results are undefined.
-[2m2026-10-10T15:22:41.899662Z[0m [33m WARN[0m [2mgeo::algorithm::relate::geomgraph::geometry_graph[0m[2m:[0m polygon had no winding order. Results are undefined.
-[2m2026-10-10T15:22:42.176595Z[0m [33m WARN[0m [2mgeo::algorithm::relate::geomgraph::geometry_graph[0m[2m:[0m polygon had no winding order. Results are undefined.
-[2m2026-10-10T15:22:48.442726Z[0m [33m WARN[0m [2mgeo::algorithm::relate::geomgraph::geometry_graph[0m[2m:[0m polygon had no winding order. Results are undefined.
-[2m2026-10-10T15:22:48.941483Z[0m [33m WARN[0m [2mgeo::algorithm::relate::geomgraph::geometry_graph[0m[2m:[0m polygon had no winding order. Results are undefined.
-[2m2026-10-10T15:22:56.171347Z[0m [33m WARN[0m [2mgeo::algorithm::relate::geomgraph::geometry_graph[0m[2m:[0m polygon had no winding order. Results are undefined.
-[2m2026-10-10T15:22:56.432187Z[0m [33m WARN[0m [2mgeo::algorithm::relate::geomgraph::geometry_graph[0m[2m:[0m polygon had no winding order. Results are undefined.
-[2m2026-10-10T15:23:05.068145Z[0m [33m WARN[0m [2mgeo::algorithm::relate::geomgraph::geometry_graph[0m[2m:[0m polygon had no winding order. Results are undefined.
-[2m2026-10-10T15:23:10.614475Z[0m [33m WARN[0m [2mgeo::algorithm::relate::geomgraph::geometry_graph[0m[2m:[0m polygon had no winding order. Results are undefined.
-[2m2026-10-10T15:23:12.110108Z[0m [33m WARN[0m [2mgeo::algorithm::relate::geomgraph::geometry_graph[0m[2m:[0m polygon had no winding order. Results are undefined.
-[2m2026-10-10T15:23:14.598237Z[0m [33m WARN[0m [2mgeors_ingest[0m[2m:[0m relations with incomplete geometry (probably clipped by the extract); they are not used for the hierarchy [3mbroken[0m[2m=[0m588
-[2m2026-10-10T15:23:14.846809Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m countries covered by the extract [3mcountries[0m[2m=[0mad(Boundary) al(Boundary) at(Boundary) az(Regions) ba(Boundary) be(Boundary) bg(Boundary) by(Boundary) ch(Boundary) cy(Boundary) cz(Boundary) de(Boundary) dk(Boundary) ee(Boundary) es(Boundary) fi(Boundary) fo(Boundary) fr(Boundary) gb(Boundary) ge(Boundary) gg(Boundary) gi(Boundary) gr(Boundary) hr(Boundary) hu(Boundary) ie(Boundary) im(Boundary) is(Boundary) it(Boundary) je(Boundary) li(Boundary) lt(Boundary) lu(Boundary) lv(Boundary) mc(Boundary) md(Boundary) me(Boundary) mk(Boundary) mt(Boundary) nl(Boundary) no(Boundary) pl(Boundary) pt(Boundary) ro(Boundary) rs(Boundary) ru(Regions) se(Boundary) si(Boundary) sk(Boundary) sm(Boundary) sy(Regions) tr(Boundary) ua(Boundary) va(Boundary) xk(Boundary)
-[2m2026-10-10T15:23:14.846876Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m areas built [3madmin_areas[0m[2m=[0m472336 [3mpostcode_areas[0m[2m=[0m22465 [3mlocalities[0m[2m=[0m1317273 [3melapsed[0m[2m=[0m54.53662625s
-[2m2026-10-10T15:23:21.100501Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m1000000 [3melapsed[0m[2m=[0m606.87240525s
-[2m2026-10-10T15:23:25.684094Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m2000000 [3melapsed[0m[2m=[0m611.455873083s
-[2m2026-10-10T15:23:30.120367Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m3000000 [3melapsed[0m[2m=[0m615.892012291s
-[2m2026-10-10T15:23:33.803116Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m4000000 [3melapsed[0m[2m=[0m619.57465125s
-[2m2026-10-10T15:23:37.968032Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m5000000 [3melapsed[0m[2m=[0m623.739438875s
-[2m2026-10-10T15:23:42.522457Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m6000000 [3melapsed[0m[2m=[0m628.29373125s
-[2m2026-10-10T15:23:46.485340Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m7000000 [3melapsed[0m[2m=[0m632.25649125s
-[2m2026-10-10T15:23:50.114200Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m8000000 [3melapsed[0m[2m=[0m635.885232916s
-[2m2026-10-10T15:23:53.647248Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m9000000 [3melapsed[0m[2m=[0m639.41818775s
-[2m2026-10-10T15:23:56.749972Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m10000000 [3melapsed[0m[2m=[0m642.520818583s
-[2m2026-10-10T15:23:59.856566Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m11000000 [3melapsed[0m[2m=[0m645.627317208s
-[2m2026-10-10T15:24:03.051864Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m12000000 [3melapsed[0m[2m=[0m648.822521041s
-[2m2026-10-10T15:24:06.214743Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m13000000 [3melapsed[0m[2m=[0m651.985306416s
-[2m2026-10-10T15:24:09.322199Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m14000000 [3melapsed[0m[2m=[0m655.092668416s
-[2m2026-10-10T15:24:12.520323Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m15000000 [3melapsed[0m[2m=[0m658.290697083s
-[2m2026-10-10T15:24:15.729135Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m16000000 [3melapsed[0m[2m=[0m661.499409458s
-[2m2026-10-10T15:24:18.939254Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m17000000 [3melapsed[0m[2m=[0m664.709434791s
-[2m2026-10-10T15:24:22.264375Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m18000000 [3melapsed[0m[2m=[0m668.034456125s
-[2m2026-10-10T15:24:25.551581Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m19000000 [3melapsed[0m[2m=[0m671.321563541s
-[2m2026-10-10T15:24:28.823314Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m20000000 [3melapsed[0m[2m=[0m674.593198666s
-[2m2026-10-10T15:24:31.999270Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m21000000 [3melapsed[0m[2m=[0m677.769059875s
-[2m2026-10-10T15:24:35.265337Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m22000000 [3melapsed[0m[2m=[0m681.035016666s
-[2m2026-10-10T15:24:38.660584Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m23000000 [3melapsed[0m[2m=[0m684.430173666s
-[2m2026-10-10T15:24:42.107162Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m24000000 [3melapsed[0m[2m=[0m687.87664475s
-[2m2026-10-10T15:24:47.066573Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m25000000 [3melapsed[0m[2m=[0m692.835908541s
-[2m2026-10-10T15:24:52.952360Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m26000000 [3melapsed[0m[2m=[0m698.7215075s
-[2m2026-10-10T15:24:57.789923Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m27000000 [3melapsed[0m[2m=[0m703.558938583s
-[2m2026-10-10T15:25:01.871685Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m28000000 [3melapsed[0m[2m=[0m707.640578291s
-[2m2026-10-10T15:25:07.891925Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m29000000 [3melapsed[0m[2m=[0m713.660634208s
-[2m2026-10-10T15:25:14.323356Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m30000000 [3melapsed[0m[2m=[0m720.091860875s
-[2m2026-10-10T15:25:18.972742Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m31000000 [3melapsed[0m[2m=[0m724.741113291s
-[2m2026-10-10T15:25:23.106033Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m32000000 [3melapsed[0m[2m=[0m728.874288458s
-[2m2026-10-10T15:25:27.621516Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m33000000 [3melapsed[0m[2m=[0m733.38963325s
-[2m2026-10-10T15:25:34.104224Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m34000000 [3melapsed[0m[2m=[0m739.872150416s
-[2m2026-10-10T15:25:41.324920Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m35000000 [3melapsed[0m[2m=[0m747.092605958s
-[2m2026-10-10T15:25:48.350689Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m36000000 [3melapsed[0m[2m=[0m754.118187541s
-[2m2026-10-10T15:25:55.268777Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m37000000 [3melapsed[0m[2m=[0m761.036065875s
-[2m2026-10-10T15:26:02.114683Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m38000000 [3melapsed[0m[2m=[0m767.881769333s
-[2m2026-10-10T15:26:08.823845Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m39000000 [3melapsed[0m[2m=[0m774.590729833s
-[2m2026-10-10T15:26:14.571841Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m40000000 [3melapsed[0m[2m=[0m780.338539333s
-[2m2026-10-10T15:26:18.633702Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m41000000 [3melapsed[0m[2m=[0m784.400291708s
-[2m2026-10-10T15:26:22.546656Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m42000000 [3melapsed[0m[2m=[0m788.313115208s
-[2m2026-10-10T15:26:26.869960Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m43000000 [3melapsed[0m[2m=[0m792.636302916s
-[2m2026-10-10T15:26:31.516514Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m44000000 [3melapsed[0m[2m=[0m797.282718458s
-[2m2026-10-10T15:26:36.025679Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m45000000 [3melapsed[0m[2m=[0m801.791740125s
-[2m2026-10-10T15:26:40.420849Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m46000000 [3melapsed[0m[2m=[0m806.1867855s
-[2m2026-10-10T15:26:45.123566Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m47000000 [3melapsed[0m[2m=[0m810.88933825s
-[2m2026-10-10T15:26:49.290252Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m48000000 [3melapsed[0m[2m=[0m815.055922791s
-[2m2026-10-10T15:26:52.689223Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m49000000 [3melapsed[0m[2m=[0m818.454788625s
-[2m2026-10-10T15:26:56.114077Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m50000000 [3melapsed[0m[2m=[0m821.879543791s
-[2m2026-10-10T15:26:59.380667Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m51000000 [3melapsed[0m[2m=[0m825.1460355s
-[2m2026-10-10T15:27:02.365404Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m52000000 [3melapsed[0m[2m=[0m828.130682958s
-[2m2026-10-10T15:27:05.347177Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m53000000 [3melapsed[0m[2m=[0m831.112366416s
-[2m2026-10-10T15:27:08.414203Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m54000000 [3melapsed[0m[2m=[0m834.179299458s
-[2m2026-10-10T15:27:11.503423Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m55000000 [3melapsed[0m[2m=[0m837.26842775s
-[2m2026-10-10T15:27:14.824802Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m56000000 [3melapsed[0m[2m=[0m840.589703041s
-[2m2026-10-10T15:27:18.405597Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m57000000 [3melapsed[0m[2m=[0m844.170394583s
-[2m2026-10-10T15:27:21.862065Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m58000000 [3melapsed[0m[2m=[0m847.626739041s
-[2m2026-10-10T15:27:25.099389Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m59000000 [3melapsed[0m[2m=[0m850.8639825s
-[2m2026-10-10T15:27:28.326271Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m60000000 [3melapsed[0m[2m=[0m854.090770708s
-[2m2026-10-10T15:27:31.426976Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m61000000 [3melapsed[0m[2m=[0m857.191382958s
-[2m2026-10-10T15:27:34.531718Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m62000000 [3melapsed[0m[2m=[0m860.296031833s
-[2m2026-10-10T15:27:37.690745Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m63000000 [3melapsed[0m[2m=[0m863.45496425s
-[2m2026-10-10T15:27:41.017003Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m64000000 [3melapsed[0m[2m=[0m866.781122083s
-[2m2026-10-10T15:27:44.918245Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m65000000 [3melapsed[0m[2m=[0m870.68223575s
-[2m2026-10-10T15:27:50.600827Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m66000000 [3melapsed[0m[2m=[0m876.364642541s
-[2m2026-10-10T15:27:55.396491Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m67000000 [3melapsed[0m[2m=[0m881.160179458s
-[2m2026-10-10T15:28:00.319826Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m68000000 [3melapsed[0m[2m=[0m886.083366541s
-[2m2026-10-10T15:28:03.533482Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m69000000 [3melapsed[0m[2m=[0m889.296925208s
-[2m2026-10-10T15:28:06.576160Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m70000000 [3melapsed[0m[2m=[0m892.339510958s
-[2m2026-10-10T15:28:09.634019Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m71000000 [3melapsed[0m[2m=[0m895.39727675s
-[2m2026-10-10T15:28:12.744323Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m72000000 [3melapsed[0m[2m=[0m898.507490041s
-[2m2026-10-10T15:28:15.909993Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m73000000 [3melapsed[0m[2m=[0m901.673065416s
-[2m2026-10-10T15:28:19.656230Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m74000000 [3melapsed[0m[2m=[0m905.419185625s
-[2m2026-10-10T15:28:23.005332Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m75000000 [3melapsed[0m[2m=[0m908.768191791s
-[2m2026-10-10T15:28:26.512726Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m76000000 [3melapsed[0m[2m=[0m912.2754675s
-[2m2026-10-10T15:28:31.155068Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m77000000 [3melapsed[0m[2m=[0m916.917674416s
-[2m2026-10-10T15:28:37.120783Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m78000000 [3melapsed[0m[2m=[0m922.883219458s
-[2m2026-10-10T15:28:42.089348Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m79000000 [3melapsed[0m[2m=[0m927.851630291s
-[2m2026-10-10T15:28:46.202136Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m80000000 [3melapsed[0m[2m=[0m931.964300291s
-[2m2026-10-10T15:28:52.152813Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m81000000 [3melapsed[0m[2m=[0m937.914798583s
-[2m2026-10-10T15:28:58.290038Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m82000000 [3melapsed[0m[2m=[0m944.051817708s
-[2m2026-10-10T15:29:02.718881Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m83000000 [3melapsed[0m[2m=[0m948.480549125s
-[2m2026-10-10T15:29:06.826493Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m84000000 [3melapsed[0m[2m=[0m952.588030833s
-[2m2026-10-10T15:29:11.403488Z[0m [32m INFO[0m [2mgeors_ingest::reader[0m[2m:[0m pass 4/5: way features [3mways[0m[2m=[0m84968254 [3melapsed[0m[2m=[0m355.826899916s
-[2m2026-10-10T15:29:11.794483Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m85000000 [3melapsed[0m[2m=[0m957.555878958s
-[2m2026-10-10T15:29:17.476784Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m86000000 [3melapsed[0m[2m=[0m963.237983791s
-[2m2026-10-10T15:29:22.461524Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m87000000 [3melapsed[0m[2m=[0m968.222588333s
-[2m2026-10-10T15:29:28.327034Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m88000000 [3melapsed[0m[2m=[0m974.087925s
-[2m2026-10-10T15:29:33.273510Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m89000000 [3melapsed[0m[2m=[0m979.03426225s
-[2m2026-10-10T15:29:38.462826Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m90000000 [3melapsed[0m[2m=[0m984.223413458s
-[2m2026-10-10T15:29:44.164158Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m91000000 [3melapsed[0m[2m=[0m989.924583375s
-[2m2026-10-10T15:29:50.514842Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m92000000 [3melapsed[0m[2m=[0m996.275048208s
-[2m2026-10-10T15:29:56.042670Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m93000000 [3melapsed[0m[2m=[0m1001.802739416s
-[2m2026-10-10T15:30:00.887323Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m94000000 [3melapsed[0m[2m=[0m1006.647233333s
-[2m2026-10-10T15:30:03.692618Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m95000000 [3melapsed[0m[2m=[0m1009.45245725s
-[2m2026-10-10T15:30:06.240819Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m96000000 [3melapsed[0m[2m=[0m1012.000495583s
-[2m2026-10-10T15:30:09.295763Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m97000000 [3melapsed[0m[2m=[0m1015.05543425s
-[2m2026-10-10T15:30:12.209484Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m98000000 [3melapsed[0m[2m=[0m1017.969065875s
-[2m2026-10-10T15:30:14.763568Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m99000000 [3melapsed[0m[2m=[0m1020.523074916s
-[2m2026-10-10T15:30:17.255231Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m100000000 [3melapsed[0m[2m=[0m1023.01465825s
-[2m2026-10-10T15:30:20.778292Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m101000000 [3melapsed[0m[2m=[0m1026.53761925s
-[2m2026-10-10T15:30:24.460336Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m102000000 [3melapsed[0m[2m=[0m1030.219547916s
-[2m2026-10-10T15:30:27.821511Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m103000000 [3melapsed[0m[2m=[0m1033.580611583s
-[2m2026-10-10T15:30:32.019589Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m104000000 [3melapsed[0m[2m=[0m1037.778576291s
-[2m2026-10-10T15:30:34.765265Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m105000000 [3melapsed[0m[2m=[0m1040.524167375s
-[2m2026-10-10T15:30:37.480570Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m106000000 [3melapsed[0m[2m=[0m1043.239395541s
-[2m2026-10-10T15:30:39.993091Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m107000000 [3melapsed[0m[2m=[0m1045.751842041s
-[2m2026-10-10T15:30:42.770489Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m108000000 [3melapsed[0m[2m=[0m1048.52915375s
-[2m2026-10-10T15:30:45.155791Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m109000000 [3melapsed[0m[2m=[0m1050.914386208s
-[2m2026-10-10T15:30:47.511343Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m110000000 [3melapsed[0m[2m=[0m1053.269867875s
-[2m2026-10-10T15:30:49.830478Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m111000000 [3melapsed[0m[2m=[0m1055.588915541s
-[2m2026-10-10T15:30:52.297553Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m112000000 [3melapsed[0m[2m=[0m1058.055932291s
-[2m2026-10-10T15:30:55.009641Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m113000000 [3melapsed[0m[2m=[0m1060.767941208s
-[2m2026-10-10T15:30:57.733963Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m114000000 [3melapsed[0m[2m=[0m1063.492181375s
-[2m2026-10-10T15:31:00.411116Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m115000000 [3melapsed[0m[2m=[0m1066.169252416s
-[2m2026-10-10T15:31:03.425419Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m116000000 [3melapsed[0m[2m=[0m1069.183465958s
-[2m2026-10-10T15:31:06.474012Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m117000000 [3melapsed[0m[2m=[0m1072.231952458s
-[2m2026-10-10T15:31:09.425937Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m118000000 [3melapsed[0m[2m=[0m1075.183804166s
-[2m2026-10-10T15:31:12.088150Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m119000000 [3melapsed[0m[2m=[0m1077.845938208s
-[2m2026-10-10T15:31:14.992302Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m120000000 [3melapsed[0m[2m=[0m1080.750002583s
-[2m2026-10-10T15:31:18.171304Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m121000000 [3melapsed[0m[2m=[0m1083.928896458s
-[2m2026-10-10T15:31:22.526999Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m122000000 [3melapsed[0m[2m=[0m1088.284460125s
-[2m2026-10-10T15:31:26.274810Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m123000000 [3melapsed[0m[2m=[0m1092.030976791s
-[2m2026-10-10T15:31:29.196406Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m124000000 [3melapsed[0m[2m=[0m1094.953666916s
-[2m2026-10-10T15:31:31.805587Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m125000000 [3melapsed[0m[2m=[0m1097.562783125s
-[2m2026-10-10T15:31:33.856267Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m126000000 [3melapsed[0m[2m=[0m1099.613402125s
-[2m2026-10-10T15:31:36.480718Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m127000000 [3melapsed[0m[2m=[0m1102.237763833s
-[2m2026-10-10T15:31:39.414243Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m128000000 [3melapsed[0m[2m=[0m1105.171192375s
-[2m2026-10-10T15:31:42.507098Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m129000000 [3melapsed[0m[2m=[0m1108.263973291s
-[2m2026-10-10T15:31:46.483674Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m130000000 [3melapsed[0m[2m=[0m1112.238771291s
-[2m2026-10-10T15:31:50.259787Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m131000000 [3melapsed[0m[2m=[0m1116.016334791s
-[2m2026-10-10T15:31:53.613606Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m132000000 [3melapsed[0m[2m=[0m1119.369865958s
-[2m2026-10-10T15:31:56.886461Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m133000000 [3melapsed[0m[2m=[0m1122.642459833s
-[2m2026-10-10T15:31:59.973232Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m134000000 [3melapsed[0m[2m=[0m1125.729007791s
-[2m2026-10-10T15:32:02.288922Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m135000000 [3melapsed[0m[2m=[0m1128.044572875s
-[2m2026-10-10T15:32:04.522155Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m136000000 [3melapsed[0m[2m=[0m1130.277671583s
-[2m2026-10-10T15:32:06.646822Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m137000000 [3melapsed[0m[2m=[0m1132.402226416s
-[2m2026-10-10T15:32:08.503739Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m138000000 [3melapsed[0m[2m=[0m1134.25904925s
-[2m2026-10-10T15:32:10.549755Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m139000000 [3melapsed[0m[2m=[0m1136.304963958s
-[2m2026-10-10T15:32:12.769220Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m140000000 [3melapsed[0m[2m=[0m1138.524323333s
-[2m2026-10-10T15:32:15.158841Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m141000000 [3melapsed[0m[2m=[0m1140.913842875s
-[2m2026-10-10T15:32:17.834646Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m142000000 [3melapsed[0m[2m=[0m1143.589533541s
-[2m2026-10-10T15:32:20.491920Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m143000000 [3melapsed[0m[2m=[0m1146.246689125s
-[2m2026-10-10T15:32:23.179299Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m144000000 [3melapsed[0m[2m=[0m1148.933964375s
-[2m2026-10-10T15:32:26.060329Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m145000000 [3melapsed[0m[2m=[0m1151.814901083s
-[2m2026-10-10T15:32:28.886144Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m146000000 [3melapsed[0m[2m=[0m1154.640614833s
-[2m2026-10-10T15:32:31.582131Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m147000000 [3melapsed[0m[2m=[0m1157.336507125s
-[2m2026-10-10T15:32:34.192142Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m148000000 [3melapsed[0m[2m=[0m1159.946428s
-[2m2026-10-10T15:32:37.291746Z[0m [32m INFO[0m [2mgeors_ingest::reader[0m[2m:[0m pass 5/5: node features [3mnodes[0m[2m=[0m63664736 [3melapsed[0m[2m=[0m205.72493375s
-[2m2026-10-10T15:32:47.168558Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m149000000 [3melapsed[0m[2m=[0m1172.922389958s
-[2m2026-10-10T15:34:27.662958Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m features extracted [3mplaces[0m[2m=[0m149301302 [3mstreet_segments[0m[2m=[0m26173881 [3mstreets[0m[2m=[0m10349046 [3melapsed[0m[2m=[0m1273.41376675s
-[2m2026-10-10T15:34:27.666245Z[0m [33m WARN[0m [2mgeors_ingest::sink[0m[2m:[0m places outside any country boundary were skipped (use --default-country to keep them) [3munknown[0m[2m=[0m1291998
-[2m2026-10-10T15:34:27.666271Z[0m [32m INFO[0m [2mgeors_ingest::sink[0m[2m:[0m places per country [3mcountries[0m[2m=[0mad=4336 al=77554 am=5983 at=3103574 az=5 ba=235591 be=4553733 bg=392419 by=1408542 ch=2766998 cy=89060 cz=3590129 de=24601800 dk=2924375 ee=904821 es=4662212 fi=1651653 fo=35157 fr=17339362 gb=8082515 ge=204148 gg=8514 gi=1389 gr=462010 hr=424724 hu=1106707 ie=666013 im=16001 iq=459 is=152628 it=6788105 je=7985 li=15543 lt=1190221 lu=204568 lv=694123 mc=2080 md=1093377 me=35027 mk=36083 mt=26118 nl=10455445 no=3380707 pl=9686220 pt=1182355 ro=1378431 rs=2665272 ru=5992227 se=1744234 si=520592 sk=1926227 sm=13707 sy=5 tr=996227 ua=2354297 va=355 xk=322526
-[2m2026-10-10T15:34:27.666850Z[0m [32m INFO[0m [2mgeors_ingest::sink[0m[2m:[0m skipping border sliver (use --all-countries or --countries to keep it) [3mcountry[0m[2m=[0mam [3mplaces[0m[2m=[0m5983
-[2m2026-10-10T15:34:27.668416Z[0m [32m INFO[0m [2mgeors_ingest::sink[0m[2m:[0m skipping border sliver (use --all-countries or --countries to keep it) [3mcountry[0m[2m=[0maz [3mplaces[0m[2m=[0m5
-[2m2026-10-10T15:34:27.677462Z[0m [32m INFO[0m [2mgeors_ingest::sink[0m[2m:[0m skipping border sliver (use --all-countries or --countries to keep it) [3mcountry[0m[2m=[0miq [3mplaces[0m[2m=[0m459
-[2m2026-10-10T15:34:27.688310Z[0m [32m INFO[0m [2mgeors_ingest::sink[0m[2m:[0m skipping border sliver (use --all-countries or --countries to keep it) [3mcountry[0m[2m=[0msy [3mplaces[0m[2m=[0m5
-[2m2026-10-10T15:34:28.099243Z[0m [33m WARN[0m [2mgeors_index::writer[0m[2m:[0m replacing existing partition data-europe/ad [3mpartition[0m[2m=[0mad
-[2m2026-10-10T15:34:28.105425Z[0m [32m INFO[0m [2mgeors_index::writer[0m[2m:[0m wrote partition data-europe/ad [3mpartition[0m[2m=[0mad [3mplaces[0m[2m=[0m4336 [3madmins[0m[2m=[0m29 [3melapsed[0m[2m=[0m415.304917ms
-[2m2026-10-10T15:34:28.904710Z[0m [33m WARN[0m [2mgeors_index::writer[0m[2m:[0m replacing existing partition data-europe/al [3mpartition[0m[2m=[0mal
-[2m2026-10-10T15:34:28.906403Z[0m [32m INFO[0m [2mgeors_index::writer[0m[2m:[0m wrote partition data-europe/al [3mpartition[0m[2m=[0mal [3mplaces[0m[2m=[0m77554 [3madmins[0m[2m=[0m508 [3melapsed[0m[2m=[0m800.772125ms
-[2m2026-10-10T15:34:44.133152Z[0m [33m WARN[0m [2mgeors_index::writer[0m[2m:[0m replacing existing partition data-europe/at [3mpartition[0m[2m=[0mat
-[2m2026-10-10T15:34:44.137520Z[0m [32m INFO[0m [2mgeors_index::writer[0m[2m:[0m wrote partition data-europe/at [3mpartition[0m[2m=[0mat [3mplaces[0m[2m=[0m3103574 [3madmins[0m[2m=[0m8905 [3melapsed[0m[2m=[0m15.229735875s
-[2m2026-10-10T15:34:45.829888Z[0m [33m WARN[0m [2mgeors_index::writer[0m[2m:[0m replacing existing partition data-europe/ba [3mpartition[0m[2m=[0mba
-[2m2026-10-10T15:34:45.832408Z[0m [32m INFO[0m [2mgeors_index::writer[0m[2m:[0m wrote partition data-europe/ba [3mpartition[0m[2m=[0mba [3mplaces[0m[2m=[0m235591 [3madmins[0m[2m=[0m5256 [3melapsed[0m[2m=[0m1.692152541s
-[2m2026-10-10T15:35:05.075909Z[0m [33m WARN[0m [2mgeors_index::writer[0m[2m:[0m replacing existing partition data-europe/be [3mpartition[0m[2m=[0mbe
-[2m2026-10-10T15:35:05.079886Z[0m [32m INFO[0m [2mgeors_index::writer[0m[2m:[0m wrote partition data-europe/be [3mpartition[0m[2m=[0mbe [3mplaces[0m[2m=[0m4553733 [3madmins[0m[2m=[0m3605 [3melapsed[0m[2m=[0m19.245909084s
-[2m2026-10-10T15:35:08.009772Z[0m [33m WARN[0m [2mgeors_index::writer[0m[2m:[0m replacing existing partition data-europe/bg [3mpartition[0m[2m=[0mbg
-[2m2026-10-10T15:35:08.011871Z[0m [32m INFO[0m [2mgeors_index::writer[0m[2m:[0m wrote partition data-europe/bg [3mpartition[0m[2m=[0mbg [3mplaces[0m[2m=[0m392419 [3madmins[0m[2m=[0m7118 [3melapsed[0m[2m=[0m2.914270833s
-[2m2026-10-10T15:35:17.421633Z[0m [33m WARN[0m [2mgeors_index::writer[0m[2m:[0m replacing existing partition data-europe/by [3mpartition[0m[2m=[0mby
-[2m2026-10-10T15:35:17.424252Z[0m [32m INFO[0m [2mgeors_index::writer[0m[2m:[0m wrote partition data-europe/by [3mpartition[0m[2m=[0mby [3mplaces[0m[2m=[0m1408542 [3madmins[0m[2m=[0m13844 [3melapsed[0m[2m=[0m9.410698833s
-[2m2026-10-10T15:35:30.927755Z[0m [33m WARN[0m [2mgeors_index::writer[0m[2m:[0m replacing existing partition data-europe/ch [3mpartition[0m[2m=[0mch
-[2m2026-10-10T15:35:30.931695Z[0m [32m INFO[0m [2mgeors_index::writer[0m[2m:[0m wrote partition data-europe/ch [3mpartition[0m[2m=[0mch [3mplaces[0m[2m=[0m2766998 [3madmins[0m[2m=[0m6017 [3melapsed[0m[2m=[0m13.502776875s
-[2m2026-10-10T15:35:32.069414Z[0m [33m WARN[0m [2mgeors_index::writer[0m[2m:[0m replacing existing partition data-europe/cy [3mpartition[0m[2m=[0mcy
-[2m2026-10-10T15:35:32.071489Z[0m [32m INFO[0m [2mgeors_index::writer[0m[2m:[0m wrote partition data-europe/cy [3mpartition[0m[2m=[0mcy [3mplaces[0m[2m=[0m89060 [3madmins[0m[2m=[0m1031 [3melapsed[0m[2m=[0m1.136919042s
-[2m2026-10-10T15:35:46.682430Z[0m [33m WARN[0m [2mgeors_index::writer[0m[2m:[0m replacing existing partition data-europe/cz [3mpartition[0m[2m=[0mcz
-[2m2026-10-10T15:35:46.686861Z[0m [32m INFO[0m [2mgeors_index::writer[0m[2m:[0m wrote partition data-europe/cz [3mpartition[0m[2m=[0mcz [3mplaces[0m[2m=[0m3590129 [3madmins[0m[2m=[0m10050 [3melapsed[0m[2m=[0m14.614068375s
-[2m2026-10-10T15:36:01.178687Z[0m [32m INFO[0m [2mgeors_index::writer[0m[2m:[0m spill file regrouped for sequential reads [3mbuckets[0m[2m=[0m38 [3mbucket_mb[0m[2m=[0m128
-[2m2026-10-10T15:37:53.664050Z[0m [33m WARN[0m [2mgeors_index::writer[0m[2m:[0m replacing existing partition data-europe/de [3mpartition[0m[2m=[0mde
-[2m2026-10-10T15:37:53.723283Z[0m [32m INFO[0m [2mgeors_index::writer[0m[2m:[0m wrote partition data-europe/de [3mpartition[0m[2m=[0mde [3mplaces[0m[2m=[0m24601800 [3madmins[0m[2m=[0m42150 [3melapsed[0m[2m=[0m127.028729083s
-[2m2026-10-10T15:38:05.069363Z[0m [33m WARN[0m [2mgeors_index::writer[0m[2m:[0m replacing existing partition data-europe/dk [3mpartition[0m[2m=[0mdk
-[2m2026-10-10T15:38:05.072766Z[0m [32m INFO[0m [2mgeors_index::writer[0m[2m:[0m wrote partition data-europe/dk [3mpartition[0m[2m=[0mdk [3mplaces[0m[2m=[0m2924375 [3madmins[0m[2m=[0m2989 [3melapsed[0m[2m=[0m11.332849125s
-[2m2026-10-10T15:38:09.852914Z[0m [33m WARN[0m [2mgeors_index::writer[0m[2m:[0m replacing existing partition data-europe/ee [3mpartition[0m[2m=[0mee
-[2m2026-10-10T15:38:09.856186Z[0m [32m INFO[0m [2mgeors_index::writer[0m[2m:[0m wrote partition data-europe/ee [3mpartition[0m[2m=[0mee [3mplaces[0m[2m=[0m904821 [3madmins[0m[2m=[0m5172 [3melapsed[0m[2m=[0m4.780028834s
-[2m2026-10-10T15:38:40.592814Z[0m [33m WARN[0m [2mgeors_index::writer[0m[2m:[0m replacing existing partition data-europe/es [3mpartition[0m[2m=[0mes
-[2m2026-10-10T15:38:40.626606Z[0m [32m INFO[0m [2mgeors_index::writer[0m[2m:[0m wrote partition data-europe/es [3mpartition[0m[2m=[0mes [3mplaces[0m[2m=[0m4662212 [3madmins[0m[2m=[0m29467 [3melapsed[0m[2m=[0m30.767517542s
-[2m2026-10-10T15:38:50.753321Z[0m [33m WARN[0m [2mgeors_index::writer[0m[2m:[0m replacing existing partition data-europe/fi [3mpartition[0m[2m=[0mfi
-[2m2026-10-10T15:38:50.758548Z[0m [32m INFO[0m [2mgeors_index::writer[0m[2m:[0m wrote partition data-europe/fi [3mpartition[0m[2m=[0mfi [3mplaces[0m[2m=[0m1651653 [3madmins[0m[2m=[0m4901 [3melapsed[0m[2m=[0m10.125977625s
-[2m2026-10-10T15:38:51.225417Z[0m [33m WARN[0m [2mgeors_index::writer[0m[2m:[0m replacing existing partition data-europe/fo [3mpartition[0m[2m=[0mfo
-[2m2026-10-10T15:38:51.227684Z[0m [32m INFO[0m [2mgeors_index::writer[0m[2m:[0m wrote partition data-europe/fo [3mpartition[0m[2m=[0mfo [3mplaces[0m[2m=[0m35157 [3madmins[0m[2m=[0m239 [3melapsed[0m[2m=[0m465.71975ms
-[2m2026-10-10T15:40:17.353309Z[0m [33m WARN[0m [2mgeors_index::writer[0m[2m:[0m replacing existing partition data-europe/fr [3mpartition[0m[2m=[0mfr
-[2m2026-10-10T15:40:17.416101Z[0m [32m INFO[0m [2mgeors_index::writer[0m[2m:[0m wrote partition data-europe/fr [3mpartition[0m[2m=[0mfr [3mplaces[0m[2m=[0m17339362 [3madmins[0m[2m=[0m72953 [3melapsed[0m[2m=[0m86.185507666s
-[2m2026-10-10T15:41:02.010600Z[0m [33m WARN[0m [2mgeors_index::writer[0m[2m:[0m replacing existing partition data-europe/gb [3mpartition[0m[2m=[0mgb
-[2m2026-10-10T15:41:02.044498Z[0m [32m INFO[0m [2mgeors_index::writer[0m[2m:[0m wrote partition data-europe/gb [3mpartition[0m[2m=[0mgb [3mplaces[0m[2m=[0m8082515 [3madmins[0m[2m=[0m47868 [3melapsed[0m[2m=[0m44.608667584s
-[2m2026-10-10T15:41:04.847988Z[0m [33m WARN[0m [2mgeors_index::writer[0m[2m:[0m replacing existing partition data-europe/ge [3mpartition[0m[2m=[0mge
-[2m2026-10-10T15:41:04.850491Z[0m [32m INFO[0m [2mgeors_index::writer[0m[2m:[0m wrote partition data-europe/ge [3mpartition[0m[2m=[0mge [3mplaces[0m[2m=[0m204148 [3madmins[0m[2m=[0m4439 [3melapsed[0m[2m=[0m2.78494s
-[2m2026-10-10T15:41:05.205231Z[0m [33m WARN[0m [2mgeors_index::writer[0m[2m:[0m replacing existing partition data-europe/gg [3mpartition[0m[2m=[0mgg
-[2m2026-10-10T15:41:05.208086Z[0m [32m INFO[0m [2mgeors_index::writer[0m[2m:[0m wrote partition data-europe/gg [3mpartition[0m[2m=[0mgg [3mplaces[0m[2m=[0m8514 [3madmins[0m[2m=[0m36 [3melapsed[0m[2m=[0m355.626375ms
-[2m2026-10-10T15:41:05.545572Z[0m [33m WARN[0m [2mgeors_index::writer[0m[2m:[0m replacing existing partition data-europe/gi [3mpartition[0m[2m=[0mgi
-[2m2026-10-10T15:41:05.548801Z[0m [32m INFO[0m [2mgeors_index::writer[0m[2m:[0m wrote partition data-europe/gi [3mpartition[0m[2m=[0mgi [3mplaces[0m[2m=[0m1389 [3madmins[0m[2m=[0m9 [3melapsed[0m[2m=[0m340.411209ms
-[2m2026-10-10T15:41:09.973604Z[0m [33m WARN[0m [2mgeors_index::writer[0m[2m:[0m replacing existing partition data-europe/gr [3mpartition[0m[2m=[0mgr
-[2m2026-10-10T15:41:09.977254Z[0m [32m INFO[0m [2mgeors_index::writer[0m[2m:[0m wrote partition data-europe/gr [3mpartition[0m[2m=[0mgr [3mplaces[0m[2m=[0m462010 [3madmins[0m[2m=[0m4146 [3melapsed[0m[2m=[0m4.428168875s
-[2m2026-10-10T15:41:12.671133Z[0m [33m WARN[0m [2mgeors_index::writer[0m[2m:[0m replacing existing partition data-europe/hr [3mpartition[0m[2m=[0mhr
-[2m2026-10-10T15:41:12.673936Z[0m [32m INFO[0m [2mgeors_index::writer[0m[2m:[0m wrote partition data-europe/hr [3mpartition[0m[2m=[0mhr [3mplaces[0m[2m=[0m424724 [3madmins[0m[2m=[0m8318 [3melapsed[0m[2m=[0m2.694664708s
-[2m2026-10-10T15:41:18.749546Z[0m [33m WARN[0m [2mgeors_index::writer[0m[2m:[0m replacing existing partition data-europe/hu [3mpartition[0m[2m=[0mhu
-[2m2026-10-10T15:41:18.752514Z[0m [32m INFO[0m [2mgeors_index::writer[0m[2m:[0m wrote partition data-europe/hu [3mpartition[0m[2m=[0mhu [3mplaces[0m[2m=[0m1106707 [3madmins[0m[2m=[0m6534 [3melapsed[0m[2m=[0m6.077106083s
-[2m2026-10-10T15:41:23.232386Z[0m [33m WARN[0m [2mgeors_index::writer[0m[2m:[0m replacing existing partition data-europe/ie [3mpartition[0m[2m=[0mie
-[2m2026-10-10T15:41:23.236134Z[0m [32m INFO[0m [2mgeors_index::writer[0m[2m:[0m wrote partition data-europe/ie [3mpartition[0m[2m=[0mie [3mplaces[0m[2m=[0m666013 [3madmins[0m[2m=[0m32521 [3melapsed[0m[2m=[0m4.48130125s
-[2m2026-10-10T15:41:23.613277Z[0m [33m WARN[0m [2mgeors_index::writer[0m[2m:[0m replacing existing partition data-europe/im [3mpartition[0m[2m=[0mim
-[2m2026-10-10T15:41:23.616740Z[0m [32m INFO[0m [2mgeors_index::writer[0m[2m:[0m wrote partition data-europe/im [3mpartition[0m[2m=[0mim [3mplaces[0m[2m=[0m16001 [3madmins[0m[2m=[0m65 [3melapsed[0m[2m=[0m374.616ms
-[2m2026-10-10T15:41:24.759022Z[0m [33m WARN[0m [2mgeors_index::writer[0m[2m:[0m replacing existing partition data-europe/is [3mpartition[0m[2m=[0mis
-[2m2026-10-10T15:41:24.760984Z[0m [32m INFO[0m [2mgeors_index::writer[0m[2m:[0m wrote partition data-europe/is [3mpartition[0m[2m=[0mis [3mplaces[0m[2m=[0m152628 [3madmins[0m[2m=[0m430 [3melapsed[0m[2m=[0m1.1436825s
-[2m2026-10-10T15:41:59.391089Z[0m [33m WARN[0m [2mgeors_index::writer[0m[2m:[0m replacing existing partition data-europe/it [3mpartition[0m[2m=[0mit
-[2m2026-10-10T15:41:59.407155Z[0m [32m INFO[0m [2mgeors_index::writer[0m[2m:[0m wrote partition data-europe/it [3mpartition[0m[2m=[0mit [3mplaces[0m[2m=[0m6788105 [3madmins[0m[2m=[0m18901 [3melapsed[0m[2m=[0m34.644391458s
-[2m2026-10-10T15:41:59.772529Z[0m [33m WARN[0m [2mgeors_index::writer[0m[2m:[0m replacing existing partition data-europe/je [3mpartition[0m[2m=[0mje
-[2m2026-10-10T15:41:59.774620Z[0m [32m INFO[0m [2mgeors_index::writer[0m[2m:[0m wrote partition data-europe/je [3mpartition[0m[2m=[0mje [3mplaces[0m[2m=[0m7985 [3madmins[0m[2m=[0m108 [3melapsed[0m[2m=[0m360.40175ms
-[2m2026-10-10T15:42:00.132791Z[0m [33m WARN[0m [2mgeors_index::writer[0m[2m:[0m replacing existing partition data-europe/li [3mpartition[0m[2m=[0mli
-[2m2026-10-10T15:42:00.143138Z[0m [32m INFO[0m [2mgeors_index::writer[0m[2m:[0m wrote partition data-europe/li [3mpartition[0m[2m=[0mli [3mplaces[0m[2m=[0m15543 [3madmins[0m[2m=[0m23 [3melapsed[0m[2m=[0m368.235ms
-[2m2026-10-10T15:42:05.389746Z[0m [33m WARN[0m [2mgeors_index::writer[0m[2m:[0m replacing existing partition data-europe/lt [3mpartition[0m[2m=[0mlt
-[2m2026-10-10T15:42:05.392608Z[0m [32m INFO[0m [2mgeors_index::writer[0m[2m:[0m wrote partition data-europe/lt [3mpartition[0m[2m=[0mlt [3mplaces[0m[2m=[0m1190221 [3madmins[0m[2m=[0m22252 [3melapsed[0m[2m=[0m5.248809667s
-[2m2026-10-10T15:42:06.640185Z[0m [33m WARN[0m [2mgeors_index::writer[0m[2m:[0m replacing existing partition data-europe/lu [3mpartition[0m[2m=[0mlu
-[2m2026-10-10T15:42:06.642168Z[0m [32m INFO[0m [2mgeors_index::writer[0m[2m:[0m wrote partition data-europe/lu [3mpartition[0m[2m=[0mlu [3mplaces[0m[2m=[0m204568 [3madmins[0m[2m=[0m365 [3melapsed[0m[2m=[0m1.246422584s
-[2m2026-10-10T15:42:10.335249Z[0m [33m WARN[0m [2mgeors_index::writer[0m[2m:[0m replacing existing partition data-europe/lv [3mpartition[0m[2m=[0mlv
-[2m2026-10-10T15:42:10.337245Z[0m [32m INFO[0m [2mgeors_index::writer[0m[2m:[0m wrote partition data-europe/lv [3mpartition[0m[2m=[0mlv [3mplaces[0m[2m=[0m694123 [3madmins[0m[2m=[0m2611 [3melapsed[0m[2m=[0m3.69402225s
-[2m2026-10-10T15:42:10.664155Z[0m [33m WARN[0m [2mgeors_index::writer[0m[2m:[0m replacing existing partition data-europe/mc [3mpartition[0m[2m=[0mmc
-[2m2026-10-10T15:42:10.666618Z[0m [32m INFO[0m [2mgeors_index::writer[0m[2m:[0m wrote partition data-europe/mc [3mpartition[0m[2m=[0mmc [3mplaces[0m[2m=[0m2080 [3madmins[0m[2m=[0m15 [3melapsed[0m[2m=[0m328.366417ms
-[2m2026-10-10T15:42:15.236572Z[0m [33m WARN[0m [2mgeors_index::writer[0m[2m:[0m replacing existing partition data-europe/md [3mpartition[0m[2m=[0mmd
-[2m2026-10-10T15:42:15.239079Z[0m [32m INFO[0m [2mgeors_index::writer[0m[2m:[0m wrote partition data-europe/md [3mpartition[0m[2m=[0mmd [3mplaces[0m[2m=[0m1093377 [3madmins[0m[2m=[0m2803 [3melapsed[0m[2m=[0m4.572194333s
-[2m2026-10-10T15:42:15.896732Z[0m [33m WARN[0m [2mgeors_index::writer[0m[2m:[0m replacing existing partition data-europe/me [3mpartition[0m[2m=[0mme
-[2m2026-10-10T15:42:15.898539Z[0m [32m INFO[0m [2mgeors_index::writer[0m[2m:[0m wrote partition data-europe/me [3mpartition[0m[2m=[0mme [3mplaces[0m[2m=[0m35027 [3madmins[0m[2m=[0m2628 [3melapsed[0m[2m=[0m657.6125ms
-[2m2026-10-10T15:42:16.561327Z[0m [33m WARN[0m [2mgeors_index::writer[0m[2m:[0m replacing existing partition data-europe/mk [3mpartition[0m[2m=[0mmk
-[2m2026-10-10T15:42:16.563711Z[0m [32m INFO[0m [2mgeors_index::writer[0m[2m:[0m wrote partition data-europe/mk [3mpartition[0m[2m=[0mmk [3mplaces[0m[2m=[0m36083 [3madmins[0m[2m=[0m1528 [3melapsed[0m[2m=[0m664.458ms
-[2m2026-10-10T15:42:17.085495Z[0m [33m WARN[0m [2mgeors_index::writer[0m[2m:[0m replacing existing partition data-europe/mt [3mpartition[0m[2m=[0mmt
-[2m2026-10-10T15:42:17.087863Z[0m [32m INFO[0m [2mgeors_index::writer[0m[2m:[0m wrote partition data-europe/mt [3mpartition[0m[2m=[0mmt [3mplaces[0m[2m=[0m26118 [3madmins[0m[2m=[0m148 [3melapsed[0m[2m=[0m523.422125ms
-[2m2026-10-10T15:42:54.507597Z[0m [33m WARN[0m [2mgeors_index::writer[0m[2m:[0m replacing existing partition data-europe/nl [3mpartition[0m[2m=[0mnl
-[2m2026-10-10T15:42:54.535391Z[0m [32m INFO[0m [2mgeors_index::writer[0m[2m:[0m wrote partition data-europe/nl [3mpartition[0m[2m=[0mnl [3mplaces[0m[2m=[0m10455445 [3madmins[0m[2m=[0m4198 [3melapsed[0m[2m=[0m37.446039667s
-[2m2026-10-10T15:43:10.512132Z[0m [33m WARN[0m [2mgeors_index::writer[0m[2m:[0m replacing existing partition data-europe/no [3mpartition[0m[2m=[0mno
-[2m2026-10-10T15:43:10.522566Z[0m [32m INFO[0m [2mgeors_index::writer[0m[2m:[0m wrote partition data-europe/no [3mpartition[0m[2m=[0mno [3mplaces[0m[2m=[0m3380707 [3madmins[0m[2m=[0m6254 [3melapsed[0m[2m=[0m15.978113s
-[2m2026-10-10T15:43:50.378377Z[0m [33m WARN[0m [2mgeors_index::writer[0m[2m:[0m replacing existing partition data-europe/pl [3mpartition[0m[2m=[0mpl
-[2m2026-10-10T15:43:50.431648Z[0m [32m INFO[0m [2mgeors_index::writer[0m[2m:[0m wrote partition data-europe/pl [3mpartition[0m[2m=[0mpl [3mplaces[0m[2m=[0m9686220 [3madmins[0m[2m=[0m39908 [3melapsed[0m[2m=[0m39.904021958s
-[2m2026-10-10T15:43:57.397577Z[0m [33m WARN[0m [2mgeors_index::writer[0m[2m:[0m replacing existing partition data-europe/pt [3mpartition[0m[2m=[0mpt
-[2m2026-10-10T15:43:57.402333Z[0m [32m INFO[0m [2mgeors_index::writer[0m[2m:[0m wrote partition data-europe/pt [3mpartition[0m[2m=[0mpt [3mplaces[0m[2m=[0m1182355 [3madmins[0m[2m=[0m9886 [3melapsed[0m[2m=[0m6.957397792s
-[2m2026-10-10T15:44:04.400942Z[0m [33m WARN[0m [2mgeors_index::writer[0m[2m:[0m replacing existing partition data-europe/ro [3mpartition[0m[2m=[0mro
-[2m2026-10-10T15:44:04.406701Z[0m [32m INFO[0m [2mgeors_index::writer[0m[2m:[0m wrote partition data-europe/ro [3mpartition[0m[2m=[0mro [3mplaces[0m[2m=[0m1378431 [3madmins[0m[2m=[0m7517 [3melapsed[0m[2m=[0m7.00161025s
-[2m2026-10-10T15:44:16.207786Z[0m [33m WARN[0m [2mgeors_index::writer[0m[2m:[0m replacing existing partition data-europe/rs [3mpartition[0m[2m=[0mrs
-[2m2026-10-10T15:44:16.216006Z[0m [32m INFO[0m [2mgeors_index::writer[0m[2m:[0m wrote partition data-europe/rs [3mpartition[0m[2m=[0mrs [3mplaces[0m[2m=[0m2665272 [3madmins[0m[2m=[0m5298 [3melapsed[0m[2m=[0m11.805984833s
-[2m2026-10-10T15:44:44.538975Z[0m [33m WARN[0m [2mgeors_index::writer[0m[2m:[0m replacing existing partition data-europe/ru [3mpartition[0m[2m=[0mru
-[2m2026-10-10T15:44:44.544841Z[0m [32m INFO[0m [2mgeors_index::writer[0m[2m:[0m wrote partition data-europe/ru [3mpartition[0m[2m=[0mru [3mplaces[0m[2m=[0m5992227 [3madmins[0m[2m=[0m65134 [3melapsed[0m[2m=[0m28.323595209s
-[2m2026-10-10T15:44:54.670129Z[0m [33m WARN[0m [2mgeors_index::writer[0m[2m:[0m replacing existing partition data-europe/se [3mpartition[0m[2m=[0mse
-[2m2026-10-10T15:44:54.676361Z[0m [32m INFO[0m [2mgeors_index::writer[0m[2m:[0m wrote partition data-europe/se [3mpartition[0m[2m=[0mse [3mplaces[0m[2m=[0m1744234 [3madmins[0m[2m=[0m13132 [3melapsed[0m[2m=[0m10.119753667s
-[2m2026-10-10T15:44:57.187099Z[0m [33m WARN[0m [2mgeors_index::writer[0m[2m:[0m replacing existing partition data-europe/si [3mpartition[0m[2m=[0msi
-[2m2026-10-10T15:44:57.190904Z[0m [32m INFO[0m [2mgeors_index::writer[0m[2m:[0m wrote partition data-europe/si [3mpartition[0m[2m=[0msi [3mplaces[0m[2m=[0m520592 [3madmins[0m[2m=[0m733 [3melapsed[0m[2m=[0m2.511557375s
-[2m2026-10-10T15:45:05.525739Z[0m [33m WARN[0m [2mgeors_index::writer[0m[2m:[0m replacing existing partition data-europe/sk [3mpartition[0m[2m=[0msk
-[2m2026-10-10T15:45:05.532690Z[0m [32m INFO[0m [2mgeors_index::writer[0m[2m:[0m wrote partition data-europe/sk [3mpartition[0m[2m=[0msk [3mplaces[0m[2m=[0m1926227 [3madmins[0m[2m=[0m4437 [3melapsed[0m[2m=[0m8.3400605s
-[2m2026-10-10T15:45:05.902909Z[0m [33m WARN[0m [2mgeors_index::writer[0m[2m:[0m replacing existing partition data-europe/sm [3mpartition[0m[2m=[0msm
-[2m2026-10-10T15:45:05.904719Z[0m [32m INFO[0m [2mgeors_index::writer[0m[2m:[0m wrote partition data-europe/sm [3mpartition[0m[2m=[0msm [3mplaces[0m[2m=[0m13707 [3madmins[0m[2m=[0m15 [3melapsed[0m[2m=[0m368.71125ms
-[2m2026-10-10T15:45:13.811679Z[0m [33m WARN[0m [2mgeors_index::writer[0m[2m:[0m replacing existing partition data-europe/tr [3mpartition[0m[2m=[0mtr
-[2m2026-10-10T15:45:13.816850Z[0m [32m INFO[0m [2mgeors_index::writer[0m[2m:[0m wrote partition data-europe/tr [3mpartition[0m[2m=[0mtr [3mplaces[0m[2m=[0m996227 [3madmins[0m[2m=[0m44786 [3melapsed[0m[2m=[0m7.911695917s
-[2m2026-10-10T15:45:31.923578Z[0m [33m WARN[0m [2mgeors_index::writer[0m[2m:[0m replacing existing partition data-europe/ua [3mpartition[0m[2m=[0mua
-[2m2026-10-10T15:45:31.932486Z[0m [32m INFO[0m [2mgeors_index::writer[0m[2m:[0m wrote partition data-europe/ua [3mpartition[0m[2m=[0mua [3mplaces[0m[2m=[0m2354297 [3madmins[0m[2m=[0m19730 [3melapsed[0m[2m=[0m18.110873s
-[2m2026-10-10T15:45:32.289686Z[0m [33m WARN[0m [2mgeors_index::writer[0m[2m:[0m replacing existing partition data-europe/va [3mpartition[0m[2m=[0mva
-[2m2026-10-10T15:45:32.292790Z[0m [32m INFO[0m [2mgeors_index::writer[0m[2m:[0m wrote partition data-europe/va [3mpartition[0m[2m=[0mva [3mplaces[0m[2m=[0m355 [3madmins[0m[2m=[0m3 [3melapsed[0m[2m=[0m353.090875ms
-[2m2026-10-10T15:45:33.846975Z[0m [33m WARN[0m [2mgeors_index::writer[0m[2m:[0m replacing existing partition data-europe/xk [3mpartition[0m[2m=[0mxk
-[2m2026-10-10T15:45:33.849429Z[0m [32m INFO[0m [2mgeors_index::writer[0m[2m:[0m wrote partition data-europe/xk [3mpartition[0m[2m=[0mxk [3mplaces[0m[2m=[0m322526 [3madmins[0m[2m=[0m2133 [3melapsed[0m[2m=[0m1.556406625s
-[2m2026-10-10T15:45:34.386818Z[0m [32m INFO[0m [2mgeors_update[0m[2m:[0m import finished [3minput[0m[2m=[0meurope-latest.osm.pbf [3mpartitions[0m[2m=[0mad,al,at,ba,be,bg,by,ch,cy,cz,de,dk,ee,es,fi,fo,fr,gb,ge,gg,gi,gr,hr,hu,ie,im,is,it,je,li,lt,lu,lv,mc,md,me,mk,mt,nl,no,pl,pt,ro,rs,ru,se,si,sk,sm,tr,ua,va,xk [3melapsed[0m[2m=[0m1940.11774s
-[2m2026-10-10T15:45:34.388923Z[0m [32m INFO[0m [2mgeors_update[0m[2m:[0m diff updates enabled [3msource[0m[2m=[0meurope [3msequence[0m[2m=[0m4937
-[2m2026-10-10T15:45:34.389342Z[0m [32m INFO[0m [2mgeors_update[0m[2m:[0m registered source for `geors update` [3msource[0m[2m=[0meurope
-     1941.09 real      5966.23 user       450.67 sys
-          8548712448  maximum resident set size
+[2m2026-10-11T11:13:56.462687Z[0m [32m INFO[0m [2mgeors_update[0m[2m:[0m importing [3minput[0m[2m=[0m/Users/langeveld/Downloads/europe-latest.osm.pbf [3mformat[0m[2m=[0mPbf
+[2m2026-10-11T11:15:15.247487Z[0m [32m INFO[0m [2mgeors_ingest::reader[0m[2m:[0m pass 1/5: relations [3mrelations[0m[2m=[0m862053 [3mnode_blobs[0m[2m=[0m480820 [3mway_blobs[0m[2m=[0m58817 [3melapsed[0m[2m=[0m78.786505959s
+[2m2026-10-11T11:15:15.646969Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m node lookup [3mstore_estimate_mb[0m[2m=[0m16767 [3mmemory_mb[0m[2m=[0m16384 [3mmode[0m[2m=[0m"sorted join"
+[2m2026-10-11T11:16:28.964119Z[0m [32m INFO[0m [2mgeors_ingest::reader[0m[2m:[0m pass 2/5: ways [3mfeature_ways[0m[2m=[0m84968254 [3mmember_ways[0m[2m=[0m3847084 [3melapsed[0m[2m=[0m73.267233875s
+[2m2026-10-11T11:16:31.231653Z[0m [32m INFO[0m [2mgeors_ingest::nodes[0m[2m:[0m ids sorted [3mreferences[0m[2m=[0m144837795 [3mneeded_nodes[0m[2m=[0m139476395 [3melapsed[0m[2m=[0m2.267098958s
+[2m2026-10-11T11:21:03.654799Z[0m [32m INFO[0m [2mgeors_ingest::reader[0m[2m:[0m pass 3/5: node coordinates (sorted join) [3mplace_nodes[0m[2m=[0m3743988 [3melapsed[0m[2m=[0m270.880178417s
+[2m2026-10-11T11:21:39.719761Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m way geometry joined [3mreferences[0m[2m=[0m794540206 [3mmatched[0m[2m=[0m794540206
+[2m2026-10-11T11:21:51.011508Z[0m [33m WARN[0m [2mgeo::algorithm::relate::geomgraph::geometry_graph[0m[2m:[0m polygon had no winding order. Results are undefined.
+[2m2026-10-11T11:21:51.546444Z[0m [33m WARN[0m [2mgeo::algorithm::relate::geomgraph::geometry_graph[0m[2m:[0m polygon had no winding order. Results are undefined.
+[2m2026-10-11T11:21:52.542693Z[0m [33m WARN[0m [2mgeo::algorithm::relate::geomgraph::geometry_graph[0m[2m:[0m polygon had no winding order. Results are undefined.
+[2m2026-10-11T11:21:54.205075Z[0m [33m WARN[0m [2mgeo::algorithm::relate::geomgraph::geometry_graph[0m[2m:[0m polygon had no winding order. Results are undefined.
+[2m2026-10-11T11:21:57.015471Z[0m [33m WARN[0m [2mgeo::algorithm::relate::geomgraph::geometry_graph[0m[2m:[0m polygon had no winding order. Results are undefined.
+[2m2026-10-11T11:21:58.427122Z[0m [33m WARN[0m [2mgeo::algorithm::relate::geomgraph::geometry_graph[0m[2m:[0m polygon had no winding order. Results are undefined.
+[2m2026-10-11T11:21:59.482421Z[0m [33m WARN[0m [2mgeo::algorithm::relate::geomgraph::geometry_graph[0m[2m:[0m polygon had no winding order. Results are undefined.
+[2m2026-10-11T11:22:03.213784Z[0m [33m WARN[0m [2mgeo::algorithm::relate::geomgraph::geometry_graph[0m[2m:[0m polygon had no winding order. Results are undefined.
+[2m2026-10-11T11:22:03.657286Z[0m [33m WARN[0m [2mgeo::algorithm::relate::geomgraph::geometry_graph[0m[2m:[0m polygon had no winding order. Results are undefined.
+[2m2026-10-11T11:22:05.059721Z[0m [33m WARN[0m [2mgeo::algorithm::relate::geomgraph::geometry_graph[0m[2m:[0m polygon had no winding order. Results are undefined.
+[2m2026-10-11T11:22:05.680171Z[0m [33m WARN[0m [2mgeo::algorithm::relate::geomgraph::geometry_graph[0m[2m:[0m polygon had no winding order. Results are undefined.
+[2m2026-10-11T11:22:05.847842Z[0m [33m WARN[0m [2mgeo::algorithm::relate::geomgraph::geometry_graph[0m[2m:[0m polygon had no winding order. Results are undefined.
+[2m2026-10-11T11:22:09.071307Z[0m [33m WARN[0m [2mgeo::algorithm::relate::geomgraph::geometry_graph[0m[2m:[0m polygon had no winding order. Results are undefined.
+[2m2026-10-11T11:22:09.702678Z[0m [33m WARN[0m [2mgeo::algorithm::relate::geomgraph::geometry_graph[0m[2m:[0m polygon had no winding order. Results are undefined.
+[2m2026-10-11T11:22:09.901580Z[0m [33m WARN[0m [2mgeo::algorithm::relate::geomgraph::geometry_graph[0m[2m:[0m polygon had no winding order. Results are undefined.
+[2m2026-10-11T11:22:10.091797Z[0m [33m WARN[0m [2mgeo::algorithm::relate::geomgraph::geometry_graph[0m[2m:[0m polygon had no winding order. Results are undefined.
+[2m2026-10-11T11:22:10.464823Z[0m [33m WARN[0m [2mgeo::algorithm::relate::geomgraph::geometry_graph[0m[2m:[0m polygon had no winding order. Results are undefined.
+[2m2026-10-11T11:22:10.754704Z[0m [33m WARN[0m [2mgeo::algorithm::relate::geomgraph::geometry_graph[0m[2m:[0m polygon had no winding order. Results are undefined.
+[2m2026-10-11T11:22:12.029104Z[0m [33m WARN[0m [2mgeors_ingest[0m[2m:[0m relations with incomplete geometry (probably clipped by the extract); they are not used for the hierarchy [3mbroken[0m[2m=[0m588
+[2m2026-10-11T11:22:12.064771Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m countries covered by the extract [3mcountries[0m[2m=[0mad(Boundary) al(Boundary) at(Boundary) az(Regions) ba(Boundary) be(Boundary) bg(Boundary) by(Boundary) ch(Boundary) cy(Boundary) cz(Boundary) de(Boundary) dk(Boundary) ee(Boundary) es(Boundary) fi(Boundary) fo(Boundary) fr(Boundary) gb(Boundary) ge(Boundary) gg(Boundary) gi(Boundary) gr(Boundary) hr(Boundary) hu(Boundary) ie(Boundary) im(Boundary) is(Boundary) it(Boundary) je(Boundary) li(Boundary) lt(Boundary) lu(Boundary) lv(Boundary) mc(Boundary) md(Boundary) me(Boundary) mk(Boundary) mt(Boundary) nl(Boundary) no(Boundary) pl(Boundary) pt(Boundary) ro(Boundary) rs(Boundary) ru(Regions) se(Boundary) si(Boundary) sk(Boundary) sm(Boundary) sy(Regions) tr(Boundary) ua(Boundary) va(Boundary) xk(Boundary)
+[2m2026-10-11T11:22:12.065328Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m areas built [3madmin_areas[0m[2m=[0m472336 [3mpostcode_areas[0m[2m=[0m22465 [3mlocalities[0m[2m=[0m1317273 [3melapsed[0m[2m=[0m29.058821625s
+[2m2026-10-11T11:22:16.784298Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m1000000 [3melapsed[0m[2m=[0m500.279737167s
+[2m2026-10-11T11:22:19.628120Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m2000000 [3melapsed[0m[2m=[0m503.1236195s
+[2m2026-10-11T11:22:22.317294Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m3000000 [3melapsed[0m[2m=[0m505.812841667s
+[2m2026-10-11T11:22:24.462185Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m4000000 [3melapsed[0m[2m=[0m507.95776975s
+[2m2026-10-11T11:22:27.100978Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m5000000 [3melapsed[0m[2m=[0m510.5966095s
+[2m2026-10-11T11:22:29.842292Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m6000000 [3melapsed[0m[2m=[0m513.337972584s
+[2m2026-10-11T11:22:32.535507Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m7000000 [3melapsed[0m[2m=[0m516.0312355s
+[2m2026-10-11T11:22:35.314708Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m8000000 [3melapsed[0m[2m=[0m518.8104845s
+[2m2026-10-11T11:22:38.093551Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m9000000 [3melapsed[0m[2m=[0m521.5893775s
+[2m2026-10-11T11:22:40.816587Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m10000000 [3melapsed[0m[2m=[0m524.312451084s
+[2m2026-10-11T11:22:43.625016Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m11000000 [3melapsed[0m[2m=[0m527.120940292s
+[2m2026-10-11T11:22:46.430813Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m12000000 [3melapsed[0m[2m=[0m529.926786167s
+[2m2026-10-11T11:22:49.200991Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m13000000 [3melapsed[0m[2m=[0m532.697013709s
+[2m2026-10-11T11:22:52.028911Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m14000000 [3melapsed[0m[2m=[0m535.524983584s
+[2m2026-10-11T11:22:54.687979Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m15000000 [3melapsed[0m[2m=[0m538.184098334s
+[2m2026-10-11T11:22:57.398290Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m16000000 [3melapsed[0m[2m=[0m540.894444625s
+[2m2026-10-11T11:23:00.037680Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m17000000 [3melapsed[0m[2m=[0m543.533891875s
+[2m2026-10-11T11:23:02.841399Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m18000000 [3melapsed[0m[2m=[0m546.337660959s
+[2m2026-10-11T11:23:05.610894Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m19000000 [3melapsed[0m[2m=[0m549.107205959s
+[2m2026-10-11T11:23:08.324699Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m20000000 [3melapsed[0m[2m=[0m551.821057792s
+[2m2026-10-11T11:23:11.077100Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m21000000 [3melapsed[0m[2m=[0m554.573508459s
+[2m2026-10-11T11:23:13.786560Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m22000000 [3melapsed[0m[2m=[0m557.283016042s
+[2m2026-10-11T11:23:16.640882Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m23000000 [3melapsed[0m[2m=[0m560.137389875s
+[2m2026-10-11T11:23:19.511637Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m24000000 [3melapsed[0m[2m=[0m563.008195209s
+[2m2026-10-11T11:23:22.249413Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m25000000 [3melapsed[0m[2m=[0m565.746018834s
+[2m2026-10-11T11:23:24.920357Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m26000000 [3melapsed[0m[2m=[0m568.417010959s
+[2m2026-10-11T11:23:27.639123Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m27000000 [3melapsed[0m[2m=[0m571.135824042s
+[2m2026-10-11T11:23:30.384155Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m28000000 [3melapsed[0m[2m=[0m573.880904709s
+[2m2026-10-11T11:23:33.154181Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m29000000 [3melapsed[0m[2m=[0m576.650979834s
+[2m2026-10-11T11:23:35.874932Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m30000000 [3melapsed[0m[2m=[0m579.371779625s
+[2m2026-10-11T11:23:38.654041Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m31000000 [3melapsed[0m[2m=[0m582.150935292s
+[2m2026-10-11T11:23:41.421640Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m32000000 [3melapsed[0m[2m=[0m584.918585209s
+[2m2026-10-11T11:23:44.133955Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m33000000 [3melapsed[0m[2m=[0m587.630947667s
+[2m2026-10-11T11:23:46.946364Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m34000000 [3melapsed[0m[2m=[0m590.443406834s
+[2m2026-10-11T11:23:49.577852Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m35000000 [3melapsed[0m[2m=[0m593.074940292s
+[2m2026-10-11T11:23:52.304148Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m36000000 [3melapsed[0m[2m=[0m595.801285334s
+[2m2026-10-11T11:23:55.022226Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m37000000 [3melapsed[0m[2m=[0m598.519394334s
+[2m2026-10-11T11:23:57.774319Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m38000000 [3melapsed[0m[2m=[0m601.271553209s
+[2m2026-10-11T11:24:00.553783Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m39000000 [3melapsed[0m[2m=[0m604.051064875s
+[2m2026-10-11T11:24:03.346654Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m40000000 [3melapsed[0m[2m=[0m606.843986709s
+[2m2026-10-11T11:24:06.112495Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m41000000 [3melapsed[0m[2m=[0m609.609875167s
+[2m2026-10-11T11:24:08.902657Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m42000000 [3melapsed[0m[2m=[0m612.400087542s
+[2m2026-10-11T11:24:11.732040Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m43000000 [3melapsed[0m[2m=[0m615.229518125s
+[2m2026-10-11T11:24:14.389172Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m44000000 [3melapsed[0m[2m=[0m617.886699084s
+[2m2026-10-11T11:24:17.076554Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m45000000 [3melapsed[0m[2m=[0m620.574128792s
+[2m2026-10-11T11:24:19.745251Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m46000000 [3melapsed[0m[2m=[0m623.242873042s
+[2m2026-10-11T11:24:22.404977Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m47000000 [3melapsed[0m[2m=[0m625.902646292s
+[2m2026-10-11T11:24:25.072654Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m48000000 [3melapsed[0m[2m=[0m628.570370875s
+[2m2026-10-11T11:24:27.743604Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m49000000 [3melapsed[0m[2m=[0m631.241367959s
+[2m2026-10-11T11:24:30.363236Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m50000000 [3melapsed[0m[2m=[0m633.861046084s
+[2m2026-10-11T11:24:32.999889Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m51000000 [3melapsed[0m[2m=[0m636.49774575s
+[2m2026-10-11T11:24:35.621798Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m52000000 [3melapsed[0m[2m=[0m639.119700042s
+[2m2026-10-11T11:24:38.254361Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m53000000 [3melapsed[0m[2m=[0m641.752310834s
+[2m2026-10-11T11:24:40.881558Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m54000000 [3melapsed[0m[2m=[0m644.379553417s
+[2m2026-10-11T11:24:43.493182Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m55000000 [3melapsed[0m[2m=[0m646.991222417s
+[2m2026-10-11T11:24:46.116269Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m56000000 [3melapsed[0m[2m=[0m649.614357459s
+[2m2026-10-11T11:24:48.625500Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m57000000 [3melapsed[0m[2m=[0m652.123631459s
+[2m2026-10-11T11:24:51.312738Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m58000000 [3melapsed[0m[2m=[0m654.81091575s
+[2m2026-10-11T11:24:54.128374Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m59000000 [3melapsed[0m[2m=[0m657.626603667s
+[2m2026-10-11T11:24:56.933644Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m60000000 [3melapsed[0m[2m=[0m660.431903625s
+[2m2026-10-11T11:24:59.820599Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m61000000 [3melapsed[0m[2m=[0m663.318928792s
+[2m2026-10-11T11:25:02.802321Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m62000000 [3melapsed[0m[2m=[0m666.300703542s
+[2m2026-10-11T11:25:05.626615Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m63000000 [3melapsed[0m[2m=[0m669.12504825s
+[2m2026-10-11T11:25:08.591993Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m64000000 [3melapsed[0m[2m=[0m672.090478125s
+[2m2026-10-11T11:25:11.567921Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m65000000 [3melapsed[0m[2m=[0m675.066457917s
+[2m2026-10-11T11:25:14.487222Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m66000000 [3melapsed[0m[2m=[0m677.985811625s
+[2m2026-10-11T11:25:17.435111Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m67000000 [3melapsed[0m[2m=[0m680.933752584s
+[2m2026-10-11T11:25:20.455907Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m68000000 [3melapsed[0m[2m=[0m683.954601667s
+[2m2026-10-11T11:25:23.508658Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m69000000 [3melapsed[0m[2m=[0m687.007406417s
+[2m2026-10-11T11:25:26.520964Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m70000000 [3melapsed[0m[2m=[0m690.019765959s
+[2m2026-10-11T11:25:29.562913Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m71000000 [3melapsed[0m[2m=[0m693.061765375s
+[2m2026-10-11T11:25:32.688373Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m72000000 [3melapsed[0m[2m=[0m696.187284125s
+[2m2026-10-11T11:25:35.853653Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m73000000 [3melapsed[0m[2m=[0m699.352619375s
+[2m2026-10-11T11:25:39.022279Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m74000000 [3melapsed[0m[2m=[0m702.521301167s
+[2m2026-10-11T11:25:42.203025Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m75000000 [3melapsed[0m[2m=[0m705.702103792s
+[2m2026-10-11T11:25:45.318756Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m76000000 [3melapsed[0m[2m=[0m708.817889875s
+[2m2026-10-11T11:25:48.450800Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m77000000 [3melapsed[0m[2m=[0m711.949990042s
+[2m2026-10-11T11:25:51.624403Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m78000000 [3melapsed[0m[2m=[0m715.123648s
+[2m2026-10-11T11:25:54.751097Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m79000000 [3melapsed[0m[2m=[0m718.250397334s
+[2m2026-10-11T11:25:57.896462Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m80000000 [3melapsed[0m[2m=[0m721.395810917s
+[2m2026-10-11T11:26:01.105971Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m81000000 [3melapsed[0m[2m=[0m724.605371167s
+[2m2026-10-11T11:26:04.419037Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m82000000 [3melapsed[0m[2m=[0m727.91850875s
+[2m2026-10-11T11:26:07.757407Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m83000000 [3melapsed[0m[2m=[0m731.256936334s
+[2m2026-10-11T11:26:11.325536Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m84000000 [3melapsed[0m[2m=[0m734.825129375s
+[2m2026-10-11T11:26:14.687752Z[0m [32m INFO[0m [2mgeors_ingest::reader[0m[2m:[0m pass 4/5: way features [3mways[0m[2m=[0m84968254 [3melapsed[0m[2m=[0m242.238252709s
+[2m2026-10-11T11:26:15.113192Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m85000000 [3melapsed[0m[2m=[0m738.612852875s
+[2m2026-10-11T11:26:17.912157Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m86000000 [3melapsed[0m[2m=[0m741.411867334s
+[2m2026-10-11T11:26:20.246147Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m87000000 [3melapsed[0m[2m=[0m743.745897917s
+[2m2026-10-11T11:26:22.811225Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m88000000 [3melapsed[0m[2m=[0m746.311021334s
+[2m2026-10-11T11:26:25.152621Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m89000000 [3melapsed[0m[2m=[0m748.6524585s
+[2m2026-10-11T11:26:27.452332Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m90000000 [3melapsed[0m[2m=[0m750.95221075s
+[2m2026-10-11T11:26:29.777751Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m91000000 [3melapsed[0m[2m=[0m753.277671s
+[2m2026-10-11T11:26:31.836224Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m92000000 [3melapsed[0m[2m=[0m755.336179959s
+[2m2026-10-11T11:26:33.860815Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m93000000 [3melapsed[0m[2m=[0m757.360804667s
+[2m2026-10-11T11:26:35.961971Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m94000000 [3melapsed[0m[2m=[0m759.461999834s
+[2m2026-10-11T11:26:37.969644Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m95000000 [3melapsed[0m[2m=[0m761.469708292s
+[2m2026-10-11T11:26:39.784054Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m96000000 [3melapsed[0m[2m=[0m763.284151125s
+[2m2026-10-11T11:26:41.303645Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m97000000 [3melapsed[0m[2m=[0m764.803768334s
+[2m2026-10-11T11:26:42.821518Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m98000000 [3melapsed[0m[2m=[0m766.321668417s
+[2m2026-10-11T11:26:44.307200Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m99000000 [3melapsed[0m[2m=[0m767.807377167s
+[2m2026-10-11T11:26:46.345946Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m100000000 [3melapsed[0m[2m=[0m769.846158084s
+[2m2026-10-11T11:26:48.384268Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m101000000 [3melapsed[0m[2m=[0m771.884516917s
+[2m2026-10-11T11:26:50.375384Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m102000000 [3melapsed[0m[2m=[0m773.875667625s
+[2m2026-10-11T11:26:52.237727Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m103000000 [3melapsed[0m[2m=[0m775.738043542s
+[2m2026-10-11T11:26:54.705454Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m104000000 [3melapsed[0m[2m=[0m778.205812459s
+[2m2026-10-11T11:26:56.736869Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m105000000 [3melapsed[0m[2m=[0m780.237263084s
+[2m2026-10-11T11:26:58.684653Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m106000000 [3melapsed[0m[2m=[0m782.185082042s
+[2m2026-10-11T11:27:00.978853Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m107000000 [3melapsed[0m[2m=[0m784.479320459s
+[2m2026-10-11T11:27:03.241879Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m108000000 [3melapsed[0m[2m=[0m786.742390084s
+[2m2026-10-11T11:27:05.604823Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m109000000 [3melapsed[0m[2m=[0m789.10537575s
+[2m2026-10-11T11:27:07.806544Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m110000000 [3melapsed[0m[2m=[0m791.307136084s
+[2m2026-10-11T11:27:10.004594Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m111000000 [3melapsed[0m[2m=[0m793.505224584s
+[2m2026-10-11T11:27:12.080709Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m112000000 [3melapsed[0m[2m=[0m795.581376959s
+[2m2026-10-11T11:27:14.210259Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m113000000 [3melapsed[0m[2m=[0m797.710964042s
+[2m2026-10-11T11:27:16.398096Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m114000000 [3melapsed[0m[2m=[0m799.898839959s
+[2m2026-10-11T11:27:18.754302Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m115000000 [3melapsed[0m[2m=[0m802.255085709s
+[2m2026-10-11T11:27:21.081120Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m116000000 [3melapsed[0m[2m=[0m804.581946s
+[2m2026-10-11T11:27:23.507204Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m117000000 [3melapsed[0m[2m=[0m807.008058625s
+[2m2026-10-11T11:27:25.819445Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m118000000 [3melapsed[0m[2m=[0m809.320355625s
+[2m2026-10-11T11:27:28.123650Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m119000000 [3melapsed[0m[2m=[0m811.624600334s
+[2m2026-10-11T11:27:30.329759Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m120000000 [3melapsed[0m[2m=[0m813.83074825s
+[2m2026-10-11T11:27:32.590605Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m121000000 [3melapsed[0m[2m=[0m816.091634125s
+[2m2026-10-11T11:27:35.184872Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m122000000 [3melapsed[0m[2m=[0m818.685947292s
+[2m2026-10-11T11:27:37.497460Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m123000000 [3melapsed[0m[2m=[0m820.998574709s
+[2m2026-10-11T11:27:39.607530Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m124000000 [3melapsed[0m[2m=[0m823.108682459s
+[2m2026-10-11T11:27:41.783987Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m125000000 [3melapsed[0m[2m=[0m825.285179167s
+[2m2026-10-11T11:27:44.067341Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m126000000 [3melapsed[0m[2m=[0m827.5685735s
+[2m2026-10-11T11:27:46.321810Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m127000000 [3melapsed[0m[2m=[0m829.823082167s
+[2m2026-10-11T11:27:48.798423Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m128000000 [3melapsed[0m[2m=[0m832.2997375s
+[2m2026-10-11T11:27:51.341645Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m129000000 [3melapsed[0m[2m=[0m834.843006459s
+[2m2026-10-11T11:27:54.010697Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m130000000 [3melapsed[0m[2m=[0m837.512104959s
+[2m2026-10-11T11:27:56.596547Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m131000000 [3melapsed[0m[2m=[0m840.098000459s
+[2m2026-10-11T11:27:59.023568Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m132000000 [3melapsed[0m[2m=[0m842.525064584s
+[2m2026-10-11T11:28:01.696574Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m133000000 [3melapsed[0m[2m=[0m845.198117292s
+[2m2026-10-11T11:28:04.635884Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m134000000 [3melapsed[0m[2m=[0m848.137480167s
+[2m2026-10-11T11:28:07.372392Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m135000000 [3melapsed[0m[2m=[0m850.874036584s
+[2m2026-10-11T11:28:09.825810Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m136000000 [3melapsed[0m[2m=[0m853.327497584s
+[2m2026-10-11T11:28:12.245396Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m137000000 [3melapsed[0m[2m=[0m855.747126334s
+[2m2026-10-11T11:28:14.714413Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m138000000 [3melapsed[0m[2m=[0m858.216186667s
+[2m2026-10-11T11:28:17.112560Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m139000000 [3melapsed[0m[2m=[0m860.614371542s
+[2m2026-10-11T11:28:19.413990Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m140000000 [3melapsed[0m[2m=[0m862.915846667s
+[2m2026-10-11T11:28:21.574114Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m141000000 [3melapsed[0m[2m=[0m865.076009s
+[2m2026-10-11T11:28:23.727663Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m142000000 [3melapsed[0m[2m=[0m867.229596s
+[2m2026-10-11T11:28:25.734125Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m143000000 [3melapsed[0m[2m=[0m869.236094125s
+[2m2026-10-11T11:28:27.748742Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m144000000 [3melapsed[0m[2m=[0m871.250744792s
+[2m2026-10-11T11:28:30.261008Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m145000000 [3melapsed[0m[2m=[0m873.763056292s
+[2m2026-10-11T11:28:32.922490Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m146000000 [3melapsed[0m[2m=[0m876.424584042s
+[2m2026-10-11T11:28:35.670209Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m147000000 [3melapsed[0m[2m=[0m879.172352667s
+[2m2026-10-11T11:28:38.755692Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m148000000 [3melapsed[0m[2m=[0m882.257890542s
+[2m2026-10-11T11:28:40.663013Z[0m [32m INFO[0m [2mgeors_ingest::reader[0m[2m:[0m pass 5/5: node features [3mnodes[0m[2m=[0m63664736 [3melapsed[0m[2m=[0m145.661493166s
+[2m2026-10-11T11:28:42.691997Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m house numbers interpolated [3mlines[0m[2m=[0m51690 [3mhouses[0m[2m=[0m277884
+[2m2026-10-11T11:28:44.837250Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m progress [3mplaces[0m[2m=[0m149000000 [3melapsed[0m[2m=[0m888.339556417s
+[2m2026-10-11T11:30:26.115111Z[0m [32m INFO[0m [2mgeors_ingest[0m[2m:[0m features extracted [3mplaces[0m[2m=[0m149579186 [3mstreet_segments[0m[2m=[0m26173881 [3mstreets[0m[2m=[0m10349046 [3melapsed[0m[2m=[0m989.619192625s
+[2m2026-10-11T11:30:26.116424Z[0m [33m WARN[0m [2mgeors_ingest::sink[0m[2m:[0m places outside any country boundary were skipped (use --default-country to keep them) [3munknown[0m[2m=[0m1297887
+[2m2026-10-11T11:30:26.116470Z[0m [32m INFO[0m [2mgeors_ingest::sink[0m[2m:[0m places per country [3mcountries[0m[2m=[0mad=4336 al=77554 am=5983 at=3103929 az=5 ba=235648 be=4555870 bg=393656 by=1408542 ch=2767177 cy=89060 cz=3590129 de=24610294 dk=2924375 ee=904821 es=4671745 fi=1652436 fo=35157 fr=17343460 gb=8234061 ge=206143 gg=8514 gi=1389 gr=484106 hr=426697 hu=1123690 ie=674199 im=16133 iq=459 is=152628 it=6806455 je=7985 li=15543 lt=1190221 lu=204568 lv=694123 mc=2080 md=1093377 me=35027 mk=36083 mt=28315 nl=10455766 no=3380707 pl=9686258 pt=1186181 ro=1380294 rs=2665272 ru=5996942 se=1748477 si=520592 sk=1926228 sm=13707 sy=5 tr=996420 ua=2360761 va=355 xk=322526
+[2m2026-10-11T11:30:26.117094Z[0m [32m INFO[0m [2mgeors_ingest::sink[0m[2m:[0m skipping border sliver (use --all-countries or --countries to keep it) [3mcountry[0m[2m=[0mam [3mplaces[0m[2m=[0m5983
+[2m2026-10-11T11:30:26.118362Z[0m [32m INFO[0m [2mgeors_ingest::sink[0m[2m:[0m skipping border sliver (use --all-countries or --countries to keep it) [3mcountry[0m[2m=[0maz [3mplaces[0m[2m=[0m5
+[2m2026-10-11T11:30:26.136300Z[0m [32m INFO[0m [2mgeors_ingest::sink[0m[2m:[0m skipping border sliver (use --all-countries or --countries to keep it) [3mcountry[0m[2m=[0miq [3mplaces[0m[2m=[0m459
+[2m2026-10-11T11:30:26.153235Z[0m [32m INFO[0m [2mgeors_ingest::sink[0m[2m:[0m skipping border sliver (use --all-countries or --countries to keep it) [3mcountry[0m[2m=[0msy [3mplaces[0m[2m=[0m5
+[2m2026-10-11T11:30:26.673795Z[0m [33m WARN[0m [2mgeors_index::writer[0m[2m:[0m replacing existing partition data-europe/ad [3mpartition[0m[2m=[0mad
+[2m2026-10-11T11:30:26.680074Z[0m [32m INFO[0m [2mgeors_index::writer[0m[2m:[0m wrote partition data-europe/ad [3mpartition[0m[2m=[0mad [3mplaces[0m[2m=[0m4336 [3madmins[0m[2m=[0m29 [3melapsed[0m[2m=[0m523.982875ms
+[2m2026-10-11T11:30:27.450563Z[0m [33m WARN[0m [2mgeors_index::writer[0m[2m:[0m replacing existing partition data-europe/al [3mpartition[0m[2m=[0mal
+[2m2026-10-11T11:30:27.452469Z[0m [32m INFO[0m [2mgeors_index::writer[0m[2m:[0m wrote partition data-europe/al [3mpartition[0m[2m=[0mal [3mplaces[0m[2m=[0m77554 [3madmins[0m[2m=[0m508 [3melapsed[0m[2m=[0m772.046458ms
+[2m2026-10-11T11:30:43.286727Z[0m [33m WARN[0m [2mgeors_index::writer[0m[2m:[0m replacing existing partition data-europe/at [3mpartition[0m[2m=[0mat
+[2m2026-10-11T11:30:43.293459Z[0m [32m INFO[0m [2mgeors_index::writer[0m[2m:[0m wrote partition data-europe/at [3mpartition[0m[2m=[0mat [3mplaces[0m[2m=[0m3103929 [3madmins[0m[2m=[0m8905 [3melapsed[0m[2m=[0m15.840635917s
+[2m2026-10-11T11:30:45.304483Z[0m [33m WARN[0m [2mgeors_index::writer[0m[2m:[0m replacing existing partition data-europe/ba [3mpartition[0m[2m=[0mba
+[2m2026-10-11T11:30:45.306468Z[0m [32m INFO[0m [2mgeors_index::writer[0m[2m:[0m wrote partition data-europe/ba [3mpartition[0m[2m=[0mba [3mplaces[0m[2m=[0m235648 [3madmins[0m[2m=[0m5256 [3melapsed[0m[2m=[0m2.010438833s
+[2m2026-10-11T11:31:05.321451Z[0m [33m WARN[0m [2mgeors_index::writer[0m[2m:[0m replacing existing partition data-europe/be [3mpartition[0m[2m=[0mbe
+[2m2026-10-11T11:31:05.328462Z[0m [32m INFO[0m [2mgeors_index::writer[0m[2m:[0m wrote partition data-europe/be [3mpartition[0m[2m=[0mbe [3mplaces[0m[2m=[0m4555870 [3madmins[0m[2m=[0m3605 [3melapsed[0m[2m=[0m20.021222208s
+[2m2026-10-11T11:31:09.191609Z[0m [33m WARN[0m [2mgeors_index::writer[0m[2m:[0m replacing existing partition data-europe/bg [3mpartition[0m[2m=[0mbg
+[2m2026-10-11T11:31:09.194801Z[0m [32m INFO[0m [2mgeors_index::writer[0m[2m:[0m wrote partition data-europe/bg [3mpartition[0m[2m=[0mbg [3mplaces[0m[2m=[0m393656 [3madmins[0m[2m=[0m7118 [3melapsed[0m[2m=[0m3.83877525s
+[2m2026-10-11T11:31:23.220743Z[0m [33m WARN[0m [2mgeors_index::writer[0m[2m:[0m replacing existing partition data-europe/by [3mpartition[0m[2m=[0mby
+[2m2026-10-11T11:31:23.225413Z[0m [32m INFO[0m [2mgeors_index::writer[0m[2m:[0m wrote partition data-europe/by [3mpartition[0m[2m=[0mby [3mplaces[0m[2m=[0m1408542 [3madmins[0m[2m=[0m13844 [3melapsed[0m[2m=[0m14.029704375s
+[2m2026-10-11T11:31:36.666807Z[0m [33m WARN[0m [2mgeors_index::writer[0m[2m:[0m replacing existing partition data-europe/ch [3mpartition[0m[2m=[0mch
+[2m2026-10-11T11:31:36.672571Z[0m [32m INFO[0m [2mgeors_index::writer[0m[2m:[0m wrote partition data-europe/ch [3mpartition[0m[2m=[0mch [3mplaces[0m[2m=[0m2767177 [3madmins[0m[2m=[0m6017 [3melapsed[0m[2m=[0m13.443457834s
+[2m2026-10-11T11:31:37.836311Z[0m [33m WARN[0m [2mgeors_index::writer[0m[2m:[0m replacing existing partition data-europe/cy [3mpartition[0m[2m=[0mcy
+[2m2026-10-11T11:31:37.838098Z[0m [32m INFO[0m [2mgeors_index::writer[0m[2m:[0m wrote partition data-europe/cy [3mpartition[0m[2m=[0mcy [3mplaces[0m[2m=[0m89060 [3madmins[0m[2m=[0m1031 [3melapsed[0m[2m=[0m1.162990083s
+[2m2026-10-11T11:31:52.699112Z[0m [33m WARN[0m [2mgeors_index::writer[0m[2m:[0m replacing existing partition data-europe/cz [3mpartition[0m[2m=[0mcz
+[2m2026-10-11T11:31:52.707957Z[0m [32m INFO[0m [2mgeors_index::writer[0m[2m:[0m wrote partition data-europe/cz [3mpartition[0m[2m=[0mcz [3mplaces[0m[2m=[0m3590129 [3madmins[0m[2m=[0m10050 [3melapsed[0m[2m=[0m14.869237708s
+[2m2026-10-11T11:32:08.553552Z[0m [32m INFO[0m [2mgeors_index::writer[0m[2m:[0m spill file regrouped for sequential reads [3mbuckets[0m[2m=[0m39 [3mbucket_mb[0m[2m=[0m128
+[2m2026-10-11T11:34:01.799231Z[0m [33m WARN[0m [2mgeors_index::writer[0m[2m:[0m replacing existing partition data-europe/de [3mpartition[0m[2m=[0mde
+[2m2026-10-11T11:34:01.882121Z[0m [32m INFO[0m [2mgeors_index::writer[0m[2m:[0m wrote partition data-europe/de [3mpartition[0m[2m=[0mde [3mplaces[0m[2m=[0m24610294 [3madmins[0m[2m=[0m42150 [3melapsed[0m[2m=[0m129.171086041s
+[2m2026-10-11T11:34:13.740385Z[0m [33m WARN[0m [2mgeors_index::writer[0m[2m:[0m replacing existing partition data-europe/dk [3mpartition[0m[2m=[0mdk
+[2m2026-10-11T11:34:13.748289Z[0m [32m INFO[0m [2mgeors_index::writer[0m[2m:[0m wrote partition data-europe/dk [3mpartition[0m[2m=[0mdk [3mplaces[0m[2m=[0m2924375 [3madmins[0m[2m=[0m2989 [3melapsed[0m[2m=[0m11.852058584s
+[2m2026-10-11T11:34:18.244001Z[0m [33m WARN[0m [2mgeors_index::writer[0m[2m:[0m replacing existing partition data-europe/ee [3mpartition[0m[2m=[0mee
+[2m2026-10-11T11:34:18.250853Z[0m [32m INFO[0m [2mgeors_index::writer[0m[2m:[0m wrote partition data-europe/ee [3mpartition[0m[2m=[0mee [3mplaces[0m[2m=[0m904821 [3madmins[0m[2m=[0m5172 [3melapsed[0m[2m=[0m4.500338542s
+[2m2026-10-11T11:34:46.878634Z[0m [33m WARN[0m [2mgeors_index::writer[0m[2m:[0m replacing existing partition data-europe/es [3mpartition[0m[2m=[0mes
+[2m2026-10-11T11:34:46.918273Z[0m [32m INFO[0m [2mgeors_index::writer[0m[2m:[0m wrote partition data-europe/es [3mpartition[0m[2m=[0mes [3mplaces[0m[2m=[0m4671745 [3madmins[0m[2m=[0m29467 [3melapsed[0m[2m=[0m28.666365042s
+[2m2026-10-11T11:34:57.207726Z[0m [33m WARN[0m [2mgeors_index::writer[0m[2m:[0m replacing existing partition data-europe/fi [3mpartition[0m[2m=[0mfi
+[2m2026-10-11T11:34:57.217970Z[0m [32m INFO[0m [2mgeors_index::writer[0m[2m:[0m wrote partition data-europe/fi [3mpartition[0m[2m=[0mfi [3mplaces[0m[2m=[0m1652436 [3madmins[0m[2m=[0m4901 [3melapsed[0m[2m=[0m10.293627208s
+[2m2026-10-11T11:34:57.713921Z[0m [33m WARN[0m [2mgeors_index::writer[0m[2m:[0m replacing existing partition data-europe/fo [3mpartition[0m[2m=[0mfo
+[2m2026-10-11T11:34:57.716423Z[0m [32m INFO[0m [2mgeors_index::writer[0m[2m:[0m wrote partition data-europe/fo [3mpartition[0m[2m=[0mfo [3mplaces[0m[2m=[0m35157 [3madmins[0m[2m=[0m239 [3melapsed[0m[2m=[0m495.062417ms
+[2m2026-10-11T11:36:22.250271Z[0m [33m WARN[0m [2mgeors_index::writer[0m[2m:[0m replacing existing partition data-europe/fr [3mpartition[0m[2m=[0mfr
+[2m2026-10-11T11:36:22.315083Z[0m [32m INFO[0m [2mgeors_index::writer[0m[2m:[0m wrote partition data-europe/fr [3mpartition[0m[2m=[0mfr [3mplaces[0m[2m=[0m17343460 [3madmins[0m[2m=[0m72953 [3melapsed[0m[2m=[0m84.599833958s
+[2m2026-10-11T11:37:05.217039Z[0m [33m WARN[0m [2mgeors_index::writer[0m[2m:[0m replacing existing partition data-europe/gb [3mpartition[0m[2m=[0mgb
+[2m2026-10-11T11:37:05.252853Z[0m [32m INFO[0m [2mgeors_index::writer[0m[2m:[0m wrote partition data-europe/gb [3mpartition[0m[2m=[0mgb [3mplaces[0m[2m=[0m8234061 [3madmins[0m[2m=[0m47868 [3melapsed[0m[2m=[0m42.9234375s
+[2m2026-10-11T11:37:08.426427Z[0m [33m WARN[0m [2mgeors_index::writer[0m[2m:[0m replacing existing partition data-europe/ge [3mpartition[0m[2m=[0mge
+[2m2026-10-11T11:37:08.429277Z[0m [32m INFO[0m [2mgeors_index::writer[0m[2m:[0m wrote partition data-europe/ge [3mpartition[0m[2m=[0mge [3mplaces[0m[2m=[0m206143 [3madmins[0m[2m=[0m4439 [3melapsed[0m[2m=[0m3.165385083s
+[2m2026-10-11T11:37:08.796202Z[0m [33m WARN[0m [2mgeors_index::writer[0m[2m:[0m replacing existing partition data-europe/gg [3mpartition[0m[2m=[0mgg
+[2m2026-10-11T11:37:08.798685Z[0m [32m INFO[0m [2mgeors_index::writer[0m[2m:[0m wrote partition data-europe/gg [3mpartition[0m[2m=[0mgg [3mplaces[0m[2m=[0m8514 [3madmins[0m[2m=[0m36 [3melapsed[0m[2m=[0m367.580417ms
+[2m2026-10-11T11:37:09.139759Z[0m [33m WARN[0m [2mgeors_index::writer[0m[2m:[0m replacing existing partition data-europe/gi [3mpartition[0m[2m=[0mgi
+[2m2026-10-11T11:37:09.142627Z[0m [32m INFO[0m [2mgeors_index::writer[0m[2m:[0m wrote partition data-europe/gi [3mpartition[0m[2m=[0mgi [3mplaces[0m[2m=[0m1389 [3madmins[0m[2m=[0m9 [3melapsed[0m[2m=[0m343.636666ms
+[2m2026-10-11T11:37:15.359449Z[0m [33m WARN[0m [2mgeors_index::writer[0m[2m:[0m replacing existing partition data-europe/gr [3mpartition[0m[2m=[0mgr
+[2m2026-10-11T11:37:15.364060Z[0m [32m INFO[0m [2mgeors_index::writer[0m[2m:[0m wrote partition data-europe/gr [3mpartition[0m[2m=[0mgr [3mplaces[0m[2m=[0m484106 [3madmins[0m[2m=[0m4146 [3melapsed[0m[2m=[0m6.221357583s
+[2m2026-10-11T11:37:18.089923Z[0m [33m WARN[0m [2mgeors_index::writer[0m[2m:[0m replacing existing partition data-europe/hr [3mpartition[0m[2m=[0mhr
+[2m2026-10-11T11:37:18.096002Z[0m [32m INFO[0m [2mgeors_index::writer[0m[2m:[0m wrote partition data-europe/hr [3mpartition[0m[2m=[0mhr [3mplaces[0m[2m=[0m426697 [3madmins[0m[2m=[0m8318 [3melapsed[0m[2m=[0m2.730366583s
+[2m2026-10-11T11:37:24.498774Z[0m [33m WARN[0m [2mgeors_index::writer[0m[2m:[0m replacing existing partition data-europe/hu [3mpartition[0m[2m=[0mhu
+[2m2026-10-11T11:37:24.506659Z[0m [32m INFO[0m [2mgeors_index::writer[0m[2m:[0m wrote partition data-europe/hu [3mpartition[0m[2m=[0mhu [3mplaces[0m[2m=[0m1123690 [3madmins[0m[2m=[0m6534 [3melapsed[0m[2m=[0m6.409593s
+[2m2026-10-11T11:37:28.889627Z[0m [33m WARN[0m [2mgeors_index::writer[0m[2m:[0m replacing existing partition data-europe/ie [3mpartition[0m[2m=[0mie
+[2m2026-10-11T11:37:28.895471Z[0m [32m INFO[0m [2mgeors_index::writer[0m[2m:[0m wrote partition data-europe/ie [3mpartition[0m[2m=[0mie [3mplaces[0m[2m=[0m674199 [3madmins[0m[2m=[0m32521 [3melapsed[0m[2m=[0m4.3867645s
+[2m2026-10-11T11:37:29.290954Z[0m [33m WARN[0m [2mgeors_index::writer[0m[2m:[0m replacing existing partition data-europe/im [3mpartition[0m[2m=[0mim
+[2m2026-10-11T11:37:29.292831Z[0m [32m INFO[0m [2mgeors_index::writer[0m[2m:[0m wrote partition data-europe/im [3mpartition[0m[2m=[0mim [3mplaces[0m[2m=[0m16133 [3madmins[0m[2m=[0m65 [3melapsed[0m[2m=[0m392.7345ms
+[2m2026-10-11T11:37:30.446377Z[0m [33m WARN[0m [2mgeors_index::writer[0m[2m:[0m replacing existing partition data-europe/is [3mpartition[0m[2m=[0mis
+[2m2026-10-11T11:37:30.450089Z[0m [32m INFO[0m [2mgeors_index::writer[0m[2m:[0m wrote partition data-europe/is [3mpartition[0m[2m=[0mis [3mplaces[0m[2m=[0m152628 [3madmins[0m[2m=[0m430 [3melapsed[0m[2m=[0m1.157008792s
+[2m2026-10-11T11:38:05.348349Z[0m [33m WARN[0m [2mgeors_index::writer[0m[2m:[0m replacing existing partition data-europe/it [3mpartition[0m[2m=[0mit
+[2m2026-10-11T11:38:05.393848Z[0m [32m INFO[0m [2mgeors_index::writer[0m[2m:[0m wrote partition data-europe/it [3mpartition[0m[2m=[0mit [3mplaces[0m[2m=[0m6806455 [3madmins[0m[2m=[0m18901 [3melapsed[0m[2m=[0m34.943715292s
+[2m2026-10-11T11:38:05.781898Z[0m [33m WARN[0m [2mgeors_index::writer[0m[2m:[0m replacing existing partition data-europe/je [3mpartition[0m[2m=[0mje
+[2m2026-10-11T11:38:05.784182Z[0m [32m INFO[0m [2mgeors_index::writer[0m[2m:[0m wrote partition data-europe/je [3mpartition[0m[2m=[0mje [3mplaces[0m[2m=[0m7985 [3madmins[0m[2m=[0m108 [3melapsed[0m[2m=[0m383.320375ms
+[2m2026-10-11T11:38:06.162625Z[0m [33m WARN[0m [2mgeors_index::writer[0m[2m:[0m replacing existing partition data-europe/li [3mpartition[0m[2m=[0mli
+[2m2026-10-11T11:38:06.164831Z[0m [32m INFO[0m [2mgeors_index::writer[0m[2m:[0m wrote partition data-europe/li [3mpartition[0m[2m=[0mli [3mplaces[0m[2m=[0m15543 [3madmins[0m[2m=[0m23 [3melapsed[0m[2m=[0m380.437125ms
+[2m2026-10-11T11:38:11.716084Z[0m [33m WARN[0m [2mgeors_index::writer[0m[2m:[0m replacing existing partition data-europe/lt [3mpartition[0m[2m=[0mlt
+[2m2026-10-11T11:38:11.725381Z[0m [32m INFO[0m [2mgeors_index::writer[0m[2m:[0m wrote partition data-europe/lt [3mpartition[0m[2m=[0mlt [3mplaces[0m[2m=[0m1190221 [3madmins[0m[2m=[0m22252 [3melapsed[0m[2m=[0m5.560431833s
+[2m2026-10-11T11:38:12.948861Z[0m [33m WARN[0m [2mgeors_index::writer[0m[2m:[0m replacing existing partition data-europe/lu [3mpartition[0m[2m=[0mlu
+[2m2026-10-11T11:38:12.951975Z[0m [32m INFO[0m [2mgeors_index::writer[0m[2m:[0m wrote partition data-europe/lu [3mpartition[0m[2m=[0mlu [3mplaces[0m[2m=[0m204568 [3madmins[0m[2m=[0m365 [3melapsed[0m[2m=[0m1.223633584s
+[2m2026-10-11T11:38:16.647766Z[0m [33m WARN[0m [2mgeors_index::writer[0m[2m:[0m replacing existing partition data-europe/lv [3mpartition[0m[2m=[0mlv
+[2m2026-10-11T11:38:16.655106Z[0m [32m INFO[0m [2mgeors_index::writer[0m[2m:[0m wrote partition data-europe/lv [3mpartition[0m[2m=[0mlv [3mplaces[0m[2m=[0m694123 [3madmins[0m[2m=[0m2611 [3melapsed[0m[2m=[0m3.70205025s
+[2m2026-10-11T11:38:17.005516Z[0m [33m WARN[0m [2mgeors_index::writer[0m[2m:[0m replacing existing partition data-europe/mc [3mpartition[0m[2m=[0mmc
+[2m2026-10-11T11:38:17.007701Z[0m [32m INFO[0m [2mgeors_index::writer[0m[2m:[0m wrote partition data-europe/mc [3mpartition[0m[2m=[0mmc [3mplaces[0m[2m=[0m2080 [3madmins[0m[2m=[0m15 [3melapsed[0m[2m=[0m351.29ms
+[2m2026-10-11T11:38:22.021991Z[0m [33m WARN[0m [2mgeors_index::writer[0m[2m:[0m replacing existing partition data-europe/md [3mpartition[0m[2m=[0mmd
+[2m2026-10-11T11:38:22.026262Z[0m [32m INFO[0m [2mgeors_index::writer[0m[2m:[0m wrote partition data-europe/md [3mpartition[0m[2m=[0mmd [3mplaces[0m[2m=[0m1093377 [3madmins[0m[2m=[0m2803 [3melapsed[0m[2m=[0m5.018512959s
+[2m2026-10-11T11:38:22.726208Z[0m [33m WARN[0m [2mgeors_index::writer[0m[2m:[0m replacing existing partition data-europe/me [3mpartition[0m[2m=[0mme
+[2m2026-10-11T11:38:22.728884Z[0m [32m INFO[0m [2mgeors_index::writer[0m[2m:[0m wrote partition data-europe/me [3mpartition[0m[2m=[0mme [3mplaces[0m[2m=[0m35027 [3madmins[0m[2m=[0m2628 [3melapsed[0m[2m=[0m700.929ms
+[2m2026-10-11T11:38:23.403894Z[0m [33m WARN[0m [2mgeors_index::writer[0m[2m:[0m replacing existing partition data-europe/mk [3mpartition[0m[2m=[0mmk
+[2m2026-10-11T11:38:23.406269Z[0m [32m INFO[0m [2mgeors_index::writer[0m[2m:[0m wrote partition data-europe/mk [3mpartition[0m[2m=[0mmk [3mplaces[0m[2m=[0m36083 [3madmins[0m[2m=[0m1528 [3melapsed[0m[2m=[0m676.503333ms
+[2m2026-10-11T11:38:23.944543Z[0m [33m WARN[0m [2mgeors_index::writer[0m[2m:[0m replacing existing partition data-europe/mt [3mpartition[0m[2m=[0mmt
+[2m2026-10-11T11:38:23.946450Z[0m [32m INFO[0m [2mgeors_index::writer[0m[2m:[0m wrote partition data-europe/mt [3mpartition[0m[2m=[0mmt [3mplaces[0m[2m=[0m28315 [3madmins[0m[2m=[0m148 [3melapsed[0m[2m=[0m539.317958ms
+[2m2026-10-11T11:39:01.922926Z[0m [33m WARN[0m [2mgeors_index::writer[0m[2m:[0m replacing existing partition data-europe/nl [3mpartition[0m[2m=[0mnl
+[2m2026-10-11T11:39:01.957962Z[0m [32m INFO[0m [2mgeors_index::writer[0m[2m:[0m wrote partition data-europe/nl [3mpartition[0m[2m=[0mnl [3mplaces[0m[2m=[0m10455766 [3madmins[0m[2m=[0m4198 [3melapsed[0m[2m=[0m38.011743583s
+[2m2026-10-11T11:39:18.022279Z[0m [33m WARN[0m [2mgeors_index::writer[0m[2m:[0m replacing existing partition data-europe/no [3mpartition[0m[2m=[0mno
+[2m2026-10-11T11:39:18.031986Z[0m [32m INFO[0m [2mgeors_index::writer[0m[2m:[0m wrote partition data-europe/no [3mpartition[0m[2m=[0mno [3mplaces[0m[2m=[0m3380707 [3madmins[0m[2m=[0m6254 [3melapsed[0m[2m=[0m16.053209209s
+[2m2026-10-11T11:39:59.790944Z[0m [33m WARN[0m [2mgeors_index::writer[0m[2m:[0m replacing existing partition data-europe/pl [3mpartition[0m[2m=[0mpl
+[2m2026-10-11T11:39:59.834141Z[0m [32m INFO[0m [2mgeors_index::writer[0m[2m:[0m wrote partition data-europe/pl [3mpartition[0m[2m=[0mpl [3mplaces[0m[2m=[0m9686258 [3madmins[0m[2m=[0m39908 [3melapsed[0m[2m=[0m41.798806292s
+[2m2026-10-11T11:40:06.853465Z[0m [33m WARN[0m [2mgeors_index::writer[0m[2m:[0m replacing existing partition data-europe/pt [3mpartition[0m[2m=[0mpt
+[2m2026-10-11T11:40:06.863256Z[0m [32m INFO[0m [2mgeors_index::writer[0m[2m:[0m wrote partition data-europe/pt [3mpartition[0m[2m=[0mpt [3mplaces[0m[2m=[0m1186181 [3madmins[0m[2m=[0m9886 [3melapsed[0m[2m=[0m7.000487833s
+[2m2026-10-11T11:40:13.256392Z[0m [33m WARN[0m [2mgeors_index::writer[0m[2m:[0m replacing existing partition data-europe/ro [3mpartition[0m[2m=[0mro
+[2m2026-10-11T11:40:13.264569Z[0m [32m INFO[0m [2mgeors_index::writer[0m[2m:[0m wrote partition data-europe/ro [3mpartition[0m[2m=[0mro [3mplaces[0m[2m=[0m1380294 [3madmins[0m[2m=[0m7517 [3melapsed[0m[2m=[0m6.399134709s
+[2m2026-10-11T11:40:29.369215Z[0m [33m WARN[0m [2mgeors_index::writer[0m[2m:[0m replacing existing partition data-europe/rs [3mpartition[0m[2m=[0mrs
+[2m2026-10-11T11:40:29.380447Z[0m [32m INFO[0m [2mgeors_index::writer[0m[2m:[0m wrote partition data-europe/rs [3mpartition[0m[2m=[0mrs [3mplaces[0m[2m=[0m2665272 [3madmins[0m[2m=[0m5298 [3melapsed[0m[2m=[0m16.113430083s
+[2m2026-10-11T11:41:12.321143Z[0m [33m WARN[0m [2mgeors_index::writer[0m[2m:[0m replacing existing partition data-europe/ru [3mpartition[0m[2m=[0mru
+[2m2026-10-11T11:41:12.378079Z[0m [32m INFO[0m [2mgeors_index::writer[0m[2m:[0m wrote partition data-europe/ru [3mpartition[0m[2m=[0mru [3mplaces[0m[2m=[0m5996942 [3madmins[0m[2m=[0m65134 [3melapsed[0m[2m=[0m42.9939695s
+[2m2026-10-11T11:41:23.170934Z[0m [33m WARN[0m [2mgeors_index::writer[0m[2m:[0m replacing existing partition data-europe/se [3mpartition[0m[2m=[0mse
+[2m2026-10-11T11:41:23.178368Z[0m [32m INFO[0m [2mgeors_index::writer[0m[2m:[0m wrote partition data-europe/se [3mpartition[0m[2m=[0mse [3mplaces[0m[2m=[0m1748477 [3madmins[0m[2m=[0m13132 [3melapsed[0m[2m=[0m10.788795875s
+[2m2026-10-11T11:41:25.763828Z[0m [33m WARN[0m [2mgeors_index::writer[0m[2m:[0m replacing existing partition data-europe/si [3mpartition[0m[2m=[0msi
+[2m2026-10-11T11:41:25.770715Z[0m [32m INFO[0m [2mgeors_index::writer[0m[2m:[0m wrote partition data-europe/si [3mpartition[0m[2m=[0msi [3mplaces[0m[2m=[0m520592 [3madmins[0m[2m=[0m733 [3melapsed[0m[2m=[0m2.589252s
+[2m2026-10-11T11:41:34.685358Z[0m [33m WARN[0m [2mgeors_index::writer[0m[2m:[0m replacing existing partition data-europe/sk [3mpartition[0m[2m=[0msk
+[2m2026-10-11T11:41:34.692807Z[0m [32m INFO[0m [2mgeors_index::writer[0m[2m:[0m wrote partition data-europe/sk [3mpartition[0m[2m=[0msk [3mplaces[0m[2m=[0m1926228 [3madmins[0m[2m=[0m4437 [3melapsed[0m[2m=[0m8.920907375s
+[2m2026-10-11T11:41:35.050241Z[0m [33m WARN[0m [2mgeors_index::writer[0m[2m:[0m replacing existing partition data-europe/sm [3mpartition[0m[2m=[0msm
+[2m2026-10-11T11:41:35.052565Z[0m [32m INFO[0m [2mgeors_index::writer[0m[2m:[0m wrote partition data-europe/sm [3mpartition[0m[2m=[0msm [3mplaces[0m[2m=[0m13707 [3madmins[0m[2m=[0m15 [3melapsed[0m[2m=[0m356.361958ms
+[2m2026-10-11T11:41:42.962699Z[0m [33m WARN[0m [2mgeors_index::writer[0m[2m:[0m replacing existing partition data-europe/tr [3mpartition[0m[2m=[0mtr
+[2m2026-10-11T11:41:42.969308Z[0m [32m INFO[0m [2mgeors_index::writer[0m[2m:[0m wrote partition data-europe/tr [3mpartition[0m[2m=[0mtr [3mplaces[0m[2m=[0m996420 [3madmins[0m[2m=[0m44786 [3melapsed[0m[2m=[0m7.916635125s
+[2m2026-10-11T11:42:08.719560Z[0m [33m WARN[0m [2mgeors_index::writer[0m[2m:[0m replacing existing partition data-europe/ua [3mpartition[0m[2m=[0mua
+[2m2026-10-11T11:42:08.728432Z[0m [32m INFO[0m [2mgeors_index::writer[0m[2m:[0m wrote partition data-europe/ua [3mpartition[0m[2m=[0mua [3mplaces[0m[2m=[0m2360761 [3madmins[0m[2m=[0m19730 [3melapsed[0m[2m=[0m25.75489975s
+[2m2026-10-11T11:42:09.086886Z[0m [33m WARN[0m [2mgeors_index::writer[0m[2m:[0m replacing existing partition data-europe/va [3mpartition[0m[2m=[0mva
+[2m2026-10-11T11:42:09.089377Z[0m [32m INFO[0m [2mgeors_index::writer[0m[2m:[0m wrote partition data-europe/va [3mpartition[0m[2m=[0mva [3mplaces[0m[2m=[0m355 [3madmins[0m[2m=[0m3 [3melapsed[0m[2m=[0m354.507667ms
+[2m2026-10-11T11:42:10.718461Z[0m [33m WARN[0m [2mgeors_index::writer[0m[2m:[0m replacing existing partition data-europe/xk [3mpartition[0m[2m=[0mxk
+[2m2026-10-11T11:42:10.723103Z[0m [32m INFO[0m [2mgeors_index::writer[0m[2m:[0m wrote partition data-europe/xk [3mpartition[0m[2m=[0mxk [3mplaces[0m[2m=[0m322526 [3madmins[0m[2m=[0m2133 [3melapsed[0m[2m=[0m1.633624792s
+[2m2026-10-11T11:42:11.911899Z[0m [32m INFO[0m [2mgeors_update[0m[2m:[0m import finished [3minput[0m[2m=[0meurope-latest.osm.pbf [3mpartitions[0m[2m=[0mad,al,at,ba,be,bg,by,ch,cy,cz,de,dk,ee,es,fi,fo,fr,gb,ge,gg,gi,gr,hr,hu,ie,im,is,it,je,li,lt,lu,lv,mc,md,me,mk,mt,nl,no,pl,pt,ro,rs,ru,se,si,sk,sm,tr,ua,va,xk [3melapsed[0m[2m=[0m1695.428469958s
+[2m2026-10-11T11:42:11.913431Z[0m [32m INFO[0m [2mgeors_update[0m[2m:[0m diff updates enabled [3msource[0m[2m=[0meurope [3msequence[0m[2m=[0m4937
+[2m2026-10-11T11:42:11.914000Z[0m [32m INFO[0m [2mgeors_update[0m[2m:[0m registered source for `geors update` [3msource[0m[2m=[0meurope
+     1696.20 real      6106.28 user       427.95 sys
+          7827308544  maximum resident set size
                    0  average shared memory size
                    0  average unshared data size
                    0  average unshared stack size
-             7246296  page reclaims
-             3074443  page faults
+             2887643  page reclaims
+             3065869  page faults
                    0  swaps
                    0  block input operations
                    0  block output operations
                    0  messages sent
                    0  messages received
                    0  signals received
-             1168021  voluntary context switches
-            51149323  involuntary context switches
-      52976995023278  instructions retired
-      18633162720770  cycles elapsed
-         10524748528  peak memory footprint
+             1339980  voluntary context switches
+            57159160  involuntary context switches
+      54377711764093  instructions retired
+      18948544656556  cycles elapsed
+          6350641800  peak memory footprint

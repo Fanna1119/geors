@@ -815,10 +815,13 @@ dependencies = [
 name = "geors-core"
 version = "0.1.0"
 dependencies = [
+ "bytemuck",
  "memmap2 0.9.11",
  "postcard",
+ "rayon",
  "serde",
  "serde_json",
+ "tempfile",
  "thiserror 2.0.21",
  "tracing",
 ]
@@ -827,6 +830,7 @@ dependencies = [
 name = "geors-index"
 version = "0.1.0"
 dependencies = [
+ "bytemuck",
  "deunicode",
  "geo-index",
  "geors-core",

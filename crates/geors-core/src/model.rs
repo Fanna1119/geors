@@ -93,6 +93,11 @@ pub struct Place {
     /// findable through lookup.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub merged_ids: Vec<i64>,
+    /// Nominatim `place_id`, for places imported from a Nominatim dump
+    /// (findable through lookup as `P<id>`). Not part of the stored
+    /// document: it lives in the text index.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nominatim_id: Option<i64>,
 }
 
 impl Place {

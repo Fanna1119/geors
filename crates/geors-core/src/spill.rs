@@ -270,6 +270,7 @@ mod tests {
             lines: vec![vec![LonLat::new(9.5, 47.1), LonLat::new(9.6, 47.2)]],
             polygons: Vec::new(),
             merged_ids: vec![7],
+            nominatim_id: None,
         }
     }
 
