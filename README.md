@@ -36,8 +36,10 @@ finished index are memory-mapped files; sort keys, street segments and the
 spatial index are sorted on disk and streamed. The OS can drop those pages
 whenever it needs the memory, so a fast SSD matters more than lots of RAM:
 South Africa imports within 256 MB, and Germany peaks at 1.0 GB (it was
-4.0 GB) while taking no longer. Europe peaked at 10 GB before these changes
-and has not been re-measured yet. Import times include writing the index.
+4.0 GB) while taking no longer. Europe peaks at 5.9 GB (it was 10 GB):
+structures that grow with the whole continent (relations, boundary member
+ways, per-thread point-in-polygon caches) still dominate there. Import
+times include writing the index.
 
 > **Import memory is not serving memory.** The "Import memory" column is
 > what *building* the index takes, once per import or update. Serving the
@@ -53,18 +55,15 @@ and has not been re-measured yet. Import times include writing the index.
 | Austria | 774 MB | 3.1 M | 34 s | 0.5 GB | 0.8 GB |
 | South Africa | 402 MB | 525 k³ | 11 s | 0.3 GB | 147 MB |
 | Germany | 4.6 GB | 24.6 M | **4 min 20 s** | **1.0 GB** | 5.6 GB |
-| Europe (55 countries) | 33 GB | 149 M | **26 min 38 s** | 10.2 GB² | 26 GB |
+| Europe (53 countries) | 33 GB | 150 M | **28 min 24 s** | **5.9 GB**² | 27 GB |
 
 ¹ Peak memory footprint (heap) while importing, not while serving. Node
 coordinates and scratch files are
 memory-mapped and evictable. Peak extra disk during import is about the size
 of the finished index.
 ³ Including 42 k interpolated house numbers.
-² Measured with `bench/import-stats.sh ... --all-countries`, before the
-current country rules (see "Partitions and border slivers"), which no longer
-need that flag. The machine was
-already using 3.2 GB of swap before the import, and it pushed that to 4.2 GB.
-Peak disk during the import was 49 GB (index plus scratch files).
+² Measured with `bench/import-stats.sh` (default country rules). Peak swap
+in use 1.7 GB; peak disk during the import 62 GB (index plus scratch files).
 
 **Small containers** (South Africa, Docker, 1 CPU, default settings):
 
