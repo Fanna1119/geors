@@ -276,6 +276,13 @@ fn info_cmd(data: &Path) -> Result<()> {
         );
         let layers: Vec<String> = m.layers.iter().map(|(k, v)| format!("{k}={v}")).collect();
         println!("    {}", layers.join(" "));
+        if let Ok((main, Some(patch))) = geors_index::Partition::open_with_patch(&p.dir) {
+            let deleted = (0..main.len()).filter(|&id| main.is_deleted(id)).count();
+            println!(
+                "    patch: {} places, replaces or deletes {deleted}",
+                patch.meta.num_places
+            );
+        }
     }
     Ok(())
 }
@@ -283,9 +290,15 @@ fn info_cmd(data: &Path) -> Result<()> {
 fn export_cmd(data: &Path, country: &str, every: u32) -> Result<()> {
     use std::io::Write;
     let cc = country_codes(&[country.to_string()])?.remove(0);
-    let p = geors_index::Partition::open(&data.join(&cc))?;
+    // As served: places not deleted by the patch, then the patch's places.
+    let (main, patch) = geors_index::Partition::open_with_patch(&data.join(&cc))?;
     let mut out = std::io::BufWriter::new(std::io::stdout().lock());
-    for id in (0..p.len()).step_by(every.max(1) as usize) {
+    let places = std::iter::once(&main).chain(patch.as_ref()).flat_map(|p| {
+        (0..p.len())
+            .filter(|&id| !p.is_deleted(id))
+            .map(move |id| (p, id))
+    });
+    for (p, id) in places.step_by(every.max(1) as usize) {
         let rec = p.record(id).context("corrupt record")?;
         let place = p.doc(&rec, false)?;
         let mut v = serde_json::to_value(&place)?;

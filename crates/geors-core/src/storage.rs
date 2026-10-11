@@ -34,6 +34,12 @@ pub const SPATIAL_FILE: &str = "spatial.idx";
 pub const ADMIN_FILE: &str = "admin.json";
 pub const TAGS_FILE: &str = "tags.json";
 pub const TEXT_DIR: &str = "text";
+/// Patch partition inside a partition directory: places changed since the
+/// partition was built (incremental updates).
+pub const PATCH_DIR: &str = "patch";
+/// In a patch directory: sorted little-endian u32 ids of main-partition
+/// places that the patch deletes or replaces.
+pub const TOMBSTONES_FILE: &str = "tombstones.bin";
 
 /// `<data>/GENERATION`: changes whenever any partition is (re)written, so a
 /// running server can cheaply notice that it should reload.
@@ -99,6 +105,9 @@ pub struct PartitionMeta {
     pub layers: BTreeMap<String, u32>,
     pub source: String,
     pub created_unix: u64,
+    /// A patch partition (see [`PATCH_DIR`]).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub patch: bool,
 }
 
 pub fn partition_dir(data_dir: &Path, country_code: &str) -> PathBuf {

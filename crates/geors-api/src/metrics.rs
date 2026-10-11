@@ -148,8 +148,8 @@ impl Metrics {
         for p in engine.partitions() {
             let _ = writeln!(
                 out,
-                "geors_places{{country=\"{}\"}} {}",
-                p.meta.country_code, p.meta.num_places
+                "geors_places{{country=\"{}\",patch=\"{}\"}} {}",
+                p.meta.country_code, p.meta.patch, p.meta.num_places
             );
         }
         let info = state.load_info();

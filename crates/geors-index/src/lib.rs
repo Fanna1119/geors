@@ -15,7 +15,7 @@ pub use engine::{
 };
 pub use partition::Partition;
 pub use tag_filter::TagFilter;
-pub use writer::{PartitionInput, write_partition, write_partition_from_places};
+pub use writer::{PartitionInput, write_partition, write_partition_from_places, write_patch};
 
 #[derive(Debug, thiserror::Error)]
 pub enum IndexError {

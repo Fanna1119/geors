@@ -195,6 +195,9 @@ struct PartitionStatus {
     bbox: [f64; 4],
     source: String,
     created_unix: u64,
+    /// A patch partition (places changed since the partition was built).
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    patch: bool,
 }
 
 #[derive(Serialize)]
@@ -230,6 +233,7 @@ async fn status(State(state): State<Arc<AppState>>) -> Json<Status> {
                 ],
                 source: m.source.clone(),
                 created_unix: m.created_unix,
+                patch: m.patch,
             }
         })
         .collect();

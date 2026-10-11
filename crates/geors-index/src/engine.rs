@@ -233,9 +233,13 @@ impl Engine {
         };
         let mut partitions = Vec::new();
         for cc in selected {
-            let p = Partition::open(&data_dir.join(&cc))?;
+            let (p, patch) = Partition::open_with_patch(&data_dir.join(&cc))?;
             info!(partition = %cc, places = p.len(), source = %p.meta.source, "loaded partition");
             partitions.push(Arc::new(p));
+            if let Some(patch) = patch {
+                info!(partition = %cc, places = patch.len(), "loaded patch");
+                partitions.push(Arc::new(patch));
+            }
         }
         Ok(Self::from_partitions(partitions, config))
     }
@@ -257,22 +261,26 @@ impl Engine {
         if countries.is_empty() {
             return Ok((0..self.partitions.len()).collect());
         }
-        countries
-            .iter()
-            .map(|cc| {
-                self.partitions
-                    .iter()
-                    .position(|p| p.code() == cc)
-                    .ok_or_else(|| EngineError::CountryNotLoaded {
-                        requested: cc.clone(),
-                        loaded: self
-                            .partitions
-                            .iter()
-                            .map(|p| p.code().to_string())
-                            .collect(),
-                    })
-            })
-            .collect()
+        let mut out = Vec::new();
+        for cc in countries {
+            // The partition and its patch, if any.
+            let found: Vec<usize> = (0..self.partitions.len())
+                .filter(|&i| self.partitions[i].code() == cc)
+                .collect();
+            if found.is_empty() {
+                return Err(EngineError::CountryNotLoaded {
+                    requested: cc.clone(),
+                    loaded: self
+                        .partitions
+                        .iter()
+                        .filter(|p| !p.is_patch())
+                        .map(|p| p.code().to_string())
+                        .collect(),
+                });
+            }
+            out.extend(found);
+        }
+        Ok(out)
     }
 
     pub fn search(&self, req: &SearchRequest) -> Result<Vec<Hit>, EngineError> {
@@ -352,7 +360,8 @@ impl Engine {
                         filters.push((pi, Some(Arc::new(set))));
                     }
                 }
-                None => filters.push((pi, None)),
+                // Without a spatial filter, still skip places a patch replaced.
+                None => filters.push((pi, self.partitions[pi].live())),
             }
         }
         // Cheapest first; a later phase only runs if the earlier ones found
@@ -395,7 +404,7 @@ impl Engine {
                     let ranking = self.ranking.clone();
                     let focus = req.focus;
                     let scorer = Arc::new(move |id: u32, s: f32| {
-                        let Some(rec) = scorer_part.record(id) else {
+                        let Some(rec) = scorer_part.live_record(id) else {
                             return 0.0;
                         };
                         let d = focus.map(|f| geors_core::geom::haversine(f, rec.center()));
@@ -467,7 +476,9 @@ impl Engine {
     ) -> Result<BitSet, EngineError> {
         let mut ids = Vec::new();
         for id in part.search_bbox(fb)? {
-            let Some(rec) = part.record(id) else { continue };
+            let Some(rec) = part.live_record(id) else {
+                continue;
+            };
             if !req.layers.is_empty() && !req.layers.contains(&rec.layer) {
                 continue;
             }
@@ -493,7 +504,9 @@ impl Engine {
         for pi in self.select(&req.countries)? {
             let part = &self.partitions[pi];
             for id in part.search_bbox(fb)? {
-                let Some(rec) = part.record(id) else { continue };
+                let Some(rec) = part.live_record(id) else {
+                    continue;
+                };
                 if !req.layers.is_empty() && !req.layers.contains(&rec.layer) {
                     continue;
                 }
@@ -546,7 +559,9 @@ impl Engine {
                 continue;
             }
             for id in part.areas_at(point)? {
-                let Some(rec) = part.record(id) else { continue };
+                let Some(rec) = part.live_record(id) else {
+                    continue;
+                };
                 let area = rec.layer >= Layer::Locality
                     && (layers.is_empty() || layers.contains(&rec.layer));
                 if !area {
@@ -613,7 +628,9 @@ impl Engine {
         for &(_, pi) in &parts {
             let part = &self.partitions[pi];
             for (id, _) in part.neighbors_lower_bound(p, limit * 2, bound(&best))? {
-                let Some(rec) = part.record(id) else { continue };
+                let Some(rec) = part.live_record(id) else {
+                    continue;
+                };
                 if !passes(rec.layer)
                     || best.iter().any(|b| b.1 == pi && b.2 == id)
                     || !tags_match(part, &rec, &req.tags)
@@ -650,7 +667,9 @@ impl Engine {
                     if best.iter().any(|b| b.1 == pi && b.2 == id) {
                         continue;
                     }
-                    let Some(rec) = part.record(id) else { continue };
+                    let Some(rec) = part.live_record(id) else {
+                        continue;
+                    };
                     if !passes(rec.layer) || !tags_match(part, &rec, &req.tags) {
                         continue;
                     }
@@ -758,7 +777,7 @@ impl Engine {
             .into_iter()
             .filter_map(|c| {
                 let part = self.partitions[c.part].clone();
-                let rec = part.record(c.id)?;
+                let rec = part.live_record(c.id)?;
                 let distance_m = c
                     .distance_m
                     .or_else(|| focus.map(|f| part.distance(&rec, f)));

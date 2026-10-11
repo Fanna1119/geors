@@ -132,8 +132,12 @@ diffs; then hourly diffs.
 
 ## Milestones
 
-1. **Patch-aware serving:** patch partitions and tombstones in the engine,
-   tested with hand-made patches.
+1. **Patch-aware serving** (done): `<data>/<cc>/patch/` holds a patch
+   partition (`meta.json` with `"patch": true`) and `tombstones.bin`;
+   `write_patch` writes one atomically. The engine loads it with the
+   partition, searches both, and skips tombstoned main places everywhere
+   (text search through a "live places" filter). `geors export` prints the
+   places as served; `geors info`, `/status` and `/metrics` show patches.
 2. **Change store and block index:** keep diffs instead of merging them;
    read elements by id from base + changes.
 3. **Kept import state:** boundary stores, area metadata, units, localities

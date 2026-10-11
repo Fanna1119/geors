@@ -358,6 +358,35 @@ pub fn write_partition_from_places(
 /// disk, and places are streamed from the spill file in spatial (Z-order)
 /// order.
 pub fn write_partition(data_dir: &Path, input: PartitionInput) -> Result<PathBuf, IndexError> {
+    write_into(data_dir, input, None)
+}
+
+/// Write the patch partition of an existing partition: the places changed
+/// since it was built, plus `tombstones`, the ids of main-partition places
+/// that are deleted or replaced. Swapped in atomically like a partition;
+/// a full rebuild of the partition drops it.
+pub fn write_patch(
+    data_dir: &Path,
+    input: PartitionInput,
+    tombstones: &[u32],
+) -> Result<PathBuf, IndexError> {
+    let main = storage::partition_dir(data_dir, &input.country_code);
+    if !main.join(storage::META_FILE).is_file() {
+        return Err(IndexError::Format(format!(
+            "cannot patch '{}': the partition does not exist",
+            input.country_code
+        )));
+    }
+    write_into(data_dir, input, Some(tombstones))
+}
+
+/// Write a partition (`patch: None`) or a patch partition with its
+/// tombstones.
+fn write_into(
+    data_dir: &Path,
+    input: PartitionInput,
+    patch: Option<&[u32]>,
+) -> Result<PathBuf, IndexError> {
     let cc = input.country_code.clone();
     let count = input.places.count;
     if count == 0 {
@@ -372,8 +401,14 @@ pub fn write_partition(data_dir: &Path, input: PartitionInput) -> Result<PathBuf
     }
     let t = Instant::now();
     fs::create_dir_all(data_dir)?;
-    let final_dir = storage::partition_dir(data_dir, &cc);
-    let tmp_dir = data_dir.join(format!(".{cc}.tmp-{}", std::process::id()));
+    let (final_dir, kind) = match patch {
+        None => (storage::partition_dir(data_dir, &cc), ""),
+        Some(_) => (
+            storage::partition_dir(data_dir, &cc).join(storage::PATCH_DIR),
+            ".patch",
+        ),
+    };
+    let tmp_dir = data_dir.join(format!(".{cc}{kind}.tmp-{}", std::process::id()));
     if tmp_dir.exists() {
         fs::remove_dir_all(&tmp_dir)?;
     }
@@ -535,15 +570,25 @@ pub fn write_partition(data_dir: &Path, input: PartitionInput) -> Result<PathBuf
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_secs())
             .unwrap_or(0),
+        patch: patch.is_some(),
     };
     fs::write(
         tmp_dir.join(storage::META_FILE),
         serde_json::to_vec_pretty(&meta)?,
     )?;
+    if let Some(tombstones) = patch {
+        let mut ids = tombstones.to_vec();
+        ids.sort_unstable();
+        ids.dedup();
+        let bytes: Vec<u8> = ids.iter().flat_map(|id| id.to_le_bytes()).collect();
+        fs::write(tmp_dir.join(storage::TOMBSTONES_FILE), bytes)?;
+    }
 
     if final_dir.exists() {
-        warn!(partition = %cc, "replacing existing partition {}", final_dir.display());
-        let old = data_dir.join(format!(".{cc}.old-{}", std::process::id()));
+        if patch.is_none() {
+            warn!(partition = %cc, "replacing existing partition {}", final_dir.display());
+        }
+        let old = data_dir.join(format!(".{cc}{kind}.old-{}", std::process::id()));
         fs::rename(&final_dir, &old)?;
         fs::rename(&tmp_dir, &final_dir)?;
         fs::remove_dir_all(&old)?;

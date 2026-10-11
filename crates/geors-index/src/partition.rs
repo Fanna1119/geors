@@ -2,6 +2,7 @@
 
 use std::fs::File;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use geo_index::rtree::{NeighborsOptions, RTreeIndex, RTreeRef, SimpleDistanceMetric};
 use geors_core::doc;
@@ -12,6 +13,7 @@ use geors_core::{AdminUnit, BBox, Layer, Place};
 use memmap2::Mmap;
 
 use crate::IndexError;
+use crate::bitset::BitSet;
 use crate::text::TextIndex;
 
 /// A memory map that tolerates empty files (which cannot be mapped).
@@ -76,6 +78,14 @@ pub struct Partition {
     /// R-tree holds only centres and lines, so it cannot answer "which
     /// areas contain this point".
     areas: std::sync::OnceLock<Option<AreaTree>>,
+    /// Places deleted or replaced by this partition's patch (main
+    /// partitions only), and the complement as a search filter.
+    deleted: Option<Deleted>,
+}
+
+struct Deleted {
+    ids: BitSet,
+    live: Arc<BitSet>,
 }
 
 /// See [`Partition::areas_at`].
@@ -106,6 +116,7 @@ impl Partition {
             geom: Blob::open(&dir.join(storage::GEOM_FILE))?,
             spatial: Blob::open(&dir.join(storage::SPATIAL_FILE))?,
             areas: std::sync::OnceLock::new(),
+            deleted: None,
             dir: dir.to_path_buf(),
             admins,
             tags,
@@ -133,6 +144,55 @@ impl Partition {
         Ok(p)
     }
 
+    /// Open a partition and, if it has one, its patch partition. The main
+    /// partition then skips the places the patch deletes or replaces.
+    pub fn open_with_patch(dir: &Path) -> Result<(Self, Option<Self>), IndexError> {
+        let mut main = Self::open(dir)?;
+        let patch_dir = dir.join(storage::PATCH_DIR);
+        if !patch_dir.join(storage::META_FILE).is_file() {
+            return Ok((main, None));
+        }
+        let patch = Self::open(&patch_dir)?;
+        let bytes = std::fs::read(patch_dir.join(storage::TOMBSTONES_FILE)).unwrap_or_default();
+        let ids: Vec<u32> = bytes
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|b| u32::from_le_bytes(*b))
+            .filter(|&id| id < main.len())
+            .collect();
+        main.set_deleted(ids);
+        Ok((main, Some(patch)))
+    }
+
+    fn set_deleted(&mut self, ids: Vec<u32>) {
+        if ids.is_empty() {
+            self.deleted = None;
+            return;
+        }
+        let n = self.len() as usize;
+        let ids = BitSet::from_ids(ids, n);
+        let live = BitSet::from_ids((0..n as u32).filter(|&i| !ids.contains(i)).collect(), n);
+        self.deleted = Some(Deleted {
+            ids,
+            live: Arc::new(live),
+        });
+    }
+
+    /// Whether a patch deleted or replaced this place.
+    pub fn is_deleted(&self, id: u32) -> bool {
+        self.deleted.as_ref().is_some_and(|d| d.ids.contains(id))
+    }
+
+    /// Places not deleted by a patch, as a search filter (`None`: all).
+    pub fn live(&self) -> Option<Arc<BitSet>> {
+        self.deleted.as_ref().map(|d| d.live.clone())
+    }
+
+    pub fn is_patch(&self) -> bool {
+        self.meta.patch
+    }
+
     pub fn code(&self) -> &str {
         &self.meta.country_code
     }
@@ -148,6 +208,14 @@ impl Partition {
     fn rtree(&self) -> Result<RTreeRef<'_, f32>, IndexError> {
         RTreeRef::try_new(&self.spatial)
             .map_err(|e| IndexError::Format(format!("spatial index: {e}")))
+    }
+
+    /// [`Partition::record`], unless a patch deleted or replaced the place.
+    pub fn live_record(&self, id: u32) -> Option<PlaceRecord> {
+        if self.is_deleted(id) {
+            return None;
+        }
+        self.record(id)
     }
 
     pub fn record(&self, id: u32) -> Option<PlaceRecord> {

@@ -547,3 +547,102 @@ fn lookup_by_nominatim_place_id() {
     let names: Vec<_> = hits.iter().map(|h| h.place.name.clone().unwrap()).collect();
     assert_eq!(names, vec!["Post", "Rathaus"]);
 }
+
+#[test]
+fn patch_partitions_replace_and_delete_places() {
+    use geors_core::spill::{SpillWriter, WorkDir};
+    let dir = tempfile::tempdir().unwrap();
+    let admins = vec![AdminUnit {
+        layer: Layer::Country,
+        name: "Liechtenstein".into(),
+        names: Default::default(),
+    }];
+    let main = vec![
+        place(1, Layer::Poi, Some("Alpha"), 9.50, 47.10),
+        place(2, Layer::Poi, Some("Bravo"), 9.51, 47.10),
+        place(3, Layer::Poi, Some("Charlie"), 9.52, 47.10),
+    ];
+    write_partition_from_places(dir.path(), "li", None, "test", &main, admins.clone()).unwrap();
+    // Main-partition ids of the places the patch replaces or deletes.
+    let engine = Engine::open(dir.path(), &[], EngineConfig::default()).unwrap();
+    let ids: Vec<u32> = engine
+        .lookup(
+            &[PlaceRef::Osm(OsmType::Node, 2), PlaceRef::Osm(OsmType::Node, 3)],
+            &[],
+        )
+        .unwrap()
+        .iter()
+        .map(|h| h.place_id)
+        .collect();
+    assert_eq!(ids.len(), 2);
+    drop(engine);
+
+    // Patch: Bravo renamed (same OSM id), Delta new, Charlie deleted.
+    let work = WorkDir::create(dir.path(), "patch-test").unwrap();
+    let mut w = SpillWriter::create(&work.path.join("p.spill")).unwrap();
+    w.push(&place(2, Layer::Poi, Some("Bravo New"), 9.51, 47.10)).unwrap();
+    w.push(&place(4, Layer::Poi, Some("Delta"), 9.53, 47.10)).unwrap();
+    geors_index::write_patch(
+        dir.path(),
+        geors_index::PartitionInput {
+            country_code: "li".into(),
+            country_name: None,
+            source: "test".into(),
+            places: w.finish().unwrap(),
+            admins: std::sync::Arc::new(admins),
+        },
+        &ids,
+    )
+    .unwrap();
+
+    let engine = Engine::open(dir.path(), &[], EngineConfig::default()).unwrap();
+    let names = |q: &str, country: &[&str]| {
+        search(&engine, |r| {
+            r.query = Some(q.into());
+            r.countries = country.iter().map(|c| c.to_string()).collect();
+        })
+    };
+    // Text search, with and without a country filter.
+    assert_eq!(names("alpha", &[]), vec!["Alpha"]);
+    assert_eq!(names("bravo", &[]), vec!["Bravo New"]);
+    assert_eq!(names("bravo", &["li"]), vec!["Bravo New"]);
+    assert!(names("charlie", &[]).is_empty());
+    assert_eq!(names("delta", &["li"]), vec!["Delta"]);
+    // Lookup by OSM id.
+    let looked: Vec<String> = engine
+        .lookup(
+            &[
+                PlaceRef::Osm(OsmType::Node, 2),
+                PlaceRef::Osm(OsmType::Node, 3),
+                PlaceRef::Osm(OsmType::Node, 4),
+            ],
+            &[],
+        )
+        .unwrap()
+        .into_iter()
+        .map(|h| h.place.name.unwrap())
+        .collect();
+    assert_eq!(looked, vec!["Bravo New", "Delta"]);
+    // Nearest / reverse at Charlie's spot: not Charlie.
+    let near: Vec<String> = engine
+        .nearest(&NearestRequest {
+            point: LonLat::new(9.52, 47.10),
+            max_distance_m: None,
+            countries: vec![],
+            layers: vec![],
+            limit: 4,
+            tags: Default::default(),
+        })
+        .unwrap()
+        .into_iter()
+        .map(|h| h.place.name.unwrap())
+        .collect();
+    assert_eq!(near.len(), 3);
+    assert!(!near.contains(&"Charlie".to_string()), "{near:?}");
+    // Spatial-only search.
+    let mut all = search(&engine, |r| {
+        r.bbox = Some(BBox::new(9.4, 47.0, 9.6, 47.2));
+    });
+    all.sort();
+    assert_eq!(all, vec!["Alpha", "Bravo New", "Delta"]);
+}
