@@ -333,3 +333,40 @@ fn walk(root: &std::path::Path) -> Vec<std::path::PathBuf> {
     }
     out
 }
+
+#[test]
+fn words_written_together_are_split() {
+    let dir = tempfile::tempdir().unwrap();
+    let names = [
+        "Karl-Marx-Allee",
+        "Erich-Heckel-Strasse",
+        "Raiffeisenbank",
+        "Raiffeisen-Volksbank",
+        "Marktplatz",
+    ];
+    let places: Vec<Place> = names
+        .iter()
+        .enumerate()
+        .map(|(i, n)| place(i as i64 + 1, Layer::Street, Some(n), 9.5 + i as f64 * 0.01, 47.1))
+        .collect();
+    let admins = vec![AdminUnit {
+        layer: Layer::Country,
+        name: "Liechtenstein".into(),
+        names: Default::default(),
+    }];
+    write_partition_from_places(dir.path(), "li", None, "test", &places, admins).unwrap();
+    let engine = Engine::open(dir.path(), &[], EngineConfig::default()).unwrap();
+    let first = |q: &str| search(&engine, |r| r.query = Some(q.into())).into_iter().next();
+    // Not the last word, the last word, and a word still being typed.
+    assert_eq!(first("karlmarx allee").as_deref(), Some("Karl-Marx-Allee"));
+    assert_eq!(first("karlmarxallee").as_deref(), Some("Karl-Marx-Allee"));
+    assert_eq!(first("erichheckelstr").as_deref(), Some("Erich-Heckel-Strasse"));
+    // The start of a real word is not split: "raiffeisen" + "ban…" would
+    // also match Raiffeisen-Volksbank.
+    assert_eq!(
+        search(&engine, |r| r.query = Some("raiffeisenban".into())),
+        vec!["Raiffeisenbank"]
+    );
+    // Unrelated words do not combine into matches.
+    assert_eq!(first("markthecke"), None);
+}

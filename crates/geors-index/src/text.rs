@@ -4,6 +4,7 @@
 //! Everything needed to render or rank a hit lives in the partition's own
 //! record/doc files, which keeps the index small.
 
+use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -155,6 +156,15 @@ pub fn tokenize(analyzer: &mut TextAnalyzer, text: &str) -> Vec<String> {
 pub fn osm_key(t: OsmType, id: i64) -> String {
     format!("{}{id}", t.as_str())
 }
+
+/// Shortest word a compound may be split into (see `split_compound`).
+const MIN_COMPOUND_PART: usize = 3;
+/// Most words a compound may be split into.
+const MAX_COMPOUND_PARTS: usize = 3;
+/// Most alternative splits of one word that are searched.
+const MAX_SPLITS: usize = 4;
+/// Known words this long are split too (see `token_clause`).
+const SPLIT_KNOWN_FROM: usize = 10;
 
 /// tantivy needs at least this much indexing memory per thread.
 const MIN_THREAD_BUDGET: usize = 15 * 1024 * 1024;
@@ -393,12 +403,14 @@ impl TextIndex {
     /// prefix-match address context (city, country). A lone word is
     /// assumed to be a name; matching "deutsc" against the "Deutschland" in
     /// every German place's context would touch the whole partition.
+    /// `relaxed`: a later phase (exact matching found nothing).
     fn token_clause(
         &self,
         token: &str,
         prefix: bool,
         context: bool,
         fuzzy: bool,
+        relaxed: bool,
         synonyms: &Synonyms,
     ) -> Box<dyn Query> {
         let f = self.fields;
@@ -406,6 +418,21 @@ impl TextIndex {
         let expansions = synonyms.expand(token);
         let chars = token.chars().count();
         let numeric = token.chars().any(|c| c.is_ascii_digit());
+        // Unknown words; long known ones only in a later phase
+        // ("unterdenlinden" may be some shop's name while the street is
+        // "Unter den Linden"), so they never crowd out exact matches.
+        // A word still being typed is not split while it is the start of
+        // a real word ("raiffeisenban" -> "Raiffeisenbank", not
+        // "Raiffeisen-Volksbank").
+        let splits = if numeric
+            || chars < 2 * MIN_COMPOUND_PART
+            || ((!relaxed || chars < SPLIT_KNOWN_FROM) && self.is_known(token))
+            || (prefix && self.starts_name_word(token))
+        {
+            Vec::new()
+        } else {
+            self.split_compound(token, prefix)
+        };
         let mut per_field: Vec<Box<dyn Query>> = Vec::new();
         for (field, boost) in [
             (f.name, NAME_BOOST),
@@ -457,6 +484,35 @@ impl TextIndex {
                     boost * 0.6,
                 );
             }
+            // Words written together ("karlmarx" for "Karl-Marx"): all
+            // parts in this field.
+            for parts in splits.iter().filter(|_| field != f.housenumber) {
+                let term = |p: &str| -> Box<dyn Query> {
+                    Box::new(TermQuery::new(
+                        Term::from_field_text(field, p),
+                        IndexRecordOption::WithFreqs,
+                    ))
+                };
+                let mut terms: Vec<Box<dyn Query>> =
+                    parts[..parts.len() - 1].iter().map(|p| term(p)).collect();
+                let last = &parts[parts.len() - 1];
+                terms.push(if prefix && (is_name || field == f.alt_names) {
+                    // Names and alternative names share the n-gram field.
+                    let grams = TermQuery::new(
+                        Term::from_field_text(f.name_prefix, last),
+                        IndexRecordOption::Basic,
+                    );
+                    Box::new(BooleanQuery::union(vec![term(last), Box::new(grams)]))
+                } else {
+                    term(last)
+                });
+                // The parts' scores add up: average them instead, so a split
+                // never outscores a real one-word match.
+                push(
+                    Box::new(BooleanQuery::intersection(terms)),
+                    boost * 0.8 / parts.len() as f32,
+                );
+            }
             // Typos: only names and address, never house numbers.
             if distance > 0 && (is_name || field == f.address) {
                 let q = if prefix {
@@ -490,8 +546,9 @@ impl TextIndex {
                 let prefix = q.last_is_prefix && i + 1 == n;
                 // Words that exist as typed need no typo expansion (the
                 // expensive part): only fuzz the unknown ones.
+                let relaxed = fuzzy;
                 let fuzzy = fuzzy && (prefix || !self.is_known(t));
-                self.token_clause(t, prefix, n > 1, fuzzy, synonyms)
+                self.token_clause(t, prefix, n > 1, fuzzy, relaxed, synonyms)
             })
             .collect();
         let required = n.saturating_sub(slack).max(1);
@@ -518,6 +575,91 @@ impl TextIndex {
                 Box::new(ConstScoreQuery::new(Box::new(layer_filter), 0.0)),
             ),
         ]))
+    }
+
+    /// Ways to split a word into words that are in the index (at most
+    /// [`MAX_COMPOUND_PARTS`], each at least [`MIN_COMPOUND_PART`] letters):
+    /// "karlmarx" -> "karl marx", "erichheckelstrasse" -> "erich heckel
+    /// strasse". Several splits can exist ("erich heckelstrasse" as well);
+    /// up to [`MAX_SPLITS`] are returned, fewest and longest parts first.
+    /// With `prefix` (still being typed), the last part may be the start of
+    /// a name word ("erichheckelstr").
+    fn split_compound(&self, token: &str, prefix: bool) -> Vec<Vec<String>> {
+        let bounds: Vec<usize> = token
+            .char_indices()
+            .map(|(i, _)| i)
+            .chain([token.len()])
+            .collect();
+        let n = bounds.len() - 1;
+        // known[a][b]: chars a..b form a word in the index (memoised; most
+        // pairs are never asked).
+        let mut known: HashMap<(usize, usize), bool> = HashMap::new();
+        let mut is_word = |a: usize, b: usize| {
+            *known.entry((a, b)).or_insert_with(|| {
+                let part = &token[bounds[a]..bounds[b]];
+                self.is_known(part) || (prefix && b == n && self.starts_name_word(part))
+            })
+        };
+        let mut found: Vec<Vec<(usize, usize)>> = Vec::new();
+        let mut stack: Vec<(usize, Vec<(usize, usize)>)> = vec![(0, Vec::new())];
+        while let Some((start, parts)) = stack.pop() {
+            if start == n {
+                if parts.len() > 1 {
+                    found.push(parts);
+                }
+                continue;
+            }
+            if parts.len() == MAX_COMPOUND_PARTS {
+                continue;
+            }
+            for end in start + MIN_COMPOUND_PART..=n {
+                if n - end != 0 && n - end < MIN_COMPOUND_PART {
+                    continue;
+                }
+                if is_word(start, end) {
+                    let mut next = parts.clone();
+                    next.push((start, end));
+                    stack.push((end, next));
+                }
+            }
+        }
+        let shortest = |p: &Vec<(usize, usize)>| p.iter().map(|(a, b)| b - a).min().unwrap_or(0);
+        found.sort_by_key(|p| (p.len(), std::cmp::Reverse(shortest(p)), p.clone()));
+        found.truncate(MAX_SPLITS);
+        found
+            .into_iter()
+            .map(|p| {
+                p.into_iter()
+                    .map(|(a, b)| token[bounds[a]..bounds[b]].to_string())
+                    .collect()
+            })
+            .collect()
+    }
+
+    /// Whether some name word starts with `part`.
+    fn starts_name_word(&self, part: &str) -> bool {
+        let searcher = self.reader.searcher();
+        if part.chars().count() <= MAX_PREFIX {
+            // Edge n-gram field: one lookup.
+            return searcher
+                .doc_freq(&Term::from_field_text(self.fields.name_prefix, part))
+                .is_ok_and(|n| n > 0);
+        }
+        // Longer than the n-grams: the first term at or after `part`.
+        let bytes = part.as_bytes();
+        searcher.segment_readers().iter().any(|seg| {
+            [self.fields.name, self.fields.alt_names]
+                .into_iter()
+                .any(|field| {
+                    seg.inverted_index(field)
+                        .ok()
+                        .and_then(|ii| {
+                            let mut terms = ii.terms().range().ge(bytes).into_stream().ok()?;
+                            Some(terms.advance() && terms.key().starts_with(bytes))
+                        })
+                        .unwrap_or(false)
+                })
+        })
     }
 
     /// Whether `token` occurs as a word in any name or address.
