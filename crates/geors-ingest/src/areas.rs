@@ -95,6 +95,11 @@ impl AreaIndex {
         Ok(Self { areas, store, tree })
     }
 
+    /// The store holding the areas' polygons.
+    pub(crate) fn store(&self) -> &PolygonStore {
+        &self.store
+    }
+
     fn cell_state(&self, cache: &mut CellCache, cx: i32, cy: i32, area: u32) -> Cell {
         let key = (cx, cy, area);
         if let Some(c) = cache.get(key) {
@@ -187,17 +192,27 @@ impl LocalityIndex {
     /// The best place node of `layer` near `p`: smallest distance relative to
     /// the place's reach.
     pub fn best(&self, p: LonLat, layer: Layer) -> Option<u32> {
+        self.best_where(p, layer, |_| true).map(|(_, unit)| unit)
+    }
+
+    /// Like [`LocalityIndex::best`], among the units `keep` accepts, with
+    /// the distance ratio (distance / reach).
+    pub fn best_where(
+        &self,
+        p: LonLat,
+        layer: Layer,
+        keep: impl Fn(u32) -> bool,
+    ) -> Option<(f64, u32)> {
         let tree = self.tree.as_ref()?;
         let b = BBox::around(p, MAX_PLACE_RADIUS_M);
         tree.search(b.min_lon, b.min_lat, b.max_lon, b.max_lat)
             .into_iter()
             .map(|i| &self.points[i as usize])
-            .filter(|l| l.layer == layer)
+            .filter(|l| l.layer == layer && keep(l.unit))
             .filter_map(|l| {
                 let ratio = geom::haversine(p, l.point) / l.radius_m;
                 (ratio <= 1.0).then_some((ratio, l.unit))
             })
             .min_by(|a, b| a.0.total_cmp(&b.0))
-            .map(|(_, unit)| unit)
     }
 }

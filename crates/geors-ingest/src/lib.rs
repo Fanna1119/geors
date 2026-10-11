@@ -176,6 +176,10 @@ pub struct CountryData {
 /// deleted when this is dropped, so write the partitions first.
 pub struct Import {
     pub countries: Vec<CountryData>,
+    /// With [`ImportOptions::hierarchy`]: the hierarchy built from the
+    /// extract itself (its areas), for incremental updates. It must not
+    /// outlive the import (its polygon stores are scratch files).
+    pub local_hierarchy: Option<Hierarchy>,
     pub(crate) _work: WorkDir,
 }
 
@@ -627,6 +631,7 @@ pub fn import_pbf(path: &Path, opts: &ImportOptions) -> Result<Import> {
     let mut postcode_areas = Vec::new();
     let mut rel_features: Vec<RelFeature> = Vec::new();
     let mut rel_units: HashMap<i64, u32> = HashMap::new();
+    let mut postcode_owners: HashMap<(OsmType, i64), u32> = HashMap::new();
     let mut outlines = Outlines::create(&work.path.join("outlines"))?;
     let mut broken = 0usize;
     // Countries with a region cut by the extract's edge: the extract holds
@@ -665,6 +670,7 @@ pub fn import_pbf(path: &Path, opts: &ImportOptions) -> Result<Import> {
             }
             if let Some((code, polygon, bbox)) = g.postcode {
                 // Postcode areas reuse `Area`; `unit` indexes `postcode_names`.
+                postcode_owners.insert((OsmType::Relation, r.id), postcode_areas.len() as u32);
                 postcode_names.push(code);
                 postcode_areas.push(Area {
                     unit: (postcode_names.len() - 1) as u32,
@@ -807,6 +813,8 @@ pub fn import_pbf(path: &Path, opts: &ImportOptions) -> Result<Import> {
         postcode_names,
         localities: LocalityIndex::new(localities),
         owners,
+        postcode_owners,
+        overlay: None,
     });
     mem::mark("hierarchy indexes");
     if let Some(dir) = &opts.state_dir {
@@ -815,8 +823,10 @@ pub fn import_pbf(path: &Path, opts: &ImportOptions) -> Result<Import> {
     }
     // A provided hierarchy replaces the one built from this extract; places
     // that are areas look up their own unit in it.
+    let mut local_hierarchy = None;
     if let Some(kept) = &opts.hierarchy {
-        hierarchy = kept.clone();
+        // The one built from this extract is returned (see `Import`).
+        local_hierarchy = Arc::into_inner(std::mem::replace(&mut hierarchy, kept.clone()));
         node_units = node_units
             .keys()
             .filter_map(|&id| Some((id, hierarchy.owner(OsmType::Node, id)?)))
@@ -951,6 +961,7 @@ pub fn import_pbf(path: &Path, opts: &ImportOptions) -> Result<Import> {
     let countries = sink.finish(opts, units, &country_names, &covered)?;
     Ok(Import {
         countries,
+        local_hierarchy,
         _work: work,
     })
 }

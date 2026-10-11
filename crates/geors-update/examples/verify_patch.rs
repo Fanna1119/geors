@@ -11,16 +11,14 @@
 //! it works for Germany-sized data.
 //!
 //! `REUSE=1` keeps the two imports in WORK_DIR from an earlier run and only
-//! rebuilds the patch and compares.
+//! rebuilds the patch and compares; `NO_COMPARE=1` stops after the patch.
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::Arc;
 use std::time::Instant;
 
 use anyhow::{Context, Result};
-use geors_ingest::hierarchy::Hierarchy;
 use geors_ingest::{ImportOptions, import_pbf};
 use geors_update::patch::build_patch;
 use geors_update::{remote::Http, replicate};
@@ -100,6 +98,9 @@ fn only_in(a: &Path, b: &Path) -> Result<Vec<String>> {
 }
 
 fn main() -> Result<()> {
+    tracing_subscriber::fmt()
+        .with_writer(std::io::stderr)
+        .init();
     let args: Vec<PathBuf> = std::env::args().skip(1).map(PathBuf::from).collect();
     let [base, merged, work] = args.as_slice() else {
         anyhow::bail!("usage: verify_patch BASE.osm.pbf MERGED.osm.pbf WORK_DIR");
@@ -120,15 +121,11 @@ fn main() -> Result<()> {
     let changes =
         replicate::fetch_changes(&Http::new(), &from.base_url, from.sequence, to.sequence)?;
     let t = Instant::now();
-    let hierarchy = Arc::new(Hierarchy::load(&state)?);
-    let stats = build_patch(
-        base,
-        &changes,
-        hierarchy,
-        &patched,
-        &work.join("patch-work"),
-    )?;
+    let stats = build_patch(base, &changes, &state, &patched, &work.join("patch-work"))?;
     println!("PATCH in {:?}: {stats:?}", t.elapsed());
+    if std::env::var("NO_COMPARE").is_ok() {
+        return Ok(());
+    }
 
     if !reuse {
         let t = Instant::now();

@@ -130,8 +130,12 @@ impl BlockIndex {
         let start = self
             .blocks
             .partition_point(|b| (b.kind, b.first) < (kind, id));
-        // A block starting before `id` may still contain it.
-        let from = start.saturating_sub(1);
+        // A block starting before `id` may still contain it, if it is of the
+        // same kind (the first block of a kind follows one of another kind).
+        let from = match start.checked_sub(1) {
+            Some(prev) if self.blocks[prev].kind == kind => prev,
+            _ => start,
+        };
         self.blocks[from..]
             .iter()
             .take_while(move |b| b.kind == kind && b.first <= id)
@@ -359,10 +363,16 @@ mod tests {
         );
         assert_eq!(nodes[&100], node(100));
         assert!(matches!(nodes[&150], Elem::Node { lon: 1, lat: 2, .. }));
-        let ways = source.get(Kind::Way, &[7, 8, 99]).unwrap();
+        let ways = source.get(Kind::Way, &[1, 7, 8, 20, 99]).unwrap();
         assert_eq!(ways[&7], way(7, &[150, 5000]));
         assert_eq!(ways[&8], way(8, &[8, 9]));
-        assert_eq!(ways.len(), 2);
+        // The first and last element of a kind (regression: the first way
+        // block follows a node block).
+        assert_eq!(ways.get(&1), Some(&way(1, &[1, 2])));
+        assert_eq!(ways.get(&20), Some(&way(20, &[20, 21])));
+        assert_eq!(ways.len(), 4);
+        let edges = source.get(Kind::Node, &[200, 201]).unwrap();
+        assert_eq!(edges.len(), 2, "last and first id of adjacent blocks");
     }
 
     #[test]

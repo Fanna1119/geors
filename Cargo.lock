@@ -893,6 +893,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "tracing",
+ "tracing-subscriber",
  "ureq",
 ]
 

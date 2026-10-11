@@ -502,6 +502,7 @@ pub fn import_dump_reader(reader: impl Read, opts: &ImportOptions) -> Result<Imp
         .sink
         .finish(opts, b.units, &country_names, &Default::default())?;
     Ok(Import {
+        local_hierarchy: None,
         countries,
         _work: work,
     })

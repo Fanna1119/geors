@@ -326,6 +326,17 @@ impl PolygonStore {
         self.view(p).crosses(b)
     }
 
+    /// The edges of `p`, as fixed-point (1e-7 degree) vertex pairs.
+    pub fn edges(&self, p: &StoredPolygon) -> Vec<([i32; 2], [i32; 2])> {
+        let v = self.view(p);
+        let mut ids: Vec<u32> = v.edges.to_vec();
+        ids.sort_unstable();
+        ids.dedup();
+        ids.into_iter()
+            .map(|i| (v.pts[i as usize], v.pts[i as usize + 1]))
+            .collect()
+    }
+
     /// Bytes in the store (for memory diagnostics).
     pub fn bytes(&self) -> u64 {
         self.words * 4

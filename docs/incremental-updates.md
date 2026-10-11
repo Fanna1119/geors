@@ -171,7 +171,31 @@ diffs; then hourly diffs.
      state-level area "Bayerischer Wald" (140 k parents), a changed
      postcode area (3.7 k postcodes), district edits, 3 streets whose city
      changed. Milestone 5 handles these.
-5. **Boundary and locality changes** (parent re-assignment).
+5. **Boundary and locality changes** (done). The small import returns the
+   hierarchy it built (`Import::local_hierarchy`); `Hierarchy::with_changes`
+   lays the areas of changed elements (boundaries, postcode areas,
+   `place=*` areas and nodes) over the kept hierarchy. Main places whose
+   parents, country or postcode differ under it are rebuilt in a second
+   small import (phase B):
+   - Changed areas are searched only around their changed edges (edges in
+     one of old / new only, merged into boxes; a whole area if new or
+     deleted), with membership decided per 0.02° grid cell where no edge
+     crosses it. Lines (merged streets, rivers) are checked per vertex, as
+     the import assigns their parents per segment.
+   - Changed place nodes: places inside the old or new reach; place nodes
+     whose position, reach, layer and name stay the same are ignored.
+   - Overlapping areas of equal rank now resolve deterministically (the
+     smaller area, then the name; also for postcodes), in imports too, so
+     a full import and a patch agree. Austria: 22 % of places change
+     between overlapping landscape regions classified as states.
+   - Relations naming a rebuilt node as label / admin_centre are rebuilt
+     with it (the node takes over their polygon).
+   - Fixed: the first block of each element kind was never read.
+
+   **Result:** Germany, one daily diff: patched data identical to a full
+   rebuild for all 24,611,917 places; patch 93 s (full import 4 min 20 s
+   plus 74 s to merge the diff into the base). South Africa: identical,
+   2.4 s.
 6. **Policy:** `geors update` patches by default, folds into a full rebuild
    by size / age, `--full` forces one.
 
