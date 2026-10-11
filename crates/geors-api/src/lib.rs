@@ -1,9 +1,11 @@
-//! HTTP API: `/search`, `/reverse`, `/nearest`, `/lookup`, `/status`.
+//! HTTP API: `/search`, `/reverse`, `/nearest`, `/lookup`, `/status`,
+//! `/metrics`.
 //!
 //! All responses are GeoJSON FeatureCollections (except `/status`); errors
 //! are `{"error": "..."}` with a 4xx/5xx status.
 
 mod error;
+mod metrics;
 mod params;
 mod render;
 mod state;
@@ -13,8 +15,9 @@ use std::time::Instant;
 
 use axum::Router;
 use axum::extract::rejection::QueryRejection;
-use axum::extract::{Query, State};
-use axum::response::Json;
+use axum::extract::{Query, Request, State};
+use axum::middleware::{self, Next};
+use axum::response::{IntoResponse, Json, Response};
 use axum::routing::get;
 use geors_index::NearestRequest;
 use serde::{Deserialize, Serialize};
@@ -60,6 +63,8 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/nearest", get(nearest))
         .route("/lookup", get(lookup))
         .route("/status", get(status))
+        .route("/metrics", get(metrics))
+        .layer(middleware::from_fn_with_state(state.clone(), track))
         .with_state(state)
         .layer(TraceLayer::new_for_http());
     if cors {
@@ -67,6 +72,27 @@ pub fn router(state: Arc<AppState>) -> Router {
     } else {
         router
     }
+}
+
+/// Count every request for `/metrics`.
+async fn track(State(state): State<Arc<AppState>>, req: Request, next: Next) -> Response {
+    let path = req.uri().path().to_string();
+    let t = Instant::now();
+    let response = next.run(req).await;
+    state
+        .metrics
+        .record(&path, response.status().as_u16(), t.elapsed());
+    response
+}
+
+async fn metrics(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    (
+        [(
+            axum::http::header::CONTENT_TYPE,
+            "text/plain; version=0.0.4; charset=utf-8",
+        )],
+        state.metrics.render(&state),
+    )
 }
 
 /// Engine calls are blocking (mmap + tantivy); keep them off the async workers.

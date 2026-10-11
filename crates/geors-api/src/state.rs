@@ -39,6 +39,7 @@ pub struct AppState {
     loaded: Mutex<LoadInfo>,
     /// Serialises reloads.
     reload_lock: Mutex<()>,
+    pub metrics: crate::metrics::Metrics,
 }
 
 fn now() -> u64 {
@@ -61,6 +62,7 @@ impl AppState {
                 loaded_unix: now(),
             }),
             reload_lock: Mutex::new(()),
+            metrics: Default::default(),
         })
     }
 

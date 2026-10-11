@@ -299,6 +299,9 @@ curl 'localhost:2322/lookup?osm_ids=N1932181216,W28712148'
 
 # Loaded partitions, data generation, source/update state
 curl 'localhost:2322/status'
+
+# Prometheus metrics
+curl 'localhost:2322/metrics'
 ```
 
 ## API
@@ -344,6 +347,14 @@ any distance.
 `osm_ids=N123,W456,R789` (required, up to `max_limit` ids), `country`, `lang`,
 `geometry`. Results come back in request order; unknown ids are skipped. A
 merged street can be found by the id of any of its OSM way segments.
+
+### `GET /metrics`
+
+Prometheus text format: per endpoint `geors_requests_total`,
+`geors_request_errors_total` (4xx/5xx) and the latency histogram
+`geors_request_duration_seconds`; plus `geors_partitions`, `geors_places`
+per country, `geors_data_loaded_timestamp_seconds` and `geors_build_info`
+(version, data generation).
 
 ### Feature properties
 
