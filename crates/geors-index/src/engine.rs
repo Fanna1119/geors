@@ -400,16 +400,23 @@ impl Engine {
         let mut hits = self.load(cands, req.focus)?;
         let mut analyzer = self.analyzer.clone();
         for hit in &mut hits {
-            let boost = hit
+            let names: Vec<Vec<String>> = hit
                 .place
                 .all_names()
+                .map(|n| text::tokenize(&mut analyzer, n))
+                .collect();
+            let boost = names
+                .iter()
                 .map(|n| {
-                    let name_tokens = text::tokenize(&mut analyzer, n);
                     self.ranking
-                        .name_match(&parsed.tokens, &name_tokens, parsed.last_is_prefix)
+                        .name_match(&parsed.tokens, n, parsed.last_is_prefix)
                 })
                 .fold(1.0f32, f32::max);
-            hit.score *= boost;
+            let context = context_tokens(hit, &mut analyzer);
+            let echo =
+                self.ranking
+                    .city_echo(&parsed.tokens, &names, &context, parsed.last_is_prefix);
+            hit.score *= boost * echo;
         }
         hits.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(Ordering::Equal));
         Ok(dedup(hits, limit))
@@ -630,6 +637,28 @@ impl Engine {
             .collect::<Result<_, _>>()
             .map_err(EngineError::from)
     }
+}
+
+/// Words of a place's address context: the names (all languages) of its
+/// admin units, and its `addr:city`.
+fn context_tokens(hit: &Hit, analyzer: &mut TextAnalyzer) -> Vec<String> {
+    let units = hit
+        .place
+        .parents
+        .iter()
+        .filter_map(|&i| hit.partition.admins.get(i as usize));
+    let mut out = Vec::new();
+    for unit in units {
+        for n in std::iter::once(&unit.name).chain(unit.names.values()) {
+            out.extend(text::tokenize(analyzer, n));
+        }
+    }
+    if let Some(city) = &hit.place.city {
+        out.extend(text::tokenize(analyzer, city));
+    }
+    out.sort_unstable();
+    out.dedup();
+    out
 }
 
 /// A conservative lower bound (metres) on the distance from `p` to any
