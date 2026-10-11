@@ -11,6 +11,7 @@ geors-index = { version = "0.1.0", path = "../geors-index" }
 geors-ingest = { version = "0.1.0", path = "../geors-ingest" }
 md-5 = "0.11.0"
 osmpbf = "0.3.8"
+postcard = { version = "1.1.3", features = ["use-std"] }
 quick-xml = "0.42.0"
 rayon = "1.12.0"
 serde = { version = "1.0.229", features = ["derive"] }

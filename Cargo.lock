@@ -884,6 +884,7 @@ dependencies = [
  "geors-ingest",
  "md-5",
  "osmpbf",
+ "postcard",
  "quick-xml",
  "rayon",
  "serde",

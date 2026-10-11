@@ -138,8 +138,13 @@ diffs; then hourly diffs.
    partition, searches both, and skips tombstoned main places everywhere
    (text search through a "live places" filter). `geors export` prints the
    places as served; `geors info`, `/status` and `/metrics` show patches.
-2. **Change store and block index:** keep diffs instead of merging them;
-   read elements by id from base + changes.
+2. **Change store and block index** (done): `geors_update::elements`.
+   `BlockIndex` (first/last id per block, saved as `<base>.blocks`; Germany:
+   11.9 s to build, once per base), `ElementSource` (changes first, then
+   only the base blocks holding the ids), and the change store
+   (`load_changes` / `save_changes`, later diffs win). Verified on Germany
+   with `examples/verify_elements`: 1.41 M elements read through base +
+   changes, all identical to the merged file.
 3. **Kept import state:** boundary stores, area metadata, units, localities
    saved with the partition data.
 4. **Diff → patch** for direct changes, streets, moved nodes, interpolation;

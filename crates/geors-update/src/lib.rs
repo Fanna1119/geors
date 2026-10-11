@@ -6,6 +6,7 @@
 //! sequence, MD5, ETag, or file mtime), downloads and re-imports changed ones,
 //! and bumps `<data>/GENERATION` so running servers hot-reload.
 
+pub mod elements;
 pub mod osc;
 pub mod osm;
 pub mod pbf_write;

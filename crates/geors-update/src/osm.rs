@@ -3,16 +3,18 @@
 
 use std::collections::BTreeMap;
 
+use serde::{Deserialize, Serialize};
+
 pub type Tags = Vec<(String, String)>;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum Kind {
     Node = 0,
     Way = 1,
     Relation = 2,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Member {
     pub kind: Kind,
     pub id: i64,
@@ -21,7 +23,7 @@ pub struct Member {
 
 /// An OSM element without metadata (version, user, ...): the geocoder does
 /// not need it, and diffs are applied by id.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Elem {
     Node {
         id: i64,
@@ -102,7 +104,7 @@ impl Elem {
 
 /// Net effect of one or more diffs: per element, its new version or `None`
 /// for a deletion. Later diffs override earlier ones.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ChangeSet {
     pub nodes: BTreeMap<i64, Option<Elem>>,
     pub ways: BTreeMap<i64, Option<Elem>>,
@@ -132,5 +134,12 @@ impl ChangeSet {
 
     pub fn is_empty(&self) -> bool {
         self.len() == 0
+    }
+
+    /// Add the changes of a later diff (they win).
+    pub fn merge(&mut self, newer: ChangeSet) {
+        self.nodes.extend(newer.nodes);
+        self.ways.extend(newer.ways);
+        self.relations.extend(newer.relations);
     }
 }
