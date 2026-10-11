@@ -549,6 +549,12 @@ bench/           load, accuracy and ambiguity benchmarks (wrk + Python)
    named highways (`street`), named amenities/shops/tourism/… (`poi`), and
    `addr:housenumber` (`house`). Each place also gets an importance prior from
    its layer, place type, population and wikidata.
+   **House-number interpolation:** an `addr:interpolation` line
+   (`odd`/`even`/`all`) between numbered address nodes stands for the
+   numbers in between; they become `house` places (`osm_key`
+   `addr:interpolation`) spread evenly along the line, between each pair of
+   numbered nodes on the same street. South Africa: 42 k houses from 3.6 k
+   lines.
 3. **Geometry**: streets keep simplified line geometry, used for exact reverse
    distances and for `geometry=full`. Areas keep simplified polygons with holes;
    the tolerance scales with the area's size (~1 m for buildings, tens of

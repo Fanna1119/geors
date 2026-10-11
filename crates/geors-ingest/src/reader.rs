@@ -33,6 +33,7 @@ use osmpbf::{BlobDecode, BlobReader, ByteOffset, Element, PrimitiveBlock, RelMem
 use rayon::prelude::*;
 use tracing::info;
 
+use crate::interpolation;
 use crate::join::{Joiner, RefSink};
 use crate::nodes::{CoordArray, IdSink, NodeCoords, NodeIds};
 use crate::tags::{self, Class, ElementKind, Tags};
@@ -272,6 +273,8 @@ pub struct WayScan {
     /// Node lists of ways that are members of relations from pass 1.
     pub member_refs: HashMap<i64, Vec<i64>>,
     pub area_ways: Vec<AreaWay>,
+    /// House-number interpolation lines (`addr:interpolation`).
+    pub interpolations: Vec<interpolation::Line>,
     pub feature_ways: u64,
 }
 
@@ -286,6 +289,7 @@ struct WayBlock {
     joined: Vec<(i64, Vec<i64>)>,
     members: Vec<(i64, Vec<i64>)>,
     areas: Vec<AreaWay>,
+    interpolations: Vec<interpolation::Line>,
     features: u64,
 }
 
@@ -304,6 +308,7 @@ pub fn scan_ways(
     let mut scan = WayScan {
         member_refs: HashMap::new(),
         area_ways: Vec::new(),
+        interpolations: Vec::new(),
         feature_ways: 0,
     };
     drive_offsets(
@@ -315,6 +320,20 @@ pub fn scan_ways(
             for el in block.elements() {
                 let Element::Way(w) = el else { continue };
                 let member = member_ways.contains(&w.id());
+                let interp = w
+                    .tags()
+                    .find(|(k, _)| *k == "addr:interpolation")
+                    .and_then(|(_, v)| interpolation::Kind::parse(v));
+                if let Some(kind) = interp {
+                    // Coordinates come from the node store, in both modes.
+                    let refs: Vec<i64> = w.refs().collect();
+                    out.ids.extend_from_slice(&refs);
+                    out.interpolations.push(interpolation::Line {
+                        way: w.id(),
+                        refs,
+                        kind,
+                    });
+                }
                 let feature = if tags::may_be_interesting(w.tags()) {
                     let t = Tags::from_osm(w.tags());
                     tags::classify(&t, ElementKind::Way).map(|c| (t, c))
@@ -360,6 +379,7 @@ pub fn scan_ways(
             }
             scan.member_refs.extend(b.members);
             scan.area_ways.extend(b.areas);
+            scan.interpolations.extend(b.interpolations);
             scan.feature_ways += b.features;
             Ok(())
         },

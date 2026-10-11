@@ -20,6 +20,7 @@
 pub mod areas;
 pub mod dump;
 pub mod extsort;
+pub mod interpolation;
 pub mod join;
 pub use geors_core::mem;
 pub mod nodes;
@@ -595,7 +596,7 @@ pub fn import_pbf(path: &Path, opts: &ImportOptions) -> Result<Import> {
     }
     let sorted = use_sorted_join(path, opts.node_lookup);
     let mut join = sorted.then(|| RefSink::new(&work.path));
-    let scan = reader::scan_ways(&index, &member_ways, &mut ids, join.as_mut())?;
+    let mut scan = reader::scan_ways(&index, &member_ways, &mut ids, join.as_mut())?;
     drop(member_ways);
     mem::mark("pass 2: ways scanned");
     if cfg!(feature = "mem-stats") {
@@ -627,6 +628,21 @@ pub fn import_pbf(path: &Path, opts: &ImportOptions) -> Result<Import> {
         }
         None => (reader::scan_nodes(&index, &mut coords)?, None),
     };
+    // Interpolation lines with their coordinates (the store is freed after
+    // pass 4); their numbered nodes are recorded in pass 5.
+    let interpolations: Vec<(interpolation::Line, Vec<LonLat>)> =
+        std::mem::take(&mut scan.interpolations)
+            .into_iter()
+            .map(|l| {
+                let pts = coords.line(&l.refs);
+                (l, pts)
+            })
+            .collect();
+    let interpolation_nodes: HashSet<i64> = interpolations
+        .iter()
+        .flat_map(|(l, _)| l.refs.iter().copied())
+        .collect();
+    let mut endpoints: HashMap<i64, interpolation::Endpoint> = HashMap::new();
     mem::mark("pass 3: nodes");
     let place_node_info: HashMap<i64, (Layer, Option<String>)> = place_nodes
         .iter()
@@ -900,6 +916,11 @@ pub fn import_pbf(path: &Path, opts: &ImportOptions) -> Result<Import> {
             Ok(Some(finish(cache, p, node_units.get(&id).copied())))
         },
         |(mut place, city)| {
+            if interpolation_nodes.contains(&place.osm_id)
+                && let Some(e) = interpolation::Endpoint::of(&place)
+            {
+                endpoints.insert(place.osm_id, e);
+            }
             for i in twins.remove(&place.osm_id).unwrap_or_default() {
                 let f = &mut rel_features[i];
                 place.extent = place.extent.or(f.extent);
@@ -914,8 +935,25 @@ pub fn import_pbf(path: &Path, opts: &ImportOptions) -> Result<Import> {
     )?;
     mem::mark("pass 5: node features");
 
-    // Relation features that no node absorbed.
+    // Interpolated house numbers, with a hierarchy like any place.
     let mut cache = HierCache::default();
+    let mut interpolated = 0usize;
+    for (line, pts) in &interpolations {
+        for house in interpolation::houses(line, pts, |id| endpoints.get(&id)) {
+            let (p, city) = finish(&mut cache, house, None);
+            router.route(p, city)?;
+            interpolated += 1;
+        }
+    }
+    info!(
+        lines = interpolations.len(),
+        houses = interpolated,
+        "house numbers interpolated"
+    );
+    drop(interpolations);
+    drop(endpoints);
+
+    // Relation features that no node absorbed.
     for f in rel_features.into_iter().filter(|f| !f.absorbed) {
         let Some(center) = f.center else { continue };
         let r = &relations[f.rel];
