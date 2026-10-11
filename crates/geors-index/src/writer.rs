@@ -2,7 +2,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 use std::fs;
-use std::io::{BufWriter, Write};
+use std::io::{BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
@@ -286,6 +286,7 @@ pub fn write_partition(data_dir: &Path, input: PartitionInput) -> Result<PathBuf
         fs::remove_dir_all(&tmp_dir)?;
     }
     fs::create_dir_all(&tmp_dir)?;
+    geors_core::mem::mark("writer: start");
 
     let spill = SpillReader::open(&input.places)?;
     let file_len = fs::metadata(&input.places.path)?.len();
@@ -308,11 +309,19 @@ pub fn write_partition(data_dir: &Path, input: PartitionInput) -> Result<PathBuf
         info.push(if direct { e.offset } else { e.len as u64 });
     })?;
     order.sort_unstable();
+    geors_core::mem::mark("writer: sort keys");
     let reader = if direct {
         Ordered::Direct { offsets: info }
     } else {
-        Ordered::bucketed(&spill, &order, info, mem.bucket_bytes, &tmp_dir.join("reorder.tmp"))?
+        Ordered::bucketed(
+            &spill,
+            &order,
+            info,
+            mem.bucket_bytes,
+            &tmp_dir.join("reorder.tmp"),
+        )?
     };
+    geors_core::mem::mark("writer: reader ready");
 
     let mut docs =
         BufWriter::with_capacity(1 << 20, fs::File::create(tmp_dir.join(storage::DOCS_FILE))?);
@@ -324,8 +333,12 @@ pub fn write_partition(data_dir: &Path, input: PartitionInput) -> Result<PathBuf
         BufWriter::with_capacity(1 << 20, fs::File::create(tmp_dir.join(storage::GEOM_FILE))?);
     let mut text = TextIndexWriter::create(&tmp_dir.join(storage::TEXT_DIR))?;
     // f32 boxes, rounded outward: half the memory and disk of f64, and a
-    // query can only get extra candidates, never miss one.
-    let mut rtree = RTreeBuilder::<f32>::new(count as u32);
+    // query can only get extra candidates, never miss one. They go to a
+    // scratch file first: the R-tree is built after the text index, so the
+    // two largest allocations of this function do not overlap.
+    let boxes_path = tmp_dir.join("boxes.tmp");
+    let mut boxes = BufWriter::with_capacity(1 << 20, fs::File::create(&boxes_path)?);
+    geors_core::mem::mark("writer: text writer created");
 
     let mut doc_offset = 0u64;
     let mut geom_offset = 0u64;
@@ -389,12 +402,14 @@ pub fn write_partition(data_dir: &Path, input: PartitionInput) -> Result<PathBuf
             geom_offset += geom_buf.len() as u64;
 
             let b = place.bbox();
-            rtree.add(
+            for v in [
                 f32_down(b.min_lon),
                 f32_down(b.min_lat),
                 f32_up(b.max_lon),
                 f32_up(b.max_lat),
-            );
+            ] {
+                boxes.write_all(&v.to_le_bytes())?;
+            }
             bbox.union(&b);
             *layers.entry(place.layer.as_str().to_string()).or_default() += 1;
 
@@ -413,14 +428,30 @@ pub fn write_partition(data_dir: &Path, input: PartitionInput) -> Result<PathBuf
         Ok(())
     })?;
     drop(reader);
+    drop(order);
+    geors_core::mem::mark("writer: places written");
     docs.flush()?;
     places_out.flush()?;
     geom.flush()?;
+    boxes.flush()?;
+    drop(boxes);
+    text.finish()?;
+    geors_core::mem::mark("writer: text index merged");
 
+    let mut rtree = RTreeBuilder::<f32>::new(count as u32);
+    let mut boxes = std::io::BufReader::with_capacity(1 << 20, fs::File::open(&boxes_path)?);
+    let mut b = [0u8; 16];
+    for _ in 0..count {
+        boxes.read_exact(&mut b)?;
+        let v = |i: usize| f32::from_le_bytes(b[i * 4..i * 4 + 4].try_into().unwrap());
+        rtree.add(v(0), v(1), v(2), v(3));
+    }
+    drop(boxes);
+    fs::remove_file(&boxes_path)?;
     let tree = rtree.finish::<HilbertSort>();
+    geors_core::mem::mark("writer: R-tree built");
     debug_assert_eq!(tree.num_items() as u64, count);
     fs::write(tmp_dir.join(storage::SPATIAL_FILE), tree.into_inner())?;
-    text.finish()?;
 
     fs::write(
         tmp_dir.join(storage::TAGS_FILE),
@@ -522,7 +553,12 @@ mod tests {
         let (mut order, mut offsets, mut sizes) = (Vec::new(), Vec::new(), Vec::new());
         spill
             .for_each_entry(|e| {
-                order.push((morton(e.center.lon, e.center.lat), e.osm_type, e.osm_id, order.len() as u32));
+                order.push((
+                    morton(e.center.lon, e.center.lat),
+                    e.osm_type,
+                    e.osm_id,
+                    order.len() as u32,
+                ));
                 offsets.push(e.offset);
                 sizes.push(e.len as u64);
             })
@@ -533,7 +569,9 @@ mod tests {
         // Tiny buckets: many of them, and records larger than the share of
         // buffer per bucket.
         let bucketed = Ordered::bucketed(&spill, &order, sizes, 4096, &path).unwrap();
-        let Ordered::Buckets { buckets, .. } = &bucketed else { unreachable!() };
+        let Ordered::Buckets { buckets, .. } = &bucketed else {
+            unreachable!()
+        };
         assert!(buckets.len() > 20);
         assert_eq!(read_all(&bucketed, &spill, &order), direct);
         assert_eq!(direct.len(), 5000);

@@ -20,7 +20,9 @@
 pub mod areas;
 pub mod dump;
 pub mod extsort;
+pub mod interpolation;
 pub mod join;
+pub use geors_core::mem;
 pub mod nodes;
 pub mod pip;
 pub mod reader;
@@ -46,7 +48,7 @@ use tracing::{info, warn};
 use crate::areas::{Area, AreaIndex, CellCache, LocalityIndex, LocalityPoint};
 use crate::join::{RefSink, WayCursor};
 use crate::nodes::{IdSink, NodeCoords};
-use crate::pip::BandedPolygon;
+use crate::pip::{BandedPolygon, PolygonStore, StoredPolygon};
 use crate::sink::CountrySink;
 use crate::streets::StreetStore;
 use crate::tags::{Class, Tags};
@@ -394,7 +396,7 @@ fn add_area(
     t: &Tags,
     layer: Layer,
     rank: u8,
-    polygon: BandedPolygon,
+    polygon: StoredPolygon,
     bbox: BBox,
 ) -> u32 {
     let unit = unit(units, t, layer);
@@ -423,7 +425,8 @@ struct RelGeometry {
     /// Postcode area: code, polygon index, bbox.
     postcode: Option<(String, BandedPolygon, BBox)>,
     /// Searchable feature: centre, extent, simplified outline.
-    feature: Option<(Option<LonLat>, Option<BBox>, Vec<PolygonRings>)>,
+    /// Outline encoded as in `geom.bin` (8 bytes per vertex instead of 16).
+    feature: Option<(Option<LonLat>, Option<BBox>, Vec<u8>)>,
 }
 
 fn relation_geometry(
@@ -465,7 +468,13 @@ fn relation_geometry(
         (
             center,
             bbox,
-            mp.as_ref().map(polygon_rings).unwrap_or_default(),
+            mp.as_ref()
+                .map(|mp| {
+                    let mut buf = Vec::new();
+                    geors_core::storage::encode_polygons(&polygon_rings(mp), &mut buf);
+                    buf
+                })
+                .unwrap_or_default(),
         )
     });
     RelGeometry {
@@ -487,9 +496,67 @@ struct RelFeature {
     class: Class,
     center: Option<LonLat>,
     extent: Option<BBox>,
-    polygons: Vec<PolygonRings>,
+    /// Simplified outline, in [`Outlines`] (`None`: no polygon).
+    outline: Option<OutlineRef>,
     own: Option<u32>,
     absorbed: bool,
+}
+
+/// Relations whose geometry is built at once (see `import_pbf`).
+const GEOMETRY_CHUNK: usize = 4096;
+
+/// Where an outline is stored in [`Outlines`]: byte offset and length.
+type OutlineRef = (u64, u32);
+
+/// Outlines of relation features, kept on disk from when they are built
+/// until a place takes them (pass 5 and after). In RAM they would be held
+/// through passes 4 and 5: about 45 MB for Austria, gigabytes for a
+/// continent.
+struct Outlines {
+    out: std::io::BufWriter<std::fs::File>,
+    len: u64,
+}
+
+impl Outlines {
+    fn create(path: &Path) -> std::io::Result<Self> {
+        let file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(path)?;
+        Ok(Self {
+            out: std::io::BufWriter::with_capacity(1 << 20, file),
+            len: 0,
+        })
+    }
+
+    /// Store an encoded outline (empty: no polygon).
+    fn push(&mut self, encoded: &[u8]) -> std::io::Result<Option<OutlineRef>> {
+        use std::io::Write;
+        if encoded.is_empty() {
+            return Ok(None);
+        }
+        self.out.write_all(encoded)?;
+        let r = (self.len, encoded.len() as u32);
+        self.len += encoded.len() as u64;
+        Ok(Some(r))
+    }
+
+    /// Stop writing; returns the reader.
+    fn finish(self) -> std::io::Result<std::fs::File> {
+        self.out.into_inner().map_err(|e| e.into_error())
+    }
+}
+
+fn read_outline(
+    file: &std::fs::File,
+    (offset, len): OutlineRef,
+) -> std::io::Result<Vec<PolygonRings>> {
+    use std::os::unix::fs::FileExt;
+    let mut buf = vec![0u8; len as usize];
+    file.read_exact_at(&mut buf, offset)?;
+    Ok(geors_core::storage::decode_polygons(&buf))
 }
 
 /// Build the place for a way feature (geometry from `coords`).
@@ -518,6 +585,7 @@ pub fn import_pbf(path: &Path, opts: &ImportOptions) -> Result<Import> {
 
     // Pass 1-2: what is needed.
     let (index, relations) = reader::read_relations(path)?;
+    mem::mark("pass 1: relations");
     let member_ways: HashSet<i64> = relations
         .iter()
         .flat_map(|r| r.outer.iter().chain(&r.inner).copied())
@@ -528,11 +596,24 @@ pub fn import_pbf(path: &Path, opts: &ImportOptions) -> Result<Import> {
     }
     let sorted = use_sorted_join(path, opts.node_lookup);
     let mut join = sorted.then(|| RefSink::new(&work.path));
-    let scan = reader::scan_ways(&index, &member_ways, &mut ids, join.as_mut())?;
+    let mut scan = reader::scan_ways(&index, &member_ways, &mut ids, join.as_mut())?;
     drop(member_ways);
+    mem::mark("pass 2: ways scanned");
+    if cfg!(feature = "mem-stats") {
+        let refs: usize = scan.member_refs.values().map(Vec::len).sum();
+        let caps: usize = scan.member_refs.values().map(Vec::capacity).sum();
+        info!(
+            member_ways = scan.member_refs.len(),
+            member_way_refs = refs,
+            member_refs_mb = (caps * 8 + scan.member_refs.capacity() * 40) / 1048576,
+            area_ways = scan.area_ways.len(),
+            "mem: way scan"
+        );
+    }
 
     // Pass 3: coordinates, and place nodes for the locality fallback.
     let mut coords = NodeCoords::build(ids, &work.path.join("node-coords"))?;
+    mem::mark("node ids sorted, coordinate store built");
     let mut units: Vec<AdminUnit> = Vec::new();
     let mut localities: Vec<LocalityPoint> = Vec::new();
     let mut node_units: HashMap<i64, u32> = HashMap::new();
@@ -547,6 +628,22 @@ pub fn import_pbf(path: &Path, opts: &ImportOptions) -> Result<Import> {
         }
         None => (reader::scan_nodes(&index, &mut coords)?, None),
     };
+    // Interpolation lines with their coordinates (the store is freed after
+    // pass 4); their numbered nodes are recorded in pass 5.
+    let interpolations: Vec<(interpolation::Line, Vec<LonLat>)> =
+        std::mem::take(&mut scan.interpolations)
+            .into_iter()
+            .map(|l| {
+                let pts = coords.line(&l.refs);
+                (l, pts)
+            })
+            .collect();
+    let interpolation_nodes: HashSet<i64> = interpolations
+        .iter()
+        .flat_map(|(l, _)| l.refs.iter().copied())
+        .collect();
+    let mut endpoints: HashMap<i64, interpolation::Endpoint> = HashMap::new();
+    mem::mark("pass 3: nodes");
     let place_node_info: HashMap<i64, (Layer, Option<String>)> = place_nodes
         .iter()
         .map(|n| (n.id, (n.class.layer, n.tags.name().map(str::to_string))))
@@ -565,12 +662,15 @@ pub fn import_pbf(path: &Path, opts: &ImportOptions) -> Result<Import> {
             node_units.insert(n.id, u);
         }
     }
+    mem::mark("localities");
 
     // Areas: place=* ways, admin / postcode / place relations. The
     // geometry work (ring assembly, polygon indexes, interior points) runs
     // on all cores; units are then numbered sequentially, in relation
     // order, so the result does not depend on thread timing.
     let t_areas = Instant::now();
+    let mut admin_store = PolygonStore::create(&work.path.join("admin-polygons"))?;
+    let mut postcode_store = PolygonStore::create(&work.path.join("postcode-polygons"))?;
     let mut admin_areas: Vec<Area> = Vec::new();
     let mut way_units: HashMap<i64, u32> = HashMap::new();
     let way_polys: Vec<Option<(BandedPolygon, BBox)>> = scan
@@ -587,6 +687,7 @@ pub fn import_pbf(path: &Path, opts: &ImportOptions) -> Result<Import> {
         .collect();
     for (w, poly) in scan.area_ways.iter().zip(way_polys) {
         if let Some((polygon, bbox)) = poly {
+            let polygon = admin_store.push(polygon)?;
             let u = add_area(
                 &mut units,
                 &mut admin_areas,
@@ -599,62 +700,72 @@ pub fn import_pbf(path: &Path, opts: &ImportOptions) -> Result<Import> {
             way_units.insert(w.id, u);
         }
     }
-    let geoms: Vec<RelGeometry> = relations
-        .par_iter()
-        .map(|r| relation_geometry(r, &scan.member_refs, &coords))
-        .collect();
+    mem::mark("place=* area polygons");
     let mut postcode_names = Vec::new();
     let mut postcode_areas = Vec::new();
     let mut rel_features: Vec<RelFeature> = Vec::new();
+    let mut outlines = Outlines::create(&work.path.join("outlines"))?;
     let mut broken = 0usize;
     // Countries with a region cut by the extract's edge: the extract holds
     // only part of them, even if their outer boundary is complete.
     let mut clipped: HashSet<String> = HashSet::new();
-    for (ri, (r, g)) in relations.iter().zip(geoms).enumerate() {
-        broken += g.broken as usize;
-        if g.broken
-            && r.is_admin_boundary()
-            && let Some(cc) = r.tags.subdivision_country()
-        {
-            clipped.insert(cc);
-        }
-        let mut own = None;
-        if let Some((layer, rank, polygon, bbox)) = g.admin {
-            own = Some(add_area(
-                &mut units,
-                &mut admin_areas,
-                &r.tags,
-                layer,
-                rank,
-                polygon,
-                bbox,
-            ));
-        }
-        if let Some((code, polygon, bbox)) = g.postcode {
-            // Postcode areas reuse `Area`; `unit` indexes `postcode_names`.
-            postcode_names.push(code);
-            postcode_areas.push(Area {
-                unit: (postcode_names.len() - 1) as u32,
-                layer: Layer::Locality,
-                rank: 0,
-                polygon,
-                bbox,
-                country_code: None,
-            });
-        }
-        if let (Some(class), Some((center, extent, polygons))) = (&r.class, g.feature) {
-            rel_features.push(RelFeature {
-                rel: ri,
-                class: class.clone(),
-                center,
-                extent,
-                polygons,
-                own,
-                absorbed: false,
-            });
+    // In chunks, so only one chunk's polygons are on the heap before they
+    // move to the stores.
+    for (ci, chunk) in relations.chunks(GEOMETRY_CHUNK).enumerate() {
+        let geoms: Vec<RelGeometry> = chunk
+            .par_iter()
+            .map(|r| relation_geometry(r, &scan.member_refs, &coords))
+            .collect();
+        for (k, (r, g)) in chunk.iter().zip(geoms).enumerate() {
+            let ri = ci * GEOMETRY_CHUNK + k;
+            broken += g.broken as usize;
+            if g.broken
+                && r.is_admin_boundary()
+                && let Some(cc) = r.tags.subdivision_country()
+            {
+                clipped.insert(cc);
+            }
+            let mut own = None;
+            if let Some((layer, rank, polygon, bbox)) = g.admin {
+                let polygon = admin_store.push(polygon)?;
+                own = Some(add_area(
+                    &mut units,
+                    &mut admin_areas,
+                    &r.tags,
+                    layer,
+                    rank,
+                    polygon,
+                    bbox,
+                ));
+            }
+            if let Some((code, polygon, bbox)) = g.postcode {
+                // Postcode areas reuse `Area`; `unit` indexes `postcode_names`.
+                postcode_names.push(code);
+                postcode_areas.push(Area {
+                    unit: (postcode_names.len() - 1) as u32,
+                    layer: Layer::Locality,
+                    rank: 0,
+                    polygon: postcode_store.push(polygon)?,
+                    bbox,
+                    country_code: None,
+                });
+            }
+            if let (Some(class), Some((center, extent, polygons))) = (&r.class, g.feature) {
+                rel_features.push(RelFeature {
+                    rel: ri,
+                    class: class.clone(),
+                    center,
+                    extent,
+                    outline: outlines.push(&polygons)?,
+                    own,
+                    absorbed: false,
+                });
+            }
         }
     }
+    mem::mark("relation geometry (all boundaries)");
     drop(scan);
+    mem::mark("areas assigned, way scan freed");
     if broken > 0 {
         warn!(
             broken,
@@ -726,14 +837,41 @@ pub fn import_pbf(path: &Path, opts: &ImportOptions) -> Result<Import> {
         }
     }
     drop(place_node_info);
+    mem::mark("twins");
+    if cfg!(feature = "mem-stats") {
+        let mb = |b: u64| b / 1048576;
+        let vertices = |areas: &[Area]| areas.iter().map(|a| a.polygon.vertices()).sum::<usize>();
+        let (admin_b, admin_v) = (admin_store.bytes(), vertices(&admin_areas));
+        let (post_b, post_v) = (postcode_store.bytes(), vertices(&postcode_areas));
+        let outline_bytes: u64 = outlines.len;
+        let member_refs: usize = relations
+            .iter()
+            .map(|r| r.outer.len() + r.inner.len())
+            .sum();
+        info!(
+            admin_areas = admin_areas.len(),
+            admin_disk_mb = mb(admin_b),
+            admin_vertices = admin_v,
+            postcode_disk_mb = mb(post_b),
+            postcode_vertices = post_v,
+            rel_features = rel_features.len(),
+            outline_disk_mb = outline_bytes / 1048576,
+            relations = relations.len(),
+            relation_members = member_refs,
+            localities = localities.len(),
+            "mem: breakdown"
+        );
+    }
 
+    let outlines = outlines.finish()?;
     let hierarchy = Hierarchy {
         units,
-        areas: AreaIndex::new(admin_areas),
-        postcodes: AreaIndex::new(postcode_areas),
+        areas: AreaIndex::new(admin_areas, admin_store)?,
+        postcodes: AreaIndex::new(postcode_areas, postcode_store)?,
         postcode_names,
         localities: LocalityIndex::new(localities),
     };
+    mem::mark("hierarchy indexes");
     let mut router = Router {
         sink: CountrySink::new(work.path.clone(), opts.default_country.clone()),
         streets: StreetStore::create(&work.path.join("streets.spill"))?,
@@ -767,6 +905,7 @@ pub fn import_pbf(path: &Path, opts: &ImportOptions) -> Result<Import> {
     )?;
     drop(coords);
     drop(way_geoms);
+    mem::mark("pass 4: way features (coordinates freed)");
 
     // Pass 5: node features.
     reader::stream_nodes(
@@ -777,25 +916,52 @@ pub fn import_pbf(path: &Path, opts: &ImportOptions) -> Result<Import> {
             Ok(Some(finish(cache, p, node_units.get(&id).copied())))
         },
         |(mut place, city)| {
+            if interpolation_nodes.contains(&place.osm_id)
+                && let Some(e) = interpolation::Endpoint::of(&place)
+            {
+                endpoints.insert(place.osm_id, e);
+            }
             for i in twins.remove(&place.osm_id).unwrap_or_default() {
                 let f = &mut rel_features[i];
                 place.extent = place.extent.or(f.extent);
-                if place.polygons.is_empty() {
-                    place.polygons = std::mem::take(&mut f.polygons);
+                if place.polygons.is_empty()
+                    && let Some(o) = f.outline.take()
+                {
+                    place.polygons = read_outline(&outlines, o)?;
                 }
             }
             router.route(place, city)
         },
     )?;
+    mem::mark("pass 5: node features");
+
+    // Interpolated house numbers, with a hierarchy like any place.
+    let mut cache = HierCache::default();
+    let mut interpolated = 0usize;
+    for (line, pts) in &interpolations {
+        for house in interpolation::houses(line, pts, |id| endpoints.get(&id)) {
+            let (p, city) = finish(&mut cache, house, None);
+            router.route(p, city)?;
+            interpolated += 1;
+        }
+    }
+    info!(
+        lines = interpolations.len(),
+        houses = interpolated,
+        "house numbers interpolated"
+    );
+    drop(interpolations);
+    drop(endpoints);
 
     // Relation features that no node absorbed.
-    let mut cache = HierCache::default();
     for f in rel_features.into_iter().filter(|f| !f.absorbed) {
         let Some(center) = f.center else { continue };
         let r = &relations[f.rel];
         let mut place = make_place(OsmType::Relation, r.id, &r.tags, &f.class, center);
         place.extent = f.extent;
-        place.polygons = f.polygons;
+        if let Some(o) = f.outline {
+            place.polygons = read_outline(&outlines, o)?;
+        }
         let (p, city) = finish(&mut cache, place, f.own);
         router.route(p, city)?;
     }
@@ -812,6 +978,7 @@ pub fn import_pbf(path: &Path, opts: &ImportOptions) -> Result<Import> {
     drop(twins);
     drop(node_units);
     drop(way_units);
+    mem::mark("relation features done, hierarchy freed");
 
     let Router {
         mut sink,
@@ -820,6 +987,7 @@ pub fn import_pbf(path: &Path, opts: &ImportOptions) -> Result<Import> {
         ..
     } = router;
     let (segments, merged) = streets.finish(|p| sink.push(p))?;
+    mem::mark("streets merged");
     info!(
         places = count,
         street_segments = segments,

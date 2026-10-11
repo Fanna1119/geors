@@ -6,6 +6,10 @@ edition = "2024"
 [workspace]
 members = ["crates/*"]
 
+[features]
+# Log heap use per import step (diagnostics; see crates/geors-ingest/src/mem.rs).
+mem-stats = ["geors-ingest/mem-stats"]
+
 [dependencies]
 anyhow = "1.0.104"
 clap = { version = "4.6.7", features = ["derive", "env"] }

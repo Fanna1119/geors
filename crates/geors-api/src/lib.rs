@@ -1,9 +1,11 @@
-//! HTTP API: `/search`, `/reverse`, `/nearest`, `/lookup`, `/status`.
+//! HTTP API: `/search`, `/reverse`, `/nearest`, `/lookup`, `/contains`,
+//! `/status`, `/metrics`.
 //!
 //! All responses are GeoJSON FeatureCollections (except `/status`); errors
 //! are `{"error": "..."}` with a 4xx/5xx status.
 
 mod error;
+mod metrics;
 mod params;
 mod render;
 mod state;
@@ -13,8 +15,9 @@ use std::time::Instant;
 
 use axum::Router;
 use axum::extract::rejection::QueryRejection;
-use axum::extract::{Query, State};
-use axum::response::Json;
+use axum::extract::{Query, RawQuery, Request, State};
+use axum::middleware::{self, Next};
+use axum::response::{IntoResponse, Json, Response};
 use axum::routing::get;
 use geors_index::NearestRequest;
 use serde::{Deserialize, Serialize};
@@ -23,7 +26,7 @@ use tower_http::trace::TraceLayer;
 use tracing::debug;
 
 pub use error::ApiError;
-use params::{LookupParams, PointParams, SearchParams};
+use params::{ContainsParams, LookupParams, PointParams, SearchParams};
 pub use state::{AppState, DataConfig, LoadInfo, spawn_watcher};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -59,7 +62,10 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/reverse", get(reverse))
         .route("/nearest", get(nearest))
         .route("/lookup", get(lookup))
+        .route("/contains", get(contains))
         .route("/status", get(status))
+        .route("/metrics", get(metrics))
+        .layer(middleware::from_fn_with_state(state.clone(), track))
         .with_state(state)
         .layer(TraceLayer::new_for_http());
     if cors {
@@ -67,6 +73,27 @@ pub fn router(state: Arc<AppState>) -> Router {
     } else {
         router
     }
+}
+
+/// Count every request for `/metrics`.
+async fn track(State(state): State<Arc<AppState>>, req: Request, next: Next) -> Response {
+    let path = req.uri().path().to_string();
+    let t = Instant::now();
+    let response = next.run(req).await;
+    state
+        .metrics
+        .record(&path, response.status().as_u16(), t.elapsed());
+    response
+}
+
+async fn metrics(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    (
+        [(
+            axum::http::header::CONTENT_TYPE,
+            "text/plain; version=0.0.4; charset=utf-8",
+        )],
+        state.metrics.render(&state),
+    )
 }
 
 /// Engine calls are blocking (mmap + tantivy); keep them off the async workers.
@@ -82,11 +109,13 @@ type GeoJson = Result<Json<geojson::FeatureCollection>, ApiError>;
 
 async fn search(
     State(state): State<Arc<AppState>>,
+    RawQuery(raw): RawQuery,
     params: Result<Query<SearchParams>, QueryRejection>,
 ) -> GeoJson {
     let Query(params) = params?;
     let out = params.output()?;
-    let req = params.into_request(&state.config)?;
+    let mut req = params.into_request(&state.config)?;
+    req.tags = params::osm_tags(raw.as_deref())?;
     let t = Instant::now();
     let fc = blocking(move || {
         let hits = state.engine().search(&req)?;
@@ -99,21 +128,25 @@ async fn search(
 
 async fn reverse(
     State(state): State<Arc<AppState>>,
+    RawQuery(raw): RawQuery,
     params: Result<Query<PointParams>, QueryRejection>,
 ) -> GeoJson {
     let Query(params) = params?;
     let out = params.output()?;
-    let req = params.into_reverse(&state.config)?;
+    let mut req = params.into_reverse(&state.config)?;
+    req.tags = params::osm_tags(raw.as_deref())?;
     run_nearest(state, req, out).await
 }
 
 async fn nearest(
     State(state): State<Arc<AppState>>,
+    RawQuery(raw): RawQuery,
     params: Result<Query<PointParams>, QueryRejection>,
 ) -> GeoJson {
     let Query(params) = params?;
     let out = params.output()?;
-    let req = params.into_nearest(&state.config)?;
+    let mut req = params.into_nearest(&state.config)?;
+    req.tags = params::osm_tags(raw.as_deref())?;
     run_nearest(state, req, out).await
 }
 
@@ -134,6 +167,20 @@ async fn lookup(
     let (ids, countries) = params.into_ids(&state.config)?;
     blocking(move || {
         let hits = state.engine().lookup(&ids, &countries)?;
+        Ok(Json(render::collection(&hits, &out)))
+    })
+    .await
+}
+
+async fn contains(
+    State(state): State<Arc<AppState>>,
+    params: Result<Query<ContainsParams>, QueryRejection>,
+) -> GeoJson {
+    let Query(params) = params?;
+    let out = params.output()?;
+    let (point, countries, layers) = params.into_query()?;
+    blocking(move || {
+        let hits = state.engine().containing(point, &countries, &layers)?;
         Ok(Json(render::collection(&hits, &out)))
     })
     .await

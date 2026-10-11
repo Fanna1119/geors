@@ -24,3 +24,8 @@ ctr = ["centre", "center"]
 ext = ["extension"]
 nth = ["north"]
 sth = ["south"]
+
+# Phrases: a word may stand for several.
+nyc = ["new york city"]
+usa = ["united states"]
+uk = ["united kingdom"]

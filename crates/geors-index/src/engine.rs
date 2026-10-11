@@ -24,6 +24,7 @@ use tracing::{debug, info};
 use crate::bitset::BitSet;
 use crate::partition::Partition;
 use crate::synonyms::Synonyms;
+use crate::tag_filter::TagFilter;
 use crate::text::{self, ParsedQuery};
 use crate::{EngineError, IndexError};
 
@@ -44,6 +45,8 @@ pub struct SearchRequest {
     pub limit: usize,
     /// Treat the last query word as a prefix (search-as-you-type).
     pub autocomplete: bool,
+    /// OSM key / value filter (`osm_tag`).
+    pub tags: TagFilter,
 }
 
 /// Nearest places to a point (used by `/nearest` and `/reverse`).
@@ -54,6 +57,8 @@ pub struct NearestRequest {
     pub countries: Vec<String>,
     pub layers: Vec<Layer>,
     pub limit: usize,
+    /// OSM key / value filter (`osm_tag`).
+    pub tags: TagFilter,
 }
 
 /// A ranked result with its document loaded.
@@ -305,6 +310,7 @@ impl Engine {
                     countries: req.countries.clone(),
                     layers: req.layers.clone(),
                     limit,
+                    tags: req.tags.clone(),
                 }),
                 (None, None) => Err(EngineError::BadRequest(
                     "provide a query 'q', a location ('lat'/'lon'), or a 'bbox'".into(),
@@ -313,7 +319,13 @@ impl Engine {
         };
 
         let parts = self.select(&req.countries)?;
-        let fetch = (limit * 5).clamp(20, 200);
+        // A category filter is applied to the loaded documents (the text
+        // index has no OSM tags), so it needs a larger candidate set.
+        let fetch = if req.tags.is_empty() {
+            (limit * 5).clamp(20, 200)
+        } else {
+            (limit * 50).clamp(200, 2000)
+        };
         // Partitions are independent, so one search can use all cores. That
         // cuts latency on a quiet server, but when many searches run at once
         // the cores are already busy and splitting each one only adds
@@ -348,6 +360,21 @@ impl Engine {
             if slack > 0 && parsed.tokens.len() < 2 {
                 break;
             }
+            // Exact phase: skip partitions lacking one of the typed words
+            // (most of them, for a query naming a city, on a continent).
+            let filters: Vec<(usize, Option<Arc<BitSet>>)> = if phase == 0 {
+                filters
+                    .iter()
+                    .filter(|(pi, _)| {
+                        self.partitions[*pi]
+                            .text
+                            .may_match_exact(&parsed, &self.synonyms)
+                    })
+                    .cloned()
+                    .collect()
+            } else {
+                filters.clone()
+            };
             // Merged in partition order, so results do not depend on timing.
             // A partition returns each place at most once, and later phases
             // start from an empty list, so no duplicate check is needed.
@@ -398,18 +425,26 @@ impl Engine {
         cands.truncate(fetch);
 
         let mut hits = self.load(cands, req.focus)?;
+        hits.retain(|h| req.tags.matches(&h.place.osm_key, &h.place.osm_value));
         let mut analyzer = self.analyzer.clone();
         for hit in &mut hits {
-            let boost = hit
+            let names: Vec<Vec<String>> = hit
                 .place
                 .all_names()
+                .map(|n| text::tokenize(&mut analyzer, n))
+                .collect();
+            let boost = names
+                .iter()
                 .map(|n| {
-                    let name_tokens = text::tokenize(&mut analyzer, n);
                     self.ranking
-                        .name_match(&parsed.tokens, &name_tokens, parsed.last_is_prefix)
+                        .name_match(&parsed.tokens, n, parsed.last_is_prefix)
                 })
                 .fold(1.0f32, f32::max);
-            hit.score *= boost;
+            let context = context_tokens(hit, &mut analyzer);
+            let echo =
+                self.ranking
+                    .city_echo(&parsed.tokens, &names, &context, parsed.last_is_prefix);
+            hit.score *= boost * echo;
         }
         hits.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(Ordering::Equal));
         Ok(dedup(hits, limit))
@@ -454,6 +489,9 @@ impl Engine {
                 if !req.layers.is_empty() && !req.layers.contains(&rec.layer) {
                     continue;
                 }
+                if !tags_match(part, &rec, &req.tags) {
+                    continue;
+                }
                 let distance_m = req.focus.map(|c| part.distance(&rec, c));
                 if let (Some(d), Some(r)) = (distance_m, req.radius_m)
                     && d > r
@@ -482,6 +520,62 @@ impl Engine {
     /// The R-tree yields approximate neighbours; the k-th best exact distance
     /// among them bounds the answer, so a second, exact pass over that radius
     /// gives the correct result.
+    /// Areas whose polygon contains `point` (boundaries and `place=*`
+    /// areas: layers locality to country), most specific first. Polygons
+    /// are the stored, simplified outlines (about 1 m for small areas, tens
+    /// of metres for countries), so points right on a border may differ
+    /// from the exact boundary.
+    pub fn containing(
+        &self,
+        point: LonLat,
+        countries: &[String],
+        layers: &[Layer],
+    ) -> Result<Vec<Hit>, EngineError> {
+        let mut found: Vec<(Layer, f64, Candidate)> = Vec::new();
+        for pi in self.select(countries)? {
+            let part = &self.partitions[pi];
+            if !part.meta.bbox.contains(point) {
+                continue;
+            }
+            for id in part.areas_at(point)? {
+                let Some(rec) = part.record(id) else { continue };
+                let area = rec.layer >= Layer::Locality
+                    && (layers.is_empty() || layers.contains(&rec.layer));
+                if !area {
+                    continue;
+                }
+                let polygons = part.polygons(&rec);
+                if polygons
+                    .iter()
+                    .any(|rings| geors_core::geom::polygon_contains(rings, point))
+                {
+                    let b = polygons
+                        .iter()
+                        .flatten()
+                        .flatten()
+                        .fold(BBox::empty(), |mut b, p| {
+                            b.extend(*p);
+                            b
+                        });
+                    let size = (b.max_lon - b.min_lon) * (b.max_lat - b.min_lat);
+                    found.push((
+                        rec.layer,
+                        size,
+                        Candidate {
+                            part: pi,
+                            id,
+                            score: 0.0,
+                            distance_m: Some(0.0),
+                        },
+                    ));
+                }
+            }
+        }
+        // Most specific first: lowest layer, then smallest area.
+        found.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.total_cmp(&b.1)));
+        self.load(found.into_iter().map(|(_, _, c)| c).collect(), Some(point))
+    }
+
     pub fn nearest(&self, req: &NearestRequest) -> Result<Vec<Hit>, EngineError> {
         let limit = req.limit.max(1);
         let p = req.point;
@@ -512,7 +606,10 @@ impl Engine {
             let part = &self.partitions[pi];
             for (id, _) in part.neighbors_lower_bound(p, limit * 2, bound(&best))? {
                 let Some(rec) = part.record(id) else { continue };
-                if !passes(rec.layer) || best.iter().any(|b| b.1 == pi && b.2 == id) {
+                if !passes(rec.layer)
+                    || best.iter().any(|b| b.1 == pi && b.2 == id)
+                    || !tags_match(part, &rec, &req.tags)
+                {
                     continue;
                 }
                 let d = part.distance(&rec, p);
@@ -546,7 +643,7 @@ impl Engine {
                         continue;
                     }
                     let Some(rec) = part.record(id) else { continue };
-                    if !passes(rec.layer) {
+                    if !passes(rec.layer) || !tags_match(part, &rec, &req.tags) {
                         continue;
                     }
                     visited += 1;
@@ -630,6 +727,37 @@ impl Engine {
             .collect::<Result<_, _>>()
             .map_err(EngineError::from)
     }
+}
+
+/// Whether a place passes the OSM tag filter (decodes its document only
+/// when there is a filter).
+fn tags_match(part: &Partition, rec: &geors_core::storage::PlaceRecord, tags: &TagFilter) -> bool {
+    tags.is_empty()
+        || part
+            .doc(rec, false)
+            .is_ok_and(|d| tags.matches(&d.osm_key, &d.osm_value))
+}
+
+/// Words of a place's address context: the names (all languages) of its
+/// admin units, and its `addr:city`.
+fn context_tokens(hit: &Hit, analyzer: &mut TextAnalyzer) -> Vec<String> {
+    let units = hit
+        .place
+        .parents
+        .iter()
+        .filter_map(|&i| hit.partition.admins.get(i as usize));
+    let mut out = Vec::new();
+    for unit in units {
+        for n in std::iter::once(&unit.name).chain(unit.names.values()) {
+            out.extend(text::tokenize(analyzer, n));
+        }
+    }
+    if let Some(city) = &hit.place.city {
+        out.extend(text::tokenize(analyzer, city));
+    }
+    out.sort_unstable();
+    out.dedup();
+    out
 }
 
 /// A conservative lower bound (metres) on the distance from `p` to any

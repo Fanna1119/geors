@@ -1,5 +1,8 @@
 # German. Abbreviations in addresses and names -> full words.
 
+# Partitions of German-speaking countries (incl. South Tyrol, East Belgium).
+countries = ["de", "at", "ch", "li", "lu", "be", "it"]
+
 [words]
 str = ["strasse"]
 pl = ["platz"]

@@ -274,6 +274,9 @@ curl 'localhost:2322/search?q=restaurant&lat=47.141&lon=9.521&radius=300&limit=5
 # Bounding box: min_lon,min_lat,max_lon,max_lat
 curl 'localhost:2322/search?q=hotel&bbox=1.50,42.50,1.54,42.52'
 
+# Category filter (Photon syntax): only cafes and bakeries
+curl 'localhost:2322/search?q=vaduz&osm_tag=amenity:cafe&osm_tag=shop:bakery'
+
 # Country and layer filters
 curl 'localhost:2322/search?q=hotel&country=AD'
 curl 'localhost:2322/search?q=landstrasse&layers=street'
@@ -299,6 +302,12 @@ curl 'localhost:2322/lookup?osm_ids=N1932181216,W28712148'
 
 # Loaded partitions, data generation, source/update state
 curl 'localhost:2322/status'
+
+# Which areas contain this point: district < city < county < state < country
+curl 'localhost:2322/contains?lat=48.1374&lon=11.5755'
+
+# Prometheus metrics
+curl 'localhost:2322/metrics'
 ```
 
 ## API
@@ -317,6 +326,7 @@ errors. All endpoints accept `lang` and `geometry=point|full`.
 | `bbox`         | Hard filter: `min_lon,min_lat,max_lon,max_lat`.                             |
 | `country`      | ISO 3166-1 alpha-2 code(s), comma-separated (`DE`, `li,at`).               |
 | `layers`       | Comma-separated: `house, poi, street, locality, district, city, county, state, country`. |
+| `osm_tag`      | Category filter (Photon syntax): `amenity`, `amenity:cafe`, `:cafe`; a leading `!` excludes (`!amenity:parking`). Repeat it or separate with commas: places matching any include and no exclude. |
 | `limit`        | Defaults to 10, maximum 50 (configurable).                                  |
 | `lang`         | Language for names, such as `en` or `de`. Falls back to the default name.   |
 | `autocomplete` | Defaults to `true`. Treats the last word as a prefix unless the query ends with a space. |
@@ -329,14 +339,15 @@ first.
 ### `GET /reverse`
 
 `lat`, `lon` (required), `radius` (default 1000 m), `limit` (default 1),
-`layers` (default `house,poi,street,locality`), `country`, `lang`, `geometry`.
+`layers` (default `house,poi,street,locality`), `osm_tag`, `country`, `lang`,
+`geometry`.
 Returns the closest places within the radius. For streets, the distance is
 measured to the street's line geometry, not to its centre.
 
 ### `GET /nearest`
 
 `lat`, `lon` (required), `limit` (default 5), `radius` (optional cap),
-`layers`, `country`, `lang`, `geometry`. Returns the exact k nearest places at
+`layers`, `osm_tag`, `country`, `lang`, `geometry`. Returns the exact k nearest places at
 any distance.
 
 ### `GET /lookup`
@@ -344,6 +355,25 @@ any distance.
 `osm_ids=N123,W456,R789` (required, up to `max_limit` ids), `country`, `lang`,
 `geometry`. Results come back in request order; unknown ids are skipped. A
 merged street can be found by the id of any of its OSM way segments.
+
+### `GET /contains`
+
+`lat`, `lon` (required), `layers` (area layers only: `locality`, `district`,
+`city`, `county`, `state`, `country`), `country`, `lang`, `geometry`. All
+areas whose polygon contains the point, most specific first, e.g.
+Marienplatz < Altstadt-Lehel < München < Oberbayern < Bayern < Deutschland.
+Uses the stored outlines, simplified by about 1 m (small areas) up to tens
+of metres (countries), so a point right on a border can land on either side.
+The first request per country builds a small index of its areas (Germany:
+under 2 s); later ones take about a millisecond.
+
+### `GET /metrics`
+
+Prometheus text format: per endpoint `geors_requests_total`,
+`geors_request_errors_total` (4xx/5xx) and the latency histogram
+`geors_request_duration_seconds`; plus `geors_partitions`, `geors_places`
+per country, `geors_data_loaded_timestamp_seconds` and `geors_build_info`
+(version, data generation).
 
 ### Feature properties
 
@@ -384,12 +414,21 @@ suffix rules (`kerkstr` → `kerkstraat`) are **data, not code**:
   the binary at build time, so adding a language means adding a file. The
   test suite validates each file; see [`synonyms/README.md`](synonyms/README.md)
   for the format.
+- **Per country:** each file lists the countries whose partitions use it
+  (German: de, at, ch, li, lu, be, it; English: everywhere), so in South
+  Africa `hauptstr` expands to *hauptstraat* (Afrikaans) and `st` to
+  *street* / *saint*, without the German *strasse* and *sankt*.
+  `everywhere = true` in the config applies every language everywhere.
+- **Phrases:** a word may stand for several (`olv` → *onze lieve vrouw*,
+  `nyc` → *new york city*); a place matches when all of them occur in one
+  field.
 - **Configuration:** the `[synonyms]` section of the server config can
   restrict the built-in languages (`languages = ["de", "en"]`), load extra
   rule files from a directory (`dir = ...`), and add inline rules
   (`[synonyms.words]`, `[synonyms.suffixes]`).
-- **Checking rules:** `geors synonyms <words...> [-c geors.toml]` shows how
-  words expand, for example `kerkstr  ->  kerkstraat, kerkstrasse`.
+- **Checking rules:** `geors synonyms <words...> [-c geors.toml] [--country
+  de]` shows how words expand, for example `kerkstr  ->  kerkstraat,
+  kerkstrasse`.
 
 ```sh
 geors serve --config geors.toml
@@ -540,6 +579,12 @@ bench/           load, accuracy and ambiguity benchmarks (wrk + Python)
    named highways (`street`), named amenities/shops/tourism/… (`poi`), and
    `addr:housenumber` (`house`). Each place also gets an importance prior from
    its layer, place type, population and wikidata.
+   **House-number interpolation:** an `addr:interpolation` line
+   (`odd`/`even`/`all`) between numbered address nodes stands for the
+   numbers in between; they become `house` places (`osm_key`
+   `addr:interpolation`) spread evenly along the line, between each pair of
+   numbered nodes on the same street. South Africa: 42 k houses from 3.6 k
+   lines.
 3. **Geometry**: streets keep simplified line geometry, used for exact reverse
    distances and for `geometry=full`. Areas keep simplified polygons with holes;
    the tolerance scales with the area's size (~1 m for buildings, tens of

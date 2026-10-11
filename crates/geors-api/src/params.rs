@@ -2,7 +2,7 @@
 
 use geors_core::geom::{BBox, LonLat};
 use geors_core::{Layer, OsmType, normalize_country_code};
-use geors_index::{NearestRequest, SearchRequest};
+use geors_index::{NearestRequest, SearchRequest, TagFilter};
 use serde::Deserialize;
 
 use crate::render::Output;
@@ -33,6 +33,39 @@ pub struct PointParams {
     pub country: Option<String>,
     pub lang: Option<String>,
     pub geometry: Option<String>,
+}
+
+/// `/contains`: which areas contain a point.
+#[derive(Debug, Deserialize)]
+pub struct ContainsParams {
+    pub lat: Option<f64>,
+    pub lon: Option<f64>,
+    pub layers: Option<String>,
+    pub country: Option<String>,
+    pub lang: Option<String>,
+    pub geometry: Option<String>,
+}
+
+impl ContainsParams {
+    pub fn output(&self) -> Result<Output, ApiError> {
+        output(&self.lang, &self.geometry)
+    }
+
+    /// The point, country filter and area layers (locality .. country).
+    pub fn into_query(self) -> Result<(LonLat, Vec<String>, Vec<Layer>), ApiError> {
+        let layers = layers(&self.layers)?;
+        if let Some(l) = layers.iter().find(|l| **l < Layer::Locality) {
+            return Err(ApiError::bad_request(format!(
+                "'{}' is not an area layer (locality, district, city, county, state, country)",
+                l.as_str()
+            )));
+        }
+        Ok((
+            required_point(self.lat, self.lon)?,
+            countries(&self.country)?,
+            layers,
+        ))
+    }
 }
 
 pub type OsmIds = Vec<(OsmType, i64)>;
@@ -102,6 +135,16 @@ impl LookupParams {
         }
         Ok((ids, countries(&self.country)?))
     }
+}
+
+/// `osm_tag` filters from the raw query string: repeated (Photon style,
+/// `osm_tag=amenity:cafe&osm_tag=!amenity:parking`) or comma-separated.
+pub fn osm_tags(raw: Option<&str>) -> Result<TagFilter, ApiError> {
+    let values: Vec<String> = form_urlencoded::parse(raw.unwrap_or("").as_bytes())
+        .filter(|(k, _)| k == "osm_tag")
+        .flat_map(|(_, v)| v.split(',').map(str::to_string).collect::<Vec<_>>())
+        .collect();
+    TagFilter::parse(values.iter().map(String::as_str)).map_err(ApiError::bad_request)
 }
 
 fn point(lat: Option<f64>, lon: Option<f64>) -> Result<Option<LonLat>, ApiError> {
@@ -210,6 +253,7 @@ impl SearchParams {
             layers: layers(&self.layers)?,
             limit: limit(self.limit, cfg.default_limit, cfg)?,
             autocomplete: self.autocomplete.unwrap_or(true),
+            tags: TagFilter::default(),
         })
     }
 }
@@ -232,6 +276,7 @@ impl PointParams {
             countries: countries(&self.country)?,
             layers,
             limit: limit(self.limit, 1, cfg)?,
+            tags: TagFilter::default(),
         })
     }
 
@@ -243,6 +288,7 @@ impl PointParams {
             countries: countries(&self.country)?,
             layers: layers(&self.layers)?,
             limit: limit(self.limit, 5, cfg)?,
+            tags: TagFilter::default(),
         })
     }
 }
@@ -272,6 +318,30 @@ mod tests {
         assert_eq!(r.countries, vec!["li", "at"]);
         assert_eq!(r.layers, vec![Layer::House, Layer::Street]);
         assert_eq!(r.radius_m, Some(500.0));
+    }
+
+    #[test]
+    fn contains_params() {
+        let parse = |q: &str| {
+            let p: ContainsParams = serde_urlencoded::from_str(q).unwrap();
+            p.into_query()
+        };
+        let (p, _, layers) = parse("lat=47.14&lon=9.52&layers=city,country").unwrap();
+        assert_eq!((p.lat, layers.len()), (47.14, 2));
+        assert!(parse("lat=47.14&lon=9.52&layers=house").is_err());
+        assert!(parse("lat=47.14").is_err());
+    }
+
+    #[test]
+    fn osm_tag_values() {
+        let f = osm_tags(Some(
+            "q=x&osm_tag=amenity:cafe&osm_tag=!amenity:parking,shop",
+        ))
+        .unwrap();
+        assert!(f.matches("amenity", "cafe") && f.matches("shop", "bakery"));
+        assert!(!f.matches("amenity", "parking") && !f.matches("highway", "primary"));
+        assert!(osm_tags(Some("q=x")).unwrap().is_empty());
+        assert!(osm_tags(Some("osm_tag=%3A")).is_err());
     }
 
     #[test]

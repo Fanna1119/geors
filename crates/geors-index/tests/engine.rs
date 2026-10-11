@@ -184,6 +184,7 @@ fn nearest_matches_brute_force() {
         for layers in [vec![], vec![Layer::House]] {
             let hits = engine
                 .nearest(&NearestRequest {
+                    tags: Default::default(),
                     point: p,
                     max_distance_m: None,
                     countries: vec!["li".into()],
@@ -221,6 +222,7 @@ fn reverse_uses_line_geometry() {
     let p = LonLat::new(9.55, 47.1009);
     let hits = engine
         .nearest(&NearestRequest {
+            tags: Default::default(),
             point: p,
             max_distance_m: Some(200.0),
             countries: vec![],
@@ -332,4 +334,183 @@ fn walk(root: &std::path::Path) -> Vec<std::path::PathBuf> {
         out.push(p);
     }
     out
+}
+
+#[test]
+fn words_written_together_are_split() {
+    let dir = tempfile::tempdir().unwrap();
+    let names = [
+        "Karl-Marx-Allee",
+        "Erich-Heckel-Strasse",
+        "Raiffeisenbank",
+        "Raiffeisen-Volksbank",
+        "Marktplatz",
+    ];
+    let places: Vec<Place> = names
+        .iter()
+        .enumerate()
+        .map(|(i, n)| place(i as i64 + 1, Layer::Street, Some(n), 9.5 + i as f64 * 0.01, 47.1))
+        .collect();
+    let admins = vec![AdminUnit {
+        layer: Layer::Country,
+        name: "Liechtenstein".into(),
+        names: Default::default(),
+    }];
+    write_partition_from_places(dir.path(), "li", None, "test", &places, admins).unwrap();
+    let engine = Engine::open(dir.path(), &[], EngineConfig::default()).unwrap();
+    let first = |q: &str| search(&engine, |r| r.query = Some(q.into())).into_iter().next();
+    // Not the last word, the last word, and a word still being typed.
+    assert_eq!(first("karlmarx allee").as_deref(), Some("Karl-Marx-Allee"));
+    assert_eq!(first("karlmarxallee").as_deref(), Some("Karl-Marx-Allee"));
+    assert_eq!(first("erichheckelstr").as_deref(), Some("Erich-Heckel-Strasse"));
+    // The start of a real word is not split: "raiffeisen" + "ban…" would
+    // also match Raiffeisen-Volksbank.
+    assert_eq!(
+        search(&engine, |r| r.query = Some("raiffeisenban".into())),
+        vec!["Raiffeisenbank"]
+    );
+    // Unrelated words do not combine into matches.
+    assert_eq!(first("markthecke"), None);
+}
+
+#[test]
+fn partitions_without_a_typed_word_are_skipped_safely() {
+    let (_d, engine, _) = fixture();
+    // "vaduz" is in both partitions, "andorra" only in one: the other is
+    // skipped in the exact phase, and the result is the same as without.
+    assert_eq!(
+        search(&engine, |r| r.query = Some("vaduz andorra".into()))[0],
+        "Vaduz Andorra"
+    );
+    // A word only reachable through an abbreviation, a split, or as a
+    // house number still matches.
+    assert_eq!(
+        search(&engine, |r| r.query = Some("hauptstr. park".into()))[0],
+        "Hauptstrasse Park"
+    );
+    assert_eq!(
+        search(&engine, |r| r.query = Some("hauptstrassepark p".into()))[0],
+        "Hauptstrasse Park"
+    );
+    // Misspelled: no partition has it exactly, the typo phase still runs.
+    assert_eq!(
+        search(&engine, |r| r.query = Some("kunstmusem liechtenstein".into()))
+            .first()
+            .map(String::as_str),
+        Some("Kunstmuseum")
+    );
+}
+
+#[test]
+fn other_scripts_match_in_latin_letters() {
+    let dir = tempfile::tempdir().unwrap();
+    let places = vec![
+        place(1, Layer::Poi, Some("Кафе Москва"), 9.50, 47.1),
+        place(2, Layer::Poi, Some("Αθήνα Taverna"), 9.51, 47.1),
+        place(3, Layer::Poi, Some("Hotel Kiev"), 9.52, 47.1),
+    ];
+    let admins = vec![AdminUnit {
+        layer: Layer::Country,
+        name: "Liechtenstein".into(),
+        names: Default::default(),
+    }];
+    write_partition_from_places(dir.path(), "li", None, "test", &places, admins).unwrap();
+    let engine = Engine::open(dir.path(), &[], EngineConfig::default()).unwrap();
+    let first = |q: &str| search(&engine, |r| r.query = Some(q.into())).into_iter().next();
+    // Latin query, name in another script: the name is shown as is.
+    assert_eq!(first("kafe moskva").as_deref(), Some("Кафе Москва"));
+    assert_eq!(first("mosk").as_deref(), Some("Кафе Москва"));
+    assert_eq!(first("athena").as_deref(), Some("Αθήνα Taverna"));
+    // A query in another script also matches Latin names.
+    assert_eq!(first("Киев").as_deref(), Some("Hotel Kiev"));
+}
+
+#[test]
+fn phrase_synonyms() {
+    let dir = tempfile::tempdir().unwrap();
+    let admins = vec![AdminUnit {
+        layer: Layer::Country,
+        name: "België".into(),
+        names: Default::default(),
+    }];
+    let mut basilica = place(1, Layer::Poi, Some("Onze Lieve Vrouw Basiliek"), 4.40, 51.2);
+    basilica.country_code = Some("BE".into());
+    write_partition_from_places(dir.path(), "be", None, "test", &[basilica], admins).unwrap();
+    let engine = Engine::open(dir.path(), &[], EngineConfig::default()).unwrap();
+    // Dutch rules apply in Belgium: "olv" -> "onze lieve vrouw". A lone
+    // word has no missing-word fallback, so only the phrase can match.
+    let olv = |q: &str| search(&engine, |r| r.query = Some(q.into()));
+    assert_eq!(olv("olv"), vec!["Onze Lieve Vrouw Basiliek"]);
+    assert!(olv("xyz").is_empty());
+}
+
+#[test]
+fn areas_containing_a_point() {
+    let dir = tempfile::tempdir().unwrap();
+    let square = |a: f64, b: f64| {
+        vec![vec![
+            LonLat::new(a, a + 40.0),
+            LonLat::new(b, a + 40.0),
+            LonLat::new(b, b + 40.0),
+            LonLat::new(a, b + 40.0),
+            LonLat::new(a, a + 40.0),
+        ]]
+    };
+    let area = |id: i64, layer: Layer, name: &str, poly: Vec<Vec<LonLat>>| {
+        let mut p = place(id, layer, Some(name), (poly[0][0].lon + poly[0][1].lon) / 2.0, poly[0][0].lat);
+        p.osm_type = OsmType::Relation;
+        p.extent = Some(BBox::new(poly[0][0].lon, poly[0][0].lat, poly[0][2].lon, poly[0][2].lat));
+        p.polygons = vec![poly];
+        p
+    };
+    let mut big = area(1, Layer::State, "Big", square(0.0, 10.0));
+    // A hole: points in it are outside the state.
+    big.polygons[0].push(square(4.0, 5.0)[0].clone());
+    let places = vec![
+        big,
+        area(2, Layer::City, "Small", square(1.0, 3.0)),
+        area(3, Layer::City, "Elsewhere", square(20.0, 30.0)),
+        place(4, Layer::Poi, Some("Cafe"), 2.0, 42.0),
+    ];
+    let admins = vec![AdminUnit {
+        layer: Layer::Country,
+        name: "Testland".into(),
+        names: Default::default(),
+    }];
+    write_partition_from_places(dir.path(), "li", None, "test", &places, admins).unwrap();
+    let engine = Engine::open(dir.path(), &[], EngineConfig::default()).unwrap();
+    let names = |lon: f64, lat: f64, layers: &[Layer]| -> Vec<String> {
+        engine
+            .containing(LonLat::new(lon, lat), &[], layers)
+            .unwrap()
+            .into_iter()
+            .map(|h| h.place.name.unwrap_or_default())
+            .collect()
+    };
+    // Most specific first; only areas (not the cafe at the same spot).
+    assert_eq!(names(2.0, 42.0, &[]), vec!["Small", "Big"]);
+    assert_eq!(names(2.0, 42.0, &[Layer::State]), vec!["Big"]);
+    assert_eq!(names(4.5, 44.5, &[]), Vec::<String>::new(), "in the hole");
+    assert_eq!(names(8.0, 48.0, &[]), vec!["Big"]);
+    assert!(names(15.0, 55.0, &[]).is_empty());
+}
+
+#[test]
+fn osm_tag_filter() {
+    let (_d, engine, _) = fixture();
+    let tags = |v: &[&str]| geors_index::TagFilter::parse(v.iter().copied()).unwrap();
+    let names = |q: Option<&str>, t: &[&str]| {
+        search(&engine, |r| {
+            r.query = q.map(str::to_string);
+            r.focus = Some(LonLat::new(9.52, 47.14));
+            r.tags = tags(t);
+        })
+    };
+    // Every fixture place is amenity=cafe.
+    assert!(!names(Some("shop"), &["amenity:cafe"]).is_empty());
+    assert!(names(Some("shop"), &["!amenity"]).is_empty());
+    assert!(names(Some("shop"), &["shop"]).is_empty());
+    // Spatial-only search and nearest apply it too.
+    assert!(!names(None, &[":cafe"]).is_empty());
+    assert!(names(None, &["amenity:bar"]).is_empty());
 }

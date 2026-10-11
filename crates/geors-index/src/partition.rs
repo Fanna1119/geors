@@ -8,7 +8,7 @@ use geors_core::doc;
 use geors_core::geom::{self, LonLat};
 use geors_core::geom::{f32_down, f32_up};
 use geors_core::storage::{self, FORMAT_VERSION, GeomKind, PartitionMeta, PlaceRecord};
-use geors_core::{AdminUnit, BBox, Place};
+use geors_core::{AdminUnit, BBox, Layer, Place};
 use memmap2::Mmap;
 
 use crate::IndexError;
@@ -20,6 +20,16 @@ enum Blob {
     Empty,
 }
 
+/// Queries read index files at random. Without this hint, Linux reads
+/// ahead around every page fault (up to `read_ahead_kb`, 8 MB in Docker
+/// Desktop's VM), so a search touching a few hundred scattered pages read
+/// gigabytes and evicted the cache it was building. Only matters once the
+/// index is larger than the page cache.
+pub(crate) fn advise_random(map: &Mmap) {
+    #[cfg(unix)]
+    let _ = map.advise(memmap2::Advice::Random);
+}
+
 impl Blob {
     fn open(path: &Path) -> Result<Self, IndexError> {
         let file = File::open(path)
@@ -29,7 +39,9 @@ impl Blob {
         }
         // SAFETY: partition files are written once and never modified in
         // place; imports swap whole directories.
-        Ok(Blob::Mapped(unsafe { Mmap::map(&file)? }))
+        let map = unsafe { Mmap::map(&file)? };
+        advise_random(&map);
+        Ok(Blob::Mapped(map))
     }
 
     fn bytes(&self) -> &[u8] {
@@ -59,6 +71,17 @@ pub struct Partition {
     docs: Blob,
     geom: Blob,
     spatial: Blob,
+    /// Areas (places with a polygon, layers locality..country) indexed by
+    /// their polygon's extent, built on first use (`/contains`). The main
+    /// R-tree holds only centres and lines, so it cannot answer "which
+    /// areas contain this point".
+    areas: std::sync::OnceLock<Option<AreaTree>>,
+}
+
+/// See [`Partition::areas_at`].
+struct AreaTree {
+    ids: Vec<u32>,
+    tree: geo_index::rtree::RTree<f64>,
 }
 
 impl Partition {
@@ -77,11 +100,12 @@ impl Partition {
         let admins = serde_json::from_slice(&std::fs::read(dir.join(storage::ADMIN_FILE))?)?;
         let tags = serde_json::from_slice(&std::fs::read(dir.join(storage::TAGS_FILE))?)?;
         let p = Self {
-            text: TextIndex::open(&dir.join(storage::TEXT_DIR))?,
+            text: TextIndex::open(&dir.join(storage::TEXT_DIR), &meta.country_code)?,
             records: Blob::open(&dir.join(storage::PLACES_FILE))?,
             docs: Blob::open(&dir.join(storage::DOCS_FILE))?,
             geom: Blob::open(&dir.join(storage::GEOM_FILE))?,
             spatial: Blob::open(&dir.join(storage::SPATIAL_FILE))?,
+            areas: std::sync::OnceLock::new(),
             dir: dir.to_path_buf(),
             admins,
             tags,
@@ -190,6 +214,60 @@ impl Partition {
     }
 
     /// Ids of places whose bbox intersects `bbox`.
+    /// Areas whose polygon extent contains `p` (candidates for an exact
+    /// point-in-polygon test).
+    pub fn areas_at(&self, p: geors_core::LonLat) -> Result<Vec<u32>, IndexError> {
+        use geo_index::rtree::{RTreeBuilder, RTreeIndex, sort::HilbertSort};
+        let areas = self.areas.get_or_init(|| {
+            let layers: Vec<Layer> = Layer::ALL
+                .into_iter()
+                .filter(|l| *l >= Layer::Locality)
+                .collect();
+            let candidates = self.text.ids_in_layers(&layers).ok()?;
+            let mut ids = Vec::new();
+            let mut boxes = Vec::new();
+            for id in candidates {
+                let Some(rec) = self.record(id) else { continue };
+                if rec.geom_kind != GeomKind::Polygons {
+                    continue;
+                }
+                // The stored extent; decoding every polygon would take
+                // seconds on a large partition.
+                let extent = self.doc(&rec, false).ok().and_then(|d| d.extent);
+                let b = match extent {
+                    Some(b) => b,
+                    None => {
+                        let mut b = BBox::empty();
+                        for point in self.polygons(&rec).iter().flatten().flatten() {
+                            b.extend(*point);
+                        }
+                        b
+                    }
+                };
+                ids.push(id);
+                boxes.push(b);
+            }
+            if ids.is_empty() {
+                return None;
+            }
+            let mut builder = RTreeBuilder::<f64>::new(ids.len() as u32);
+            for b in &boxes {
+                builder.add(b.min_lon, b.min_lat, b.max_lon, b.max_lat);
+            }
+            Some(AreaTree {
+                ids,
+                tree: builder.finish::<HilbertSort>(),
+            })
+        });
+        Ok(areas.as_ref().map_or_else(Vec::new, |a| {
+            a.tree
+                .search(p.lon, p.lat, p.lon, p.lat)
+                .into_iter()
+                .map(|i| a.ids[i as usize])
+                .collect()
+        }))
+    }
+
     pub fn search_bbox(&self, bbox: &BBox) -> Result<Vec<u32>, IndexError> {
         if !bbox.intersects(&self.meta.bbox) {
             return Ok(Vec::new());

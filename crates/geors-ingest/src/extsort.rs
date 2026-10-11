@@ -68,6 +68,12 @@ impl<T: Pod + Ord + Send> ExternalSorter<T> {
     }
 
     pub fn push(&mut self, record: T) -> io::Result<()> {
+        if self.buffer.len() == self.buffer.capacity() {
+            // Grow by doubling, but never past `capacity`: plain doubling
+            // could allocate almost twice the buffer budget.
+            let want = (self.buffer.len() * 2).clamp(1024, self.capacity);
+            self.buffer.reserve_exact(want - self.buffer.len());
+        }
         self.buffer.push(record);
         self.count += 1;
         if self.buffer.len() >= self.capacity {
@@ -236,6 +242,10 @@ mod tests {
             seed ^= seed << 17;
             let v = (seed % 5_000) as i64 - 2_500;
             s.push(v).unwrap();
+            assert!(
+                s.buffer.capacity() <= s.capacity,
+                "buffer stays within budget"
+            );
             want.push(v);
         }
         want.sort();

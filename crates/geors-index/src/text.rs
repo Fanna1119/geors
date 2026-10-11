@@ -4,6 +4,7 @@
 //! Everything needed to render or rank a hit lives in the partition's own
 //! record/doc files, which keeps the index small.
 
+use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -108,6 +109,27 @@ pub fn schema() -> (Schema, Fields) {
 }
 
 /// Lowercasing, accent folding word tokenizer ("Städtle-Straße" -> stadtle, strasse).
+/// Whether `c` is a Latin letter (or not a letter at all).
+fn is_latin(c: char) -> bool {
+    !c.is_alphabetic() || c < '\u{0250}' || ('\u{1E00}'..='\u{1EFF}').contains(&c)
+}
+
+/// `text` in Latin letters, if it contains letters of another script
+/// ("Москва" -> "Moskva", "Αθήνα" -> "Athena"). `None` for Latin text:
+/// accents are folded by the analyzer already.
+pub fn transliterate(text: &str) -> Option<String> {
+    if text.chars().all(is_latin) {
+        return None;
+    }
+    // Apostrophes mark soft signs and aspiration ("Belarus'", "t`bilisi");
+    // as separators they would split words.
+    let latin: String = deunicode::deunicode(text)
+        .chars()
+        .filter(|c| !matches!(c, '\'' | '`' | '"'))
+        .collect();
+    (!latin.trim().is_empty()).then_some(latin)
+}
+
 pub fn analyzer() -> TextAnalyzer {
     TextAnalyzer::builder(SimpleTokenizer::default())
         .filter(RemoveLongFilter::limit(40))
@@ -155,6 +177,15 @@ pub fn tokenize(analyzer: &mut TextAnalyzer, text: &str) -> Vec<String> {
 pub fn osm_key(t: OsmType, id: i64) -> String {
     format!("{}{id}", t.as_str())
 }
+
+/// Shortest word a compound may be split into (see `split_compound`).
+const MIN_COMPOUND_PART: usize = 3;
+/// Most words a compound may be split into.
+const MAX_COMPOUND_PARTS: usize = 3;
+/// Most alternative splits of one word that are searched.
+const MAX_SPLITS: usize = 4;
+/// Known words this long are split too (see `token_clause`).
+const SPLIT_KNOWN_FROM: usize = 10;
 
 /// tantivy needs at least this much indexing memory per thread.
 const MIN_THREAD_BUDGET: usize = 15 * 1024 * 1024;
@@ -225,17 +256,26 @@ impl TextIndexWriter {
             seen.insert(name.to_lowercase());
             doc.add_text(f.name, name);
         }
-        for name in place.all_names() {
+        // A place without a Latin name is searchable in Latin letters too
+        // ("Москва" as "moskva"). Places that have one (often among many
+        // translations) need nothing more: accents are folded anyway.
+        let latin: Vec<String> = if place.all_names().any(|n| transliterate(n).is_none()) {
+            Vec::new()
+        } else {
+            place.all_names().filter_map(transliterate).collect()
+        };
+        for name in place.all_names().chain(latin.iter().map(String::as_str)) {
             if seen.insert(name.to_lowercase()) {
                 doc.add_text(f.alt_names, name);
             }
         }
-        let grams = edge_ngrams(&mut self.analyzer, place.all_names(), MAX_PREFIX);
+        let names = || place.all_names().chain(latin.iter().map(String::as_str));
+        let grams = edge_ngrams(&mut self.analyzer, names(), MAX_PREFIX);
         if !grams.is_empty() {
             doc.add_text(f.name_prefix, grams);
         }
         if place.layer >= Layer::City || place.importance >= MAJOR_IMPORTANCE {
-            let short = edge_ngrams(&mut self.analyzer, place.all_names(), SHORT_PREFIX);
+            let short = edge_ngrams(&mut self.analyzer, names(), SHORT_PREFIX);
             if !short.is_empty() {
                 doc.add_text(f.major_prefix, short);
             }
@@ -249,6 +289,16 @@ impl TextIndexWriter {
             doc.add_text(f.address, value);
         }
         for value in context {
+            doc.add_text(f.address, value);
+        }
+        for value in place
+            .street
+            .iter()
+            .chain(place.city.iter())
+            .map(String::as_str)
+            .chain(context.iter().copied())
+            .filter_map(transliterate)
+        {
             doc.add_text(f.address, value);
         }
         if let Some(hn) = &place.housenumber {
@@ -363,18 +413,28 @@ impl Directory for ReadOnlyDirectory {
 pub struct TextIndex {
     reader: IndexReader,
     fields: Fields,
+    /// Lowercase country code of the partition: selects synonym rules.
+    country: String,
 }
 
 impl TextIndex {
-    pub fn open(dir: &Path) -> tantivy::Result<Self> {
-        let index = Index::open(ReadOnlyDirectory(MmapDirectory::open(dir)?))?;
+    /// `country`: the partition's country code (selects synonym rules).
+    pub fn open(dir: &Path, country: &str) -> tantivy::Result<Self> {
+        // Random access, as for the other index files (see
+        // `partition::advise_random`).
+        let mmap = MmapDirectory::open_with_madvice(dir, tantivy::directory::Advice::Random)?;
+        let index = Index::open(ReadOnlyDirectory(mmap))?;
         register_tokenizers(&index);
         let (_, fields) = schema();
         let reader = index
             .reader_builder()
             .reload_policy(ReloadPolicy::Manual)
             .try_into()?;
-        Ok(Self { reader, fields })
+        Ok(Self {
+            reader,
+            fields,
+            country: country.to_ascii_lowercase(),
+        })
     }
 
     /// One query word: the best matching field counts (dis-max), so a POI
@@ -390,19 +450,45 @@ impl TextIndex {
     /// prefix-match address context (city, country). A lone word is
     /// assumed to be a name; matching "deutsc" against the "Deutschland" in
     /// every German place's context would touch the whole partition.
+    /// `relaxed`: a later phase (exact matching found nothing).
     fn token_clause(
         &self,
         token: &str,
         prefix: bool,
         context: bool,
         fuzzy: bool,
+        relaxed: bool,
         synonyms: &Synonyms,
     ) -> Box<dyn Query> {
         let f = self.fields;
         let distance = if fuzzy { fuzzy_distance(token) } else { 0 };
-        let expansions = synonyms.expand(token);
+        let mut expansions = synonyms.expand(token, Some(&self.country));
+        // A word in another script also matches its Latin form.
+        if let Some(latin) = transliterate(token) {
+            let mut a = analyzer();
+            if let [one] = tokenize(&mut a, &latin).as_slice()
+                && one != token
+            {
+                expansions.push(one.clone());
+            }
+        }
         let chars = token.chars().count();
         let numeric = token.chars().any(|c| c.is_ascii_digit());
+        // Unknown words; long known ones only in a later phase
+        // ("unterdenlinden" may be some shop's name while the street is
+        // "Unter den Linden"), so they never crowd out exact matches.
+        // A word still being typed is not split while it is the start of
+        // a real word ("raiffeisenban" -> "Raiffeisenbank", not
+        // "Raiffeisen-Volksbank").
+        let splits = if numeric
+            || chars < 2 * MIN_COMPOUND_PART
+            || ((!relaxed || chars < SPLIT_KNOWN_FROM) && self.is_known(token))
+            || (prefix && self.starts_name_word(token))
+        {
+            Vec::new()
+        } else {
+            self.split_compound(token, prefix)
+        };
         let mut per_field: Vec<Box<dyn Query>> = Vec::new();
         for (field, boost) in [
             (f.name, NAME_BOOST),
@@ -420,11 +506,30 @@ impl TextIndex {
                 boost,
             );
             for exp in &expansions {
-                let t = Term::from_field_text(field, exp);
-                push(
-                    Box::new(TermQuery::new(t, IndexRecordOption::WithFreqs)),
-                    boost * 0.9,
-                );
+                let words: Vec<&str> = exp.split(' ').collect();
+                if let [word] = words.as_slice() {
+                    let t = Term::from_field_text(field, word);
+                    push(
+                        Box::new(TermQuery::new(t, IndexRecordOption::WithFreqs)),
+                        boost * 0.9,
+                    );
+                } else {
+                    // A phrase ("olv" -> "onze lieve vrouw"): all its words
+                    // in this field, scored as their average.
+                    let terms: Vec<Box<dyn Query>> = words
+                        .iter()
+                        .map(|w| {
+                            Box::new(TermQuery::new(
+                                Term::from_field_text(field, w),
+                                IndexRecordOption::WithFreqs,
+                            )) as Box<dyn Query>
+                        })
+                        .collect();
+                    push(
+                        Box::new(BooleanQuery::intersection(terms)),
+                        boost * 0.9 / words.len() as f32,
+                    );
+                }
             }
             let is_name = field == f.name;
             if prefix && is_name {
@@ -452,6 +557,35 @@ impl TextIndex {
                 push(
                     Box::new(FuzzyTermQuery::new_prefix(term.clone(), 0, true)),
                     boost * 0.6,
+                );
+            }
+            // Words written together ("karlmarx" for "Karl-Marx"): all
+            // parts in this field.
+            for parts in splits.iter().filter(|_| field != f.housenumber) {
+                let term = |p: &str| -> Box<dyn Query> {
+                    Box::new(TermQuery::new(
+                        Term::from_field_text(field, p),
+                        IndexRecordOption::WithFreqs,
+                    ))
+                };
+                let mut terms: Vec<Box<dyn Query>> =
+                    parts[..parts.len() - 1].iter().map(|p| term(p)).collect();
+                let last = &parts[parts.len() - 1];
+                terms.push(if prefix && (is_name || field == f.alt_names) {
+                    // Names and alternative names share the n-gram field.
+                    let grams = TermQuery::new(
+                        Term::from_field_text(f.name_prefix, last),
+                        IndexRecordOption::Basic,
+                    );
+                    Box::new(BooleanQuery::union(vec![term(last), Box::new(grams)]))
+                } else {
+                    term(last)
+                });
+                // The parts' scores add up: average them instead, so a split
+                // never outscores a real one-word match.
+                push(
+                    Box::new(BooleanQuery::intersection(terms)),
+                    boost * 0.8 / parts.len() as f32,
                 );
             }
             // Typos: only names and address, never house numbers.
@@ -487,8 +621,9 @@ impl TextIndex {
                 let prefix = q.last_is_prefix && i + 1 == n;
                 // Words that exist as typed need no typo expansion (the
                 // expensive part): only fuzz the unknown ones.
+                let relaxed = fuzzy;
                 let fuzzy = fuzzy && (prefix || !self.is_known(t));
-                self.token_clause(t, prefix, n > 1, fuzzy, synonyms)
+                self.token_clause(t, prefix, n > 1, fuzzy, relaxed, synonyms)
             })
             .collect();
         let required = n.saturating_sub(slack).max(1);
@@ -515,6 +650,122 @@ impl TextIndex {
                 Box::new(ConstScoreQuery::new(Box::new(layer_filter), 0.0)),
             ),
         ]))
+    }
+
+    /// Ways to split a word into words that are in the index (at most
+    /// [`MAX_COMPOUND_PARTS`], each at least [`MIN_COMPOUND_PART`] letters):
+    /// "karlmarx" -> "karl marx", "erichheckelstrasse" -> "erich heckel
+    /// strasse". Several splits can exist ("erich heckelstrasse" as well);
+    /// up to [`MAX_SPLITS`] are returned, fewest and longest parts first.
+    /// With `prefix` (still being typed), the last part may be the start of
+    /// a name word ("erichheckelstr").
+    fn split_compound(&self, token: &str, prefix: bool) -> Vec<Vec<String>> {
+        let bounds: Vec<usize> = token
+            .char_indices()
+            .map(|(i, _)| i)
+            .chain([token.len()])
+            .collect();
+        let n = bounds.len() - 1;
+        // known[a][b]: chars a..b form a word in the index (memoised; most
+        // pairs are never asked).
+        let mut known: HashMap<(usize, usize), bool> = HashMap::new();
+        let mut is_word = |a: usize, b: usize| {
+            *known.entry((a, b)).or_insert_with(|| {
+                let part = &token[bounds[a]..bounds[b]];
+                self.is_known(part) || (prefix && b == n && self.starts_name_word(part))
+            })
+        };
+        let mut found: Vec<Vec<(usize, usize)>> = Vec::new();
+        let mut stack: Vec<(usize, Vec<(usize, usize)>)> = vec![(0, Vec::new())];
+        while let Some((start, parts)) = stack.pop() {
+            if start == n {
+                if parts.len() > 1 {
+                    found.push(parts);
+                }
+                continue;
+            }
+            if parts.len() == MAX_COMPOUND_PARTS {
+                continue;
+            }
+            for end in start + MIN_COMPOUND_PART..=n {
+                if n - end != 0 && n - end < MIN_COMPOUND_PART {
+                    continue;
+                }
+                if is_word(start, end) {
+                    let mut next = parts.clone();
+                    next.push((start, end));
+                    stack.push((end, next));
+                }
+            }
+        }
+        let shortest = |p: &Vec<(usize, usize)>| p.iter().map(|(a, b)| b - a).min().unwrap_or(0);
+        found.sort_by_key(|p| (p.len(), std::cmp::Reverse(shortest(p)), p.clone()));
+        found.truncate(MAX_SPLITS);
+        found
+            .into_iter()
+            .map(|p| {
+                p.into_iter()
+                    .map(|(a, b)| token[bounds[a]..bounds[b]].to_string())
+                    .collect()
+            })
+            .collect()
+    }
+
+    /// Whether the exact phase of `q` can match anything here. Every fully
+    /// typed word must then occur in some field: as typed, as an
+    /// abbreviation expansion, or split into words that do. Lets the engine
+    /// skip partitions without, say, "wien" before building the query.
+    /// Mirrors `token_clause` with `fuzzy` and `relaxed` off; the word being
+    /// typed is not checked.
+    pub fn may_match_exact(&self, q: &ParsedQuery, synonyms: &Synonyms) -> bool {
+        let n = q.tokens.len();
+        q.tokens.iter().enumerate().all(|(i, t)| {
+            if q.last_is_prefix && i + 1 == n {
+                return true;
+            }
+            self.is_known(t)
+                || self.is_housenumber(t)
+                || synonyms
+                    .expand(t, Some(&self.country))
+                    .iter()
+                    .any(|e| e.split(' ').all(|w| self.is_known(w)))
+                || (t.chars().count() >= 2 * MIN_COMPOUND_PART
+                    && !t.chars().any(|c| c.is_ascii_digit())
+                    && !self.split_compound(t, false).is_empty())
+        })
+    }
+
+    fn is_housenumber(&self, token: &str) -> bool {
+        self.reader
+            .searcher()
+            .doc_freq(&Term::from_field_text(self.fields.housenumber, token))
+            .is_ok_and(|n| n > 0)
+    }
+
+    /// Whether some name word starts with `part`.
+    fn starts_name_word(&self, part: &str) -> bool {
+        let searcher = self.reader.searcher();
+        if part.chars().count() <= MAX_PREFIX {
+            // Edge n-gram field: one lookup.
+            return searcher
+                .doc_freq(&Term::from_field_text(self.fields.name_prefix, part))
+                .is_ok_and(|n| n > 0);
+        }
+        // Longer than the n-grams: the first term at or after `part`.
+        let bytes = part.as_bytes();
+        searcher.segment_readers().iter().any(|seg| {
+            [self.fields.name, self.fields.alt_names]
+                .into_iter()
+                .any(|field| {
+                    seg.inverted_index(field)
+                        .ok()
+                        .and_then(|ii| {
+                            let mut terms = ii.terms().range().ge(bytes).into_stream().ok()?;
+                            Some(terms.advance() && terms.key().starts_with(bytes))
+                        })
+                        .unwrap_or(false)
+                })
+        })
     }
 
     /// Whether `token` occurs as a word in any name or address.
@@ -548,6 +799,25 @@ impl TextIndex {
 
     /// Run `query`, keeping only place ids in `filter` (if any), ranking by
     /// `scorer(place_id, text_score)`. Returns `(score, place_id)` best first.
+    /// Every place id in one of `layers`.
+    pub fn ids_in_layers(&self, layers: &[Layer]) -> tantivy::Result<Vec<u32>> {
+        let query = BooleanQuery::new_multiterms_query(
+            layers
+                .iter()
+                .map(|l| Term::from_field_text(self.fields.layer, l.as_str()))
+                .collect(),
+        );
+        let all = self.reader.searcher().num_docs() as usize;
+        let scorer = Arc::new(|_: u32, s: Score| s);
+        let mut ids: Vec<u32> = self
+            .search(&query, None, scorer, all)?
+            .into_iter()
+            .map(|(_, id)| id)
+            .collect();
+        ids.sort_unstable();
+        Ok(ids)
+    }
+
     pub fn search(
         &self,
         query: &dyn Query,

@@ -26,6 +26,24 @@ impl LonLat {
 }
 
 /// Great-circle distance in metres.
+/// Whether `p` lies inside a polygon given as rings (outer ring and holes,
+/// in any order): even-odd ray casting over all rings, so holes work.
+pub fn polygon_contains(rings: &[Vec<LonLat>], p: LonLat) -> bool {
+    let mut inside = false;
+    for ring in rings {
+        for w in ring.windows(2) {
+            let (a, b) = (w[0], w[1]);
+            if (a.lat > p.lat) != (b.lat > p.lat) {
+                let x = a.lon + (p.lat - a.lat) / (b.lat - a.lat) * (b.lon - a.lon);
+                if p.lon < x {
+                    inside = !inside;
+                }
+            }
+        }
+    }
+    inside
+}
+
 pub fn haversine(a: LonLat, b: LonLat) -> f64 {
     let (lat1, lat2) = (a.lat.to_radians(), b.lat.to_radians());
     let dlat = lat2 - lat1;
@@ -211,6 +229,23 @@ pub fn from_e7(v: i32) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn polygon_with_hole() {
+        let sq = |a: f64, b: f64| {
+            vec![
+                LonLat::new(a, a),
+                LonLat::new(b, a),
+                LonLat::new(b, b),
+                LonLat::new(a, b),
+                LonLat::new(a, a),
+            ]
+        };
+        let rings = vec![sq(0.0, 10.0), sq(4.0, 6.0)];
+        assert!(polygon_contains(&rings, LonLat::new(2.0, 2.0)));
+        assert!(!polygon_contains(&rings, LonLat::new(5.0, 5.0)));
+        assert!(!polygon_contains(&rings, LonLat::new(11.0, 5.0)));
+    }
 
     #[test]
     fn haversine_known_distance() {

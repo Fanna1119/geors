@@ -7,6 +7,7 @@
 pub mod doc;
 pub mod geom;
 pub mod layer;
+pub mod mem;
 pub mod model;
 pub mod spill;
 pub mod storage;

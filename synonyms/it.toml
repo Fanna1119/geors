@@ -1,5 +1,8 @@
 # Italian.
 
+# Partitions of Italy, San Marino, Vatican City and Switzerland.
+countries = ["it", "sm", "va", "ch"]
+
 [words]
 pza = ["piazza"]
 mt = ["monte"]

@@ -1,5 +1,8 @@
 # Spanish.
 
+# Partitions of Spanish-speaking countries.
+countries = ["es", "ad", "mx", "ar", "co", "cl", "pe", "ve", "ec", "gt", "cu", "bo", "do", "hn", "py", "sv", "ni", "cr", "pa", "uy", "pr", "gq"]
+
 [words]
 av = ["avenida"]
 avda = ["avenida"]
@@ -8,3 +11,6 @@ pza = ["plaza"]
 pl = ["plaza"]
 mt = ["monte"]
 sta = ["santa"]
+
+# Phrases: a word may stand for several.
+eeuu = ["estados unidos"]

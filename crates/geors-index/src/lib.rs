@@ -5,11 +5,13 @@ pub mod bitset;
 pub mod engine;
 pub mod partition;
 pub mod synonyms;
+pub mod tag_filter;
 pub mod text;
 pub mod writer;
 
 pub use engine::{Address, Engine, EngineConfig, Hit, NearestRequest, SearchRequest, Shape};
 pub use partition::Partition;
+pub use tag_filter::TagFilter;
 pub use writer::{PartitionInput, write_partition, write_partition_from_places};
 
 #[derive(Debug, thiserror::Error)]

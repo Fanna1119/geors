@@ -8,7 +8,7 @@ use geo_index::rtree::{RTree, RTreeBuilder, RTreeIndex};
 use geors_core::Layer;
 use geors_core::geom::{self, BBox, LonLat};
 
-use crate::pip::BandedPolygon;
+use crate::pip::{PolygonStore, StoredPolygon};
 
 /// Entries per cache generation (~24 bytes each, so at most ~50 MB total).
 const CACHE_CAP: usize = 1 << 20;
@@ -21,7 +21,8 @@ pub struct Area {
     pub layer: Layer,
     /// admin_level, or 11 for `place=*` areas (more specific than boundaries).
     pub rank: u8,
-    pub polygon: BandedPolygon,
+    /// Arrays in the owning [`AreaIndex`]'s store.
+    pub polygon: StoredPolygon,
     pub bbox: BBox,
     pub country_code: Option<String>,
 }
@@ -69,11 +70,14 @@ impl CellCache {
 /// an exact test. This keeps large country polygons cheap.
 pub struct AreaIndex {
     pub areas: Vec<Area>,
+    store: PolygonStore,
     tree: Option<RTree<f64>>,
 }
 
 impl AreaIndex {
-    pub fn new(areas: Vec<Area>) -> Self {
+    /// `store` holds the areas' polygons; it is finished (mapped) here.
+    pub fn new(areas: Vec<Area>, mut store: PolygonStore) -> std::io::Result<Self> {
+        store.finish()?;
         let tree = (!areas.is_empty()).then(|| {
             let mut b = RTreeBuilder::<f64>::new(areas.len() as u32);
             for a in &areas {
@@ -86,7 +90,7 @@ impl AreaIndex {
             }
             b.finish::<HilbertSort>()
         });
-        Self { areas, tree }
+        Ok(Self { areas, store, tree })
     }
 
     fn cell_state(&self, cache: &mut CellCache, cx: i32, cy: i32, area: u32) -> Cell {
@@ -102,9 +106,9 @@ impl AreaIndex {
             (cy + 1) as f64 * CELL,
         );
         let center = cell.center();
-        let state = if a.polygon.crosses(&cell) {
+        let state = if self.store.crosses(&a.polygon, &cell) {
             Cell::Mixed
-        } else if a.polygon.contains(center.lon, center.lat) {
+        } else if self.store.contains(&a.polygon, center.lon, center.lat) {
             Cell::Inside
         } else {
             Cell::Outside
@@ -126,7 +130,9 @@ impl AreaIndex {
                 Cell::Outside => false,
                 // Boundary-inclusive: a point on a border (boundary stones,
                 // border crossings) belongs to the area instead of none.
-                Cell::Mixed => self.areas[i as usize].polygon.contains(p.lon, p.lat),
+                Cell::Mixed => self
+                    .store
+                    .contains(&self.areas[i as usize].polygon, p.lon, p.lat),
             })
             .map(|i| i as usize)
             .collect()
