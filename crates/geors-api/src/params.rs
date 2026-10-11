@@ -2,7 +2,7 @@
 
 use geors_core::geom::{BBox, LonLat};
 use geors_core::{Layer, OsmType, normalize_country_code};
-use geors_index::{NearestRequest, SearchRequest};
+use geors_index::{NearestRequest, SearchRequest, TagFilter};
 use serde::Deserialize;
 
 use crate::render::Output;
@@ -137,6 +137,16 @@ impl LookupParams {
     }
 }
 
+/// `osm_tag` filters from the raw query string: repeated (Photon style,
+/// `osm_tag=amenity:cafe&osm_tag=!amenity:parking`) or comma-separated.
+pub fn osm_tags(raw: Option<&str>) -> Result<TagFilter, ApiError> {
+    let values: Vec<String> = form_urlencoded::parse(raw.unwrap_or("").as_bytes())
+        .filter(|(k, _)| k == "osm_tag")
+        .flat_map(|(_, v)| v.split(',').map(str::to_string).collect::<Vec<_>>())
+        .collect();
+    TagFilter::parse(values.iter().map(String::as_str)).map_err(ApiError::bad_request)
+}
+
 fn point(lat: Option<f64>, lon: Option<f64>) -> Result<Option<LonLat>, ApiError> {
     match (lat, lon) {
         (None, None) => Ok(None),
@@ -243,6 +253,7 @@ impl SearchParams {
             layers: layers(&self.layers)?,
             limit: limit(self.limit, cfg.default_limit, cfg)?,
             autocomplete: self.autocomplete.unwrap_or(true),
+            tags: TagFilter::default(),
         })
     }
 }
@@ -265,6 +276,7 @@ impl PointParams {
             countries: countries(&self.country)?,
             layers,
             limit: limit(self.limit, 1, cfg)?,
+            tags: TagFilter::default(),
         })
     }
 
@@ -276,6 +288,7 @@ impl PointParams {
             countries: countries(&self.country)?,
             layers: layers(&self.layers)?,
             limit: limit(self.limit, 5, cfg)?,
+            tags: TagFilter::default(),
         })
     }
 }
@@ -317,6 +330,18 @@ mod tests {
         assert_eq!((p.lat, layers.len()), (47.14, 2));
         assert!(parse("lat=47.14&lon=9.52&layers=house").is_err());
         assert!(parse("lat=47.14").is_err());
+    }
+
+    #[test]
+    fn osm_tag_values() {
+        let f = osm_tags(Some(
+            "q=x&osm_tag=amenity:cafe&osm_tag=!amenity:parking,shop",
+        ))
+        .unwrap();
+        assert!(f.matches("amenity", "cafe") && f.matches("shop", "bakery"));
+        assert!(!f.matches("amenity", "parking") && !f.matches("highway", "primary"));
+        assert!(osm_tags(Some("q=x")).unwrap().is_empty());
+        assert!(osm_tags(Some("osm_tag=%3A")).is_err());
     }
 
     #[test]

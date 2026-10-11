@@ -274,6 +274,9 @@ curl 'localhost:2322/search?q=restaurant&lat=47.141&lon=9.521&radius=300&limit=5
 # Bounding box: min_lon,min_lat,max_lon,max_lat
 curl 'localhost:2322/search?q=hotel&bbox=1.50,42.50,1.54,42.52'
 
+# Category filter (Photon syntax): only cafes and bakeries
+curl 'localhost:2322/search?q=vaduz&osm_tag=amenity:cafe&osm_tag=shop:bakery'
+
 # Country and layer filters
 curl 'localhost:2322/search?q=hotel&country=AD'
 curl 'localhost:2322/search?q=landstrasse&layers=street'
@@ -323,6 +326,7 @@ errors. All endpoints accept `lang` and `geometry=point|full`.
 | `bbox`         | Hard filter: `min_lon,min_lat,max_lon,max_lat`.                             |
 | `country`      | ISO 3166-1 alpha-2 code(s), comma-separated (`DE`, `li,at`).               |
 | `layers`       | Comma-separated: `house, poi, street, locality, district, city, county, state, country`. |
+| `osm_tag`      | Category filter (Photon syntax): `amenity`, `amenity:cafe`, `:cafe`; a leading `!` excludes (`!amenity:parking`). Repeat it or separate with commas: places matching any include and no exclude. |
 | `limit`        | Defaults to 10, maximum 50 (configurable).                                  |
 | `lang`         | Language for names, such as `en` or `de`. Falls back to the default name.   |
 | `autocomplete` | Defaults to `true`. Treats the last word as a prefix unless the query ends with a space. |
@@ -335,14 +339,15 @@ first.
 ### `GET /reverse`
 
 `lat`, `lon` (required), `radius` (default 1000 m), `limit` (default 1),
-`layers` (default `house,poi,street,locality`), `country`, `lang`, `geometry`.
+`layers` (default `house,poi,street,locality`), `osm_tag`, `country`, `lang`,
+`geometry`.
 Returns the closest places within the radius. For streets, the distance is
 measured to the street's line geometry, not to its centre.
 
 ### `GET /nearest`
 
 `lat`, `lon` (required), `limit` (default 5), `radius` (optional cap),
-`layers`, `country`, `lang`, `geometry`. Returns the exact k nearest places at
+`layers`, `osm_tag`, `country`, `lang`, `geometry`. Returns the exact k nearest places at
 any distance.
 
 ### `GET /lookup`

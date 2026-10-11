@@ -184,6 +184,7 @@ fn nearest_matches_brute_force() {
         for layers in [vec![], vec![Layer::House]] {
             let hits = engine
                 .nearest(&NearestRequest {
+                    tags: Default::default(),
                     point: p,
                     max_distance_m: None,
                     countries: vec!["li".into()],
@@ -221,6 +222,7 @@ fn reverse_uses_line_geometry() {
     let p = LonLat::new(9.55, 47.1009);
     let hits = engine
         .nearest(&NearestRequest {
+            tags: Default::default(),
             point: p,
             max_distance_m: Some(200.0),
             countries: vec![],
@@ -491,4 +493,24 @@ fn areas_containing_a_point() {
     assert_eq!(names(4.5, 44.5, &[]), Vec::<String>::new(), "in the hole");
     assert_eq!(names(8.0, 48.0, &[]), vec!["Big"]);
     assert!(names(15.0, 55.0, &[]).is_empty());
+}
+
+#[test]
+fn osm_tag_filter() {
+    let (_d, engine, _) = fixture();
+    let tags = |v: &[&str]| geors_index::TagFilter::parse(v.iter().copied()).unwrap();
+    let names = |q: Option<&str>, t: &[&str]| {
+        search(&engine, |r| {
+            r.query = q.map(str::to_string);
+            r.focus = Some(LonLat::new(9.52, 47.14));
+            r.tags = tags(t);
+        })
+    };
+    // Every fixture place is amenity=cafe.
+    assert!(!names(Some("shop"), &["amenity:cafe"]).is_empty());
+    assert!(names(Some("shop"), &["!amenity"]).is_empty());
+    assert!(names(Some("shop"), &["shop"]).is_empty());
+    // Spatial-only search and nearest apply it too.
+    assert!(!names(None, &[":cafe"]).is_empty());
+    assert!(names(None, &["amenity:bar"]).is_empty());
 }

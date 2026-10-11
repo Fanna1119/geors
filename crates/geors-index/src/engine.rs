@@ -24,6 +24,7 @@ use tracing::{debug, info};
 use crate::bitset::BitSet;
 use crate::partition::Partition;
 use crate::synonyms::Synonyms;
+use crate::tag_filter::TagFilter;
 use crate::text::{self, ParsedQuery};
 use crate::{EngineError, IndexError};
 
@@ -44,6 +45,8 @@ pub struct SearchRequest {
     pub limit: usize,
     /// Treat the last query word as a prefix (search-as-you-type).
     pub autocomplete: bool,
+    /// OSM key / value filter (`osm_tag`).
+    pub tags: TagFilter,
 }
 
 /// Nearest places to a point (used by `/nearest` and `/reverse`).
@@ -54,6 +57,8 @@ pub struct NearestRequest {
     pub countries: Vec<String>,
     pub layers: Vec<Layer>,
     pub limit: usize,
+    /// OSM key / value filter (`osm_tag`).
+    pub tags: TagFilter,
 }
 
 /// A ranked result with its document loaded.
@@ -305,6 +310,7 @@ impl Engine {
                     countries: req.countries.clone(),
                     layers: req.layers.clone(),
                     limit,
+                    tags: req.tags.clone(),
                 }),
                 (None, None) => Err(EngineError::BadRequest(
                     "provide a query 'q', a location ('lat'/'lon'), or a 'bbox'".into(),
@@ -313,7 +319,13 @@ impl Engine {
         };
 
         let parts = self.select(&req.countries)?;
-        let fetch = (limit * 5).clamp(20, 200);
+        // A category filter is applied to the loaded documents (the text
+        // index has no OSM tags), so it needs a larger candidate set.
+        let fetch = if req.tags.is_empty() {
+            (limit * 5).clamp(20, 200)
+        } else {
+            (limit * 50).clamp(200, 2000)
+        };
         // Partitions are independent, so one search can use all cores. That
         // cuts latency on a quiet server, but when many searches run at once
         // the cores are already busy and splitting each one only adds
@@ -413,6 +425,7 @@ impl Engine {
         cands.truncate(fetch);
 
         let mut hits = self.load(cands, req.focus)?;
+        hits.retain(|h| req.tags.matches(&h.place.osm_key, &h.place.osm_value));
         let mut analyzer = self.analyzer.clone();
         for hit in &mut hits {
             let names: Vec<Vec<String>> = hit
@@ -474,6 +487,9 @@ impl Engine {
             for id in part.search_bbox(fb)? {
                 let Some(rec) = part.record(id) else { continue };
                 if !req.layers.is_empty() && !req.layers.contains(&rec.layer) {
+                    continue;
+                }
+                if !tags_match(part, &rec, &req.tags) {
                     continue;
                 }
                 let distance_m = req.focus.map(|c| part.distance(&rec, c));
@@ -590,7 +606,10 @@ impl Engine {
             let part = &self.partitions[pi];
             for (id, _) in part.neighbors_lower_bound(p, limit * 2, bound(&best))? {
                 let Some(rec) = part.record(id) else { continue };
-                if !passes(rec.layer) || best.iter().any(|b| b.1 == pi && b.2 == id) {
+                if !passes(rec.layer)
+                    || best.iter().any(|b| b.1 == pi && b.2 == id)
+                    || !tags_match(part, &rec, &req.tags)
+                {
                     continue;
                 }
                 let d = part.distance(&rec, p);
@@ -624,7 +643,7 @@ impl Engine {
                         continue;
                     }
                     let Some(rec) = part.record(id) else { continue };
-                    if !passes(rec.layer) {
+                    if !passes(rec.layer) || !tags_match(part, &rec, &req.tags) {
                         continue;
                     }
                     visited += 1;
@@ -708,6 +727,15 @@ impl Engine {
             .collect::<Result<_, _>>()
             .map_err(EngineError::from)
     }
+}
+
+/// Whether a place passes the OSM tag filter (decodes its document only
+/// when there is a filter).
+fn tags_match(part: &Partition, rec: &geors_core::storage::PlaceRecord, tags: &TagFilter) -> bool {
+    tags.is_empty()
+        || part
+            .doc(rec, false)
+            .is_ok_and(|d| tags.matches(&d.osm_key, &d.osm_value))
 }
 
 /// Words of a place's address context: the names (all languages) of its

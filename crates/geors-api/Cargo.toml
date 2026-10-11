@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 arc-swap = "1.9.2"
 axum = "0.8.9"
+form_urlencoded = "1.2.2"
 geojson = "1.0.0"
 geors-core = { version = "0.1.0", path = "../geors-core" }
 geors-index = { version = "0.1.0", path = "../geors-index" }

@@ -15,7 +15,7 @@ use std::time::Instant;
 
 use axum::Router;
 use axum::extract::rejection::QueryRejection;
-use axum::extract::{Query, Request, State};
+use axum::extract::{Query, RawQuery, Request, State};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Json, Response};
 use axum::routing::get;
@@ -109,11 +109,13 @@ type GeoJson = Result<Json<geojson::FeatureCollection>, ApiError>;
 
 async fn search(
     State(state): State<Arc<AppState>>,
+    RawQuery(raw): RawQuery,
     params: Result<Query<SearchParams>, QueryRejection>,
 ) -> GeoJson {
     let Query(params) = params?;
     let out = params.output()?;
-    let req = params.into_request(&state.config)?;
+    let mut req = params.into_request(&state.config)?;
+    req.tags = params::osm_tags(raw.as_deref())?;
     let t = Instant::now();
     let fc = blocking(move || {
         let hits = state.engine().search(&req)?;
@@ -126,21 +128,25 @@ async fn search(
 
 async fn reverse(
     State(state): State<Arc<AppState>>,
+    RawQuery(raw): RawQuery,
     params: Result<Query<PointParams>, QueryRejection>,
 ) -> GeoJson {
     let Query(params) = params?;
     let out = params.output()?;
-    let req = params.into_reverse(&state.config)?;
+    let mut req = params.into_reverse(&state.config)?;
+    req.tags = params::osm_tags(raw.as_deref())?;
     run_nearest(state, req, out).await
 }
 
 async fn nearest(
     State(state): State<Arc<AppState>>,
+    RawQuery(raw): RawQuery,
     params: Result<Query<PointParams>, QueryRejection>,
 ) -> GeoJson {
     let Query(params) = params?;
     let out = params.output()?;
-    let req = params.into_nearest(&state.config)?;
+    let mut req = params.into_nearest(&state.config)?;
+    req.tags = params::osm_tags(raw.as_deref())?;
     run_nearest(state, req, out).await
 }
 
