@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+deunicode = "1.6.2"
 geo-index = "0.4.0"
 geors-core = { version = "0.1.0", path = "../geors-core" }
 geors-rank = { version = "0.1.0", path = "../geors-rank" }

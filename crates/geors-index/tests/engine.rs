@@ -398,3 +398,27 @@ fn partitions_without_a_typed_word_are_skipped_safely() {
         Some("Kunstmuseum")
     );
 }
+
+#[test]
+fn other_scripts_match_in_latin_letters() {
+    let dir = tempfile::tempdir().unwrap();
+    let places = vec![
+        place(1, Layer::Poi, Some("Кафе Москва"), 9.50, 47.1),
+        place(2, Layer::Poi, Some("Αθήνα Taverna"), 9.51, 47.1),
+        place(3, Layer::Poi, Some("Hotel Kiev"), 9.52, 47.1),
+    ];
+    let admins = vec![AdminUnit {
+        layer: Layer::Country,
+        name: "Liechtenstein".into(),
+        names: Default::default(),
+    }];
+    write_partition_from_places(dir.path(), "li", None, "test", &places, admins).unwrap();
+    let engine = Engine::open(dir.path(), &[], EngineConfig::default()).unwrap();
+    let first = |q: &str| search(&engine, |r| r.query = Some(q.into())).into_iter().next();
+    // Latin query, name in another script: the name is shown as is.
+    assert_eq!(first("kafe moskva").as_deref(), Some("Кафе Москва"));
+    assert_eq!(first("mosk").as_deref(), Some("Кафе Москва"));
+    assert_eq!(first("athena").as_deref(), Some("Αθήνα Taverna"));
+    // A query in another script also matches Latin names.
+    assert_eq!(first("Киев").as_deref(), Some("Hotel Kiev"));
+}

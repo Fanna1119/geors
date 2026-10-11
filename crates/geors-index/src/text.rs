@@ -109,6 +109,27 @@ pub fn schema() -> (Schema, Fields) {
 }
 
 /// Lowercasing, accent folding word tokenizer ("Städtle-Straße" -> stadtle, strasse).
+/// Whether `c` is a Latin letter (or not a letter at all).
+fn is_latin(c: char) -> bool {
+    !c.is_alphabetic() || c < '\u{0250}' || ('\u{1E00}'..='\u{1EFF}').contains(&c)
+}
+
+/// `text` in Latin letters, if it contains letters of another script
+/// ("Москва" -> "Moskva", "Αθήνα" -> "Athena"). `None` for Latin text:
+/// accents are folded by the analyzer already.
+pub fn transliterate(text: &str) -> Option<String> {
+    if text.chars().all(is_latin) {
+        return None;
+    }
+    // Apostrophes mark soft signs and aspiration ("Belarus'", "t`bilisi");
+    // as separators they would split words.
+    let latin: String = deunicode::deunicode(text)
+        .chars()
+        .filter(|c| !matches!(c, '\'' | '`' | '"'))
+        .collect();
+    (!latin.trim().is_empty()).then_some(latin)
+}
+
 pub fn analyzer() -> TextAnalyzer {
     TextAnalyzer::builder(SimpleTokenizer::default())
         .filter(RemoveLongFilter::limit(40))
@@ -235,17 +256,26 @@ impl TextIndexWriter {
             seen.insert(name.to_lowercase());
             doc.add_text(f.name, name);
         }
-        for name in place.all_names() {
+        // A place without a Latin name is searchable in Latin letters too
+        // ("Москва" as "moskva"). Places that have one (often among many
+        // translations) need nothing more: accents are folded anyway.
+        let latin: Vec<String> = if place.all_names().any(|n| transliterate(n).is_none()) {
+            Vec::new()
+        } else {
+            place.all_names().filter_map(transliterate).collect()
+        };
+        for name in place.all_names().chain(latin.iter().map(String::as_str)) {
             if seen.insert(name.to_lowercase()) {
                 doc.add_text(f.alt_names, name);
             }
         }
-        let grams = edge_ngrams(&mut self.analyzer, place.all_names(), MAX_PREFIX);
+        let names = || place.all_names().chain(latin.iter().map(String::as_str));
+        let grams = edge_ngrams(&mut self.analyzer, names(), MAX_PREFIX);
         if !grams.is_empty() {
             doc.add_text(f.name_prefix, grams);
         }
         if place.layer >= Layer::City || place.importance >= MAJOR_IMPORTANCE {
-            let short = edge_ngrams(&mut self.analyzer, place.all_names(), SHORT_PREFIX);
+            let short = edge_ngrams(&mut self.analyzer, names(), SHORT_PREFIX);
             if !short.is_empty() {
                 doc.add_text(f.major_prefix, short);
             }
@@ -259,6 +289,16 @@ impl TextIndexWriter {
             doc.add_text(f.address, value);
         }
         for value in context {
+            doc.add_text(f.address, value);
+        }
+        for value in place
+            .street
+            .iter()
+            .chain(place.city.iter())
+            .map(String::as_str)
+            .chain(context.iter().copied())
+            .filter_map(transliterate)
+        {
             doc.add_text(f.address, value);
         }
         if let Some(hn) = &place.housenumber {
@@ -415,7 +455,16 @@ impl TextIndex {
     ) -> Box<dyn Query> {
         let f = self.fields;
         let distance = if fuzzy { fuzzy_distance(token) } else { 0 };
-        let expansions = synonyms.expand(token);
+        let mut expansions = synonyms.expand(token);
+        // A word in another script also matches its Latin form.
+        if let Some(latin) = transliterate(token) {
+            let mut a = analyzer();
+            if let [one] = tokenize(&mut a, &latin).as_slice()
+                && one != token
+            {
+                expansions.push(one.clone());
+            }
+        }
         let chars = token.chars().count();
         let numeric = token.chars().any(|c| c.is_ascii_digit());
         // Unknown words; long known ones only in a later phase
