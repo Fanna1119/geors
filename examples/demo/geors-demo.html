@@ -1,0 +1,443 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>geors demo</title>
+  <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@5.6.1/dist/maplibre-gl.css">
+  <style>
+    :root { font: 14px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; background: #0d1620; color: #e6edf3; overflow: hidden; }
+    main { display: grid; grid-template-columns: minmax(0, 1fr) 470px; height: 100vh; }
+    #map { position: relative; }
+    /* Stats bar over the map */
+    #stats { position: absolute; z-index: 5; top: 14px; left: 14px; right: 14px; display: flex; gap: 10px; align-items: stretch; pointer-events: none; }
+    .brand { background: #0d1620e6; border-radius: 10px; padding: 10px 16px; display: flex; flex-direction: column; justify-content: center; }
+    .brand b { font-size: 22px; letter-spacing: .02em; }
+    .brand span { color: #8ea3b5; font-size: 12px; }
+    .stat { background: #0d1620e6; border-radius: 10px; padding: 8px 14px; min-width: 112px; }
+    .stat .v { font: 600 22px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace; color: #fff; }
+    .stat .l { color: #8ea3b5; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; }
+    .stat.hot .v { color: #5ee08a; }
+    /* Scene title */
+    #scene { position: absolute; z-index: 5; left: 14px; bottom: 34px; background: #0d1620eb; border-radius: 12px; padding: 14px 20px; max-width: 70%; transition: opacity .4s; }
+    #scene .t { font-size: 26px; font-weight: 650; }
+    #scene .s { color: #9fb3c4; margin-top: 2px; font-size: 15px; }
+    #scene.hidden { opacity: 0; }
+    /* Typing box for the autocomplete scene */
+    #typing { position: absolute; z-index: 6; top: 110px; left: 50%; transform: translateX(-50%); width: 520px; display: none; }
+    #typing.on { display: block; }
+    #typing .box { background: #fff; color: #18212b; border-radius: 10px; padding: 12px 16px; font-size: 22px; box-shadow: 0 10px 30px #0008; }
+    #typing .box::after { content: "▌"; color: #1769d2; animation: blink 1s steps(1) infinite; }
+    @keyframes blink { 50% { opacity: 0; } }
+    #typing .sugg { background: #fff; color: #18212b; margin-top: 6px; border-radius: 10px; overflow: hidden; box-shadow: 0 10px 30px #0008; }
+    #typing .sugg div { padding: 8px 16px; border-top: 1px solid #edf0f3; display: flex; justify-content: space-between; gap: 10px; }
+    #typing .sugg div:first-child { border-top: 0; background: #eef5ff; }
+    #typing .sugg small { color: #637181; }
+    #typing .ms { margin-top: 6px; text-align: right; font: 600 16px ui-monospace, Menlo, monospace; color: #5ee08a; text-shadow: 0 1px 3px #000; }
+    /* Request log */
+    aside { display: flex; flex-direction: column; border-left: 1px solid #1f2d3a; background: #0a1118; min-height: 0; }
+    aside header { padding: 12px 14px; border-bottom: 1px solid #1f2d3a; display: flex; justify-content: space-between; align-items: baseline; }
+    aside header b { font-size: 15px; }
+    aside header span { color: #8ea3b5; font: 12px ui-monospace, Menlo, monospace; }
+    #log { flex: 1; overflow: hidden; display: flex; flex-direction: column; justify-content: flex-end; padding: 6px 0; font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .row { display: grid; grid-template-columns: 62px 1fr 52px; gap: 8px; padding: 1px 12px; white-space: nowrap; }
+    .row .ep { color: #79b8ff; }
+    .row .ep.rev { color: #d2a8ff; }
+    .row .ep.ac { color: #ffa657; }
+    .row .txt { overflow: hidden; text-overflow: ellipsis; }
+    .row .txt i { color: #8ea3b5; font-style: normal; }
+    .row .ms { text-align: right; color: #5ee08a; }
+    .row .ms.slow { color: #e3b341; }
+    .row .ms.miss { color: #8ea3b5; }
+    .row.new { background: #1b2a38; }
+    .maplibregl-popup-content { background: #0d1620; color: #e6edf3; border-radius: 8px; padding: 8px 12px; font-size: 13px; }
+    .maplibregl-popup-tip { border-top-color: #0d1620 !important; border-bottom-color: #0d1620 !important; }
+    .maplibregl-popup-content b { display: block; }
+    .maplibregl-popup-content .pms { color: #5ee08a; font-family: ui-monospace, Menlo, monospace; }
+  </style>
+</head>
+<body>
+  <main>
+    <div id="map">
+      <div id="stats">
+        <div class="brand"><b>geors</b><span id="dataset">loading…</span></div>
+        <div class="stat"><div class="v" id="sReq">0</div><div class="l">requests</div></div>
+        <div class="stat hot"><div class="v" id="sRate">0</div><div class="l">req / s</div></div>
+        <div class="stat"><div class="v" id="sP50">–</div><div class="l">median ms</div></div>
+        <div class="stat"><div class="v" id="sP99">–</div><div class="l">p99 ms</div></div>
+      </div>
+      <div id="typing"><div class="box" id="typed"></div><div class="sugg" id="sugg"></div><div class="ms" id="typedMs"></div></div>
+      <div id="scene" class="hidden"><div class="t" id="sceneT"></div><div class="s" id="sceneS"></div></div>
+    </div>
+    <aside>
+      <header><b>Requests</b><span id="logInfo">GET http://…</span></header>
+      <div id="log"></div>
+    </aside>
+  </main>
+  <script src="https://unpkg.com/maplibre-gl@5.6.1/dist/maplibre-gl.js"></script>
+  <script src="demo-data.js"></script>
+  <script>
+    // Self-running demo for screen recordings. Data: `make-data.py`.
+    // URL parameters: api (default http://127.0.0.1:2322), autostart=0 to
+    // wait for a click, loop=1 to repeat, scenes=a,b to play only those
+    // (autocomplete, tour, reverse-na, reverse-eu, reverse-as, reverse-world,
+    // search-burst; with no intro or outro), seconds=N for burst length.
+    const params = new URLSearchParams(location.search);
+    const API = (params.get('api') || 'http://127.0.0.1:2322').replace(/\/+$/, '');
+    const D = window.DEMO_DATA;
+    const $ = id => document.getElementById(id);
+    const sleep = ms => new Promise(r => setTimeout(r, ms));
+    const COLORS = { na: '#ff7b72', eu: '#79b8ff', as: '#ffd33d' };
+    $('logInfo').textContent = 'GET ' + API;
+
+    const map = new maplibregl.Map({
+      container: 'map',
+      style: 'https://tiles.openfreemap.org/styles/dark',
+      center: [20, 35], zoom: 1.6, attributionControl: { compact: true },
+      fadeDuration: 0,
+    });
+
+    // --- stats ---------------------------------------------------------------
+    let total = 0;
+    const lat = [];          // recent latencies (ms)
+    const stamps = [];       // completion times, for req/s over the last second
+    function record(ms) {
+      total++;
+      lat.push(ms); if (lat.length > 2000) lat.shift();
+      stamps.push(performance.now());
+    }
+    function pct(p) {
+      if (!lat.length) return null;
+      const s = [...lat].sort((a, b) => a - b);
+      return s[Math.min(s.length - 1, Math.floor(p * s.length))];
+    }
+    setInterval(() => {
+      const now = performance.now();
+      while (stamps.length && stamps[0] < now - 1000) stamps.shift();
+      $('sReq').textContent = total.toLocaleString();
+      $('sRate').textContent = stamps.length.toLocaleString();
+      const p50 = pct(0.5), p99 = pct(0.99);
+      $('sP50').textContent = p50 == null ? '–' : p50.toFixed(1);
+      $('sP99').textContent = p99 == null ? '–' : p99.toFixed(0);
+    }, 200);
+
+    // --- log ---------------------------------------------------------------
+    const MAX_ROWS = 80;
+    const pending = [];
+    function log(kind, text, result, ms) {
+      pending.push({ kind, text, result, ms });
+    }
+    function esc(s) { return String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
+    // Rows are added in batches per animation frame so a burst stays smooth.
+    function flushLog() {
+      const box = $('log');
+      if (pending.length) {
+        const frag = document.createDocumentFragment();
+        box.querySelectorAll('.row.new').forEach(r => r.classList.remove('new'));
+        for (const e of pending.splice(0, 40)) {
+          const row = document.createElement('div');
+          row.className = 'row new';
+          const cls = e.kind === 'reverse' ? 'ep rev' : e.kind === 'type' ? 'ep ac' : 'ep';
+          const label = e.kind === 'reverse' ? '/reverse' : e.kind === 'type' ? '/search' : '/search';
+          const msCls = e.result == null ? 'ms miss' : e.ms > 100 ? 'ms slow' : 'ms';
+          row.innerHTML = `<span class="${cls}">${label}</span><span class="txt">${esc(e.text)} <i>→ ${esc(e.result ?? 'nothing here')}</i></span><span class="${msCls}">${e.ms.toFixed(1)}</span>`;
+          frag.appendChild(row);
+        }
+        box.appendChild(frag);
+        while (box.children.length > MAX_ROWS) box.firstChild.remove();
+      }
+      requestAnimationFrame(flushLog);
+    }
+    requestAnimationFrame(flushLog);
+
+    // --- requests --------------------------------------------------------------
+    function label(f) {
+      const p = f.properties || {};
+      const first = p.name || [p.street, p.housenumber].filter(Boolean).join(' ');
+      const rest = [p.city, p.countrycode].filter(v => v && v !== first);
+      return [first, ...rest].filter(Boolean).join(', ');
+    }
+    // Browsers open at most 6 connections per host, which caps a burst
+    // far below what the server handles. 127.0.0.1 and localhost are the
+    // same server but separate hosts to the browser: bursts use both.
+    const HOSTS = [API];
+    {
+      const u = new URL(API);
+      const other = { '127.0.0.1': 'localhost', localhost: '127.0.0.1' }[u.hostname];
+      if (other) { u.hostname = other; HOSTS.push(u.href.replace(/\/+$/, '')); }
+    }
+    let nextHost = 0;
+    async function get(path, spread = false) {
+      const host = spread ? HOSTS[nextHost++ % HOSTS.length] : API;
+      const t0 = performance.now();
+      const r = await fetch(host + path);
+      const data = await r.json();
+      const ms = performance.now() - t0;
+      record(ms);
+      return { data, ms };
+    }
+    const enc = encodeURIComponent;
+
+    // --- dots on the map ----------------------------------------------------------
+    const dots = { type: 'FeatureCollection', features: [] };
+    let dotsDirty = false;
+    function addDot(lon, lat, region) {
+      dots.features.push({ type: 'Feature', properties: { r: region }, geometry: { type: 'Point', coordinates: [lon, lat] } });
+      if (dots.features.length > 20000) dots.features.shift();
+      dotsDirty = true;
+    }
+    setInterval(() => { if (dotsDirty && map.getSource('dots')) { map.getSource('dots').setData(dots); dotsDirty = false; } }, 120);
+
+    const markers = [];
+    function clearMarkers() { markers.splice(0).forEach(m => m.remove()); }
+    function pin(lon, lat, title, note, region) {
+      const popup = new maplibregl.Popup({ offset: 26, closeButton: false, closeOnClick: false })
+        .setHTML(`<b>${esc(title)}</b><span class="pms">${esc(note)}</span>`);
+      const m = new maplibregl.Marker({ color: COLORS[region] }).setLngLat([lon, lat]).setPopup(popup).addTo(map);
+      m.togglePopup();
+      markers.push(m);
+    }
+
+    // --- scenes -------------------------------------------------------------
+    // Scene start times (seconds since page load), for cutting the video.
+    window.DEMO_MARKS = {};
+    const mark = name => { window.DEMO_MARKS[name] = performance.now() / 1000; };
+    // Wait for the map to finish drawing (tiles loaded), at most `ms`.
+    function idle(ms = 2000) {
+      return Promise.race([new Promise(res => map.once('idle', res)), sleep(ms)]);
+    }
+    async function title(t, s, ms = 0) {
+      $('sceneT').textContent = t; $('sceneS').textContent = s || '';
+      $('scene').classList.remove('hidden');
+      if (ms) await sleep(ms);
+    }
+    function untitle() { $('scene').classList.add('hidden'); }
+    function fly(opts) {
+      return new Promise(res => { map.once('moveend', res); map.flyTo({ essential: true, ...opts }); });
+    }
+    function fit(bounds, ms = 1800) {
+      return new Promise(res => { map.once('moveend', res); map.fitBounds(bounds, { padding: { top: 110, bottom: 60, left: 40, right: 40 }, duration: ms }); });
+    }
+
+    // Search-as-you-type: one request per keystroke.
+    async function typeAndPick(word, region) {
+      $('typing').classList.add('on');
+      $('typed').textContent = ''; $('sugg').innerHTML = ''; $('typedMs').textContent = '';
+      let last = null;
+      for (let i = 1; i <= [...word].length; i++) {
+        const prefix = [...word].slice(0, i).join('');
+        $('typed').textContent = prefix;
+        const { data, ms } = await get(`/search?q=${enc(prefix)}&limit=5`);
+        const feats = data.features || [];
+        $('sugg').innerHTML = feats.map(f => `<div><span>${esc(f.properties.name || label(f))}</span><small>${esc([f.properties.type, f.properties.countrycode].join(' · '))}</small></div>`).join('');
+        $('typedMs').textContent = `${ms.toFixed(1)} ms`;
+        log('type', prefix, feats[0] ? label(feats[0]) : null, ms);
+        last = feats[0];
+        await sleep(170);
+      }
+      await sleep(500);
+      $('typing').classList.remove('on');
+      if (last) {
+        const [lon, lat] = last.geometry.coordinates;
+        await fly({ center: [lon, lat], zoom: 10.5, duration: 1800 });
+        await idle();
+        pin(lon, lat, label(last), 'found while typing', region);
+        await sleep(800);
+      }
+    }
+
+    async function sceneAutocomplete() {
+      mark('autocomplete');
+      await title('Search as you type', 'one request per keystroke, across 105 countries');
+      await fly({ center: [-40, 40], zoom: 1.8, duration: 1200 });
+      const words = [['Rapid City', 'na'], ['München', 'eu'], ['東京', 'as']];
+      for (const [w, r] of words) { await typeAndPick(w, r); clearMarkers(); }
+      untitle();
+    }
+
+    async function sceneTour() {
+      mark('tour');
+      await title('Full addresses', 'North America → Europe → Asia');
+      for (const key of ['na', 'eu', 'as']) {
+        for (const s of D[key].tour.slice(0, 2)) {
+          const { data, ms } = await get(`/search?q=${enc(s.q)}&limit=1`);
+          const f = (data.features || [])[0];
+          log('search', s.q, f ? label(f) : null, ms);
+          if (!f) continue;
+          const [lon, lat] = f.geometry.coordinates;
+          await fly({ center: [lon, lat], zoom: 14.5, duration: 2000, curve: 1.6 });
+          await idle();
+          clearMarkers();
+          pin(lon, lat, label(f), `${ms.toFixed(1)} ms`, key);
+          await sleep(900);
+        }
+      }
+      clearMarkers();
+      untitle();
+    }
+
+    // Many requests at once: `concurrency` in flight, until `seconds` pass.
+    async function burst(items, seconds, concurrency, run) {
+      const end = performance.now() + seconds * 1000;
+      let i = 0;
+      async function worker() {
+        while (performance.now() < end && i < items.length) {
+          const item = items[i++];
+          try { await run(item); } catch (e) { /* keep going */ }
+        }
+      }
+      await Promise.all(Array.from({ length: concurrency }, worker));
+    }
+
+    async function sceneReverse(key, seconds) {
+      mark('reverse-' + key);
+      const c = D[key];
+      await fit(c.bounds);
+      await title(`Reverse geocoding · ${c.name}`, 'what is at this point? nearest address, street or place');
+      await burst(c.points, seconds, 12, async ([lon, lat]) => {
+        const { data, ms } = await get(`/reverse?lat=${lat}&lon=${lon}`, true);
+        const f = (data.features || [])[0];
+        log('reverse', `${lat.toFixed(4)}, ${lon.toFixed(4)}`, f ? label(f) : null, ms);
+        if (f) addDot(f.geometry.coordinates[0], f.geometry.coordinates[1], key);
+      });
+    }
+
+    const WORLD = [[-130, -10], [150, 62]];
+
+    // All three continents at once, interleaved.
+    function interleave(field, n) {
+      const out = [];
+      for (let i = 0; i < n; i++) for (const key of ['na', 'eu', 'as']) {
+        const v = D[key][field][i]; if (v) out.push([v, key]);
+      }
+      return out;
+    }
+
+    async function sceneReverseWorld(seconds) {
+      mark('reverse-world');
+      await fit(WORLD, 1800);
+      await title('Reverse geocoding · three continents at once', 'what is at this point? Asia, Europe and North America in one server');
+      await burst(interleave('points', 6000), seconds, 12, async ([[lon, lat], key]) => {
+        const { data, ms } = await get(`/reverse?lat=${lat}&lon=${lon}`, true);
+        const f = (data.features || [])[0];
+        log('reverse', `${lat.toFixed(4)}, ${lon.toFixed(4)}`, f ? label(f) : null, ms);
+        if (f) addDot(f.geometry.coordinates[0], f.geometry.coordinates[1], key);
+      });
+    }
+
+    async function sceneSearchBurst(seconds) {
+      mark('search-burst');
+      await fit(WORLD, 2200);
+      await title('Text search · three continents at once', 'names, streets and addresses from Asia, Europe and North America');
+      await burst(interleave('searches', 3000), seconds, 12, async ([s, key]) => {
+        const { data, ms } = await get(`/search?q=${enc(s.q)}&limit=1`, true);
+        const f = (data.features || [])[0];
+        log('search', s.q, f ? label(f) : null, ms);
+        if (f) addDot(f.geometry.coordinates[0], f.geometry.coordinates[1], key);
+      });
+    }
+
+    // The first requests after the server starts read the index from disk;
+    // send the scripted ones once, uncounted, so the video shows steady state.
+    async function warmUp() {
+      const qs = [];
+      for (const w of ['Rapid City', 'München', '東京']) {
+        for (let i = 1; i <= [...w].length; i++) qs.push(`/search?q=${enc([...w].slice(0, i).join(''))}&limit=5`);
+      }
+      for (const key of ['na', 'eu', 'as']) for (const s of D[key].tour.slice(0, 2)) qs.push(`/search?q=${enc(s.q)}&limit=1`);
+      await Promise.all(qs.map(q => fetch(API + q).catch(() => null)));
+    }
+
+    // "252 M places · 105 countries · one laptop", from /status.
+    async function dataset() {
+      try {
+        const st = await (await fetch(API + '/status')).json();
+        const places = st.partitions.reduce((s, p) => s + p.places, 0);
+        $('dataset').textContent = `${(places / 1e6).toFixed(0)} M places · ${st.partitions.length} countries · one laptop`;
+        return true;
+      } catch (e) {
+        $('dataset').textContent = 'API not reachable at ' + API;
+        return false;
+      }
+    }
+
+    async function intro() {
+      mark('intro');
+      if (await dataset()) {
+        await title('geors', `${$('dataset').textContent} · OpenStreetMap geocoder in Rust`, 2600);
+      } else {
+        await title('API not reachable', API, 100000);
+      }
+    }
+
+    async function outro() {
+      mark('outro');
+      await fit([[-130, -10], [150, 62]], 1600);
+      const p50 = pct(0.5);
+      await title(`${total.toLocaleString()} requests`, `median ${p50 == null ? '–' : p50.toFixed(1)} ms · single server process`, 3500);
+    }
+
+    const SCENES = {
+      autocomplete: () => sceneAutocomplete(),
+      tour: () => sceneTour(),
+      'reverse-na': () => sceneReverse('na', BURST || 6),
+      'reverse-eu': () => sceneReverse('eu', BURST || 6),
+      'reverse-as': () => sceneReverse('as', BURST || 6),
+      'reverse-world': () => sceneReverseWorld(BURST || 10),
+      'search-burst': () => sceneSearchBurst(BURST || 8),
+    };
+    const BURST = Number(params.get('seconds')) || 0;
+
+    async function play() {
+      await warmUp();
+      const only = (params.get('scenes') || '').split(',').filter(Boolean);
+      if (only.length) {
+        await dataset();
+        // Start zoomed out, as the bursts are; stats show from the start.
+        map.jumpTo({ center: [10, 30], zoom: 1.6 });
+        await idle(3000);
+        for (const name of only) {
+          if (!SCENES[name]) { await title('Unknown scene', name, 3000); continue; }
+          await SCENES[name]();
+        }
+        await sleep(800);
+        mark('end');
+        window.DEMO_DONE = true;
+        return;
+      }
+      await intro();
+      await sceneAutocomplete();
+      await sceneTour();
+      await sceneReverse('na', 6);
+      await sceneReverse('eu', 6);
+      await sceneReverse('as', 6);
+      await sceneSearchBurst(8);
+      await outro();
+      mark('end');
+      window.DEMO_DONE = true;
+      if (params.get('loop') === '1') { location.reload(); }
+    }
+
+    map.on('load', () => {
+      map.addSource('dots', { type: 'geojson', data: dots });
+      map.addLayer({
+        id: 'dots', type: 'circle', source: 'dots',
+        paint: {
+          'circle-radius': ['interpolate', ['linear'], ['zoom'], 2, 1.8, 6, 3, 12, 5],
+          'circle-color': ['match', ['get', 'r'], 'na', COLORS.na, 'eu', COLORS.eu, COLORS.as],
+          'circle-opacity': 0.85,
+        },
+      });
+      if (!D) { title('demo-data.js missing', 'run examples/demo/make-data.py first'); return; }
+      if (params.get('autostart') === '0') {
+        title('Click to start', '');
+        document.body.addEventListener('click', play, { once: true });
+      } else {
+        play();
+      }
+    });
+  </script>
+</body>
+</html>

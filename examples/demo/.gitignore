@@ -1,0 +1,11 @@
+*.gif
+*.mp4
+*.webm
+.palette.png
+.video/
+demo-data.js
+demo.gif
+demo.mp4
+demo.webm
+node_modules/
+package-lock.json
