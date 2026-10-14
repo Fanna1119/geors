@@ -368,21 +368,22 @@ impl Engine {
             if slack > 0 && parsed.tokens.len() < 2 {
                 break;
             }
-            // Exact phase: skip partitions lacking one of the typed words
-            // (most of them, for a query naming a city, on a continent).
-            let filters: Vec<(usize, Option<Arc<BitSet>>)> = if phase == 0 {
-                filters
-                    .iter()
-                    .filter(|(pi, _)| {
-                        self.partitions[*pi]
-                            .text
-                            .may_match_exact(&parsed, &self.synonyms)
-                    })
-                    .cloned()
-                    .collect()
-            } else {
-                filters.clone()
-            };
+            // Skip partitions lacking one of the typed words (most of them,
+            // for a query naming a city, on a continent); later phases
+            // check for misspellings too, which still costs far less than
+            // a fuzzy search.
+            let filters: Vec<(usize, Option<Arc<BitSet>>)> = filters
+                .iter()
+                .filter(|(pi, _)| {
+                    let text = &self.partitions[*pi].text;
+                    if phase == 0 {
+                        text.may_match_exact(&parsed, &self.synonyms)
+                    } else {
+                        text.may_match_relaxed(&parsed, &self.synonyms, slack)
+                    }
+                })
+                .cloned()
+                .collect();
             // Merged in partition order, so results do not depend on timing.
             // A partition returns each place at most once, and later phases
             // start from an empty list, so no duplicate check is needed.

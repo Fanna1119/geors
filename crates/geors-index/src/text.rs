@@ -6,10 +6,11 @@
 
 use std::collections::HashMap;
 use std::path::Path;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, OnceLock};
 
 use geors_core::{Layer, OsmType, Place};
+use levenshtein_automata::{DFA, Distance, LevenshteinAutomatonBuilder};
 use tantivy::collector::{FilterCollector, TopDocs};
 use tantivy::directory::error::{DeleteError, LockError, OpenReadError, OpenWriteError};
 use tantivy::directory::{
@@ -31,6 +32,7 @@ use tantivy::{
     DocId, Index, IndexReader, IndexWriter, ReloadPolicy, Score, SegmentReader, TantivyDocument,
     Term,
 };
+use tantivy_fst::Automaton;
 
 use crate::bitset::BitSet;
 use crate::synonyms::Synonyms;
@@ -353,6 +355,45 @@ fn fuzzy_distance(token: &str) -> u8 {
         0..=3 => 0,
         4..=7 => 1,
         _ => 2,
+    }
+}
+
+/// Levenshtein automaton builders, one per distance (building one takes
+/// milliseconds; the automata for single words are cheap).
+fn levenshtein(distance: u8) -> &'static LevenshteinAutomatonBuilder {
+    static BUILDERS: [OnceLock<LevenshteinAutomatonBuilder>; 3] =
+        [OnceLock::new(), OnceLock::new(), OnceLock::new()];
+    BUILDERS[distance as usize].get_or_init(|| LevenshteinAutomatonBuilder::new(distance, true))
+}
+
+/// A Levenshtein DFA as a term dictionary automaton (as tantivy's fuzzy
+/// query does).
+#[derive(Clone)]
+struct Dfa(Arc<DFA>);
+
+impl Dfa {
+    fn new(dfa: DFA) -> Self {
+        Self(Arc::new(dfa))
+    }
+}
+
+impl Automaton for Dfa {
+    type State = u32;
+
+    fn start(&self) -> u32 {
+        self.0.initial_state()
+    }
+
+    fn is_match(&self, state: &u32) -> bool {
+        matches!(self.0.distance(*state), Distance::Exact(_))
+    }
+
+    fn can_match(&self, state: &u32) -> bool {
+        *state != levenshtein_automata::SINK_STATE
+    }
+
+    fn accept(&self, state: &u32, byte: u8) -> u32 {
+        self.0.transition(*state, byte)
     }
 }
 
@@ -735,6 +776,104 @@ impl TextIndex {
                 || (t.chars().count() >= 2 * MIN_COMPOUND_PART
                     && !t.chars().any(|c| c.is_ascii_digit())
                     && !self.split_compound(t, false).is_empty())
+        })
+    }
+
+    /// Whether a later phase of `q` (fuzzy, `slack` words allowed to be
+    /// missing) can match anything here: at least all but `slack` words
+    /// must occur in some form. Mirrors `token_clause` with `fuzzy` and
+    /// `relaxed` on; may say yes for a partition that then has no hits,
+    /// never no for one that has.
+    pub fn may_match_relaxed(&self, q: &ParsedQuery, synonyms: &Synonyms, slack: usize) -> bool {
+        let n = q.tokens.len();
+        let required = n.saturating_sub(slack).max(1);
+        let mut found = 0;
+        for (i, t) in q.tokens.iter().enumerate() {
+            let prefix = q.last_is_prefix && i + 1 == n;
+            if self.may_match_token(t, prefix, n > 1, synonyms) {
+                found += 1;
+                if found >= required {
+                    return true;
+                }
+            } else if n - i - 1 + found < required {
+                return false;
+            }
+        }
+        false
+    }
+
+    fn may_match_token(&self, t: &str, prefix: bool, context: bool, synonyms: &Synonyms) -> bool {
+        let f = self.fields;
+        let chars = t.chars().count();
+        let numeric = t.chars().any(|c| c.is_ascii_digit());
+        let mut expansions = synonyms.expand(t, Some(&self.country));
+        if let Some(latin) = transliterate(t) {
+            expansions.extend(tokenize(&mut analyzer(), &latin));
+        }
+        if self.is_known(t)
+            || self.is_housenumber(t)
+            || expansions
+                .iter()
+                .any(|e| e.split(' ').all(|w| self.is_known(w)))
+        {
+            return true;
+        }
+        // Short prefixes are answered from the major-place n-grams.
+        if prefix && (chars <= SHORT_PREFIX || self.starts_name_word(t)) {
+            return true;
+        }
+        if prefix
+            && context
+            && chars >= MIN_ADDRESS_PREFIX
+            && !numeric
+            && self.has_prefix(&[f.address], t)
+        {
+            return true;
+        }
+        let distance = fuzzy_distance(t);
+        if distance > 0 {
+            let dfa = if prefix {
+                levenshtein(1).build_prefix_dfa(t)
+            } else {
+                levenshtein(distance).build_dfa(t)
+            };
+            if self.has_match(&[f.name, f.address], &Dfa::new(dfa)) {
+                return true;
+            }
+        }
+        !numeric && chars >= 2 * MIN_COMPOUND_PART && !self.split_compound(t, prefix).is_empty()
+    }
+
+    /// Whether some term of `fields` starts with `part`.
+    fn has_prefix(&self, fields: &[Field], part: &str) -> bool {
+        let bytes = part.as_bytes();
+        let searcher = self.reader.searcher();
+        searcher.segment_readers().iter().any(|seg| {
+            fields.iter().any(|&field| {
+                seg.inverted_index(field)
+                    .ok()
+                    .and_then(|ii| {
+                        let mut terms = ii.terms().range().ge(bytes).into_stream().ok()?;
+                        Some(terms.advance() && terms.key().starts_with(bytes))
+                    })
+                    .unwrap_or(false)
+            })
+        })
+    }
+
+    /// Whether some term of `fields` is accepted by `automaton`.
+    fn has_match(&self, fields: &[Field], automaton: &Dfa) -> bool {
+        let searcher = self.reader.searcher();
+        searcher.segment_readers().iter().any(|seg| {
+            fields.iter().any(|&field| {
+                seg.inverted_index(field)
+                    .ok()
+                    .and_then(|ii| {
+                        let mut terms = ii.terms().search(automaton.clone()).into_stream().ok()?;
+                        Some(terms.advance())
+                    })
+                    .unwrap_or(false)
+            })
         })
     }
 

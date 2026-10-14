@@ -405,6 +405,20 @@ fn partitions_without_a_typed_word_are_skipped_safely() {
             .map(String::as_str),
         Some("Kunstmuseum")
     );
+    // Typos in the word that selects the partition, in the word being
+    // typed, and one word missing: later phases skip partitions too.
+    assert_eq!(
+        search(&engine, |r| r.query = Some("vaduz andora".into()))[0],
+        "Vaduz Andorra"
+    );
+    assert_eq!(
+        search(&engine, |r| r.query = Some("vaduz andorr".into()))[0],
+        "Vaduz Andorra"
+    );
+    assert_eq!(
+        search(&engine, |r| r.query = Some("vaduz andorra xyzzyq".into()))[0],
+        "Vaduz Andorra"
+    );
 }
 
 #[test]
