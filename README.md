@@ -121,8 +121,10 @@ almost three times the laptop's RAM:
   one importance value per match from `importance.bin` (0.8 GB for all 105
   partitions), so that file stays cached. Before it existed, reading
   `places.bin` (8.1 GB) for every match made prefix searches 5x slower.
-  Searches with a location still read `places.bin` for the distance, so
-  they vary most between runs (99 req/s here, 160–205 in earlier runs).
+  Searches with a location read each match's centre from `centers.bin`
+  (1.6 GB) for the distance; the numbers above were measured before that
+  file existed, when they read `places.bin` and varied most between runs
+  (99 req/s here, 160–205 in earlier runs).
   Typo queries are still the slowest; see
   [#21](https://github.com/Fanna1119/geors/issues/21).
 - **Before #18–#20:** on the same data, full address 143 req/s, prefix 17,
@@ -451,7 +453,7 @@ RUST_LOG=debug geors serve                      # logging to stderr (default: in
 | `geors sources`            | List tracked sources with version and update state (`--remove NAME`) |
 | `geors serve`              | HTTP server (`--update-interval`, `--config`, `--countries`)         |
 | `geors info`               | Partitions in the data directory, with sizes and layer counts        |
-| `geors upgrade`            | Add files newer versions write at import (`importance.bin`) to existing partitions, without re-importing |
+| `geors upgrade`            | Add files newer versions write at import (`importance.bin`, `centers.bin`) to existing partitions, without re-importing |
 | `geors export CC`          | A partition's places as JSON lines (`--every N` samples), for inspection and diffs |
 | `geors synonyms WORDS...`  | Show abbreviation / synonym expansions (`-c` to include config rules) |
 
@@ -628,6 +630,8 @@ bench/           load, accuracy and ambiguity benchmarks (wrk + Python)
 |---------------|--------------------------------------------------------------------------|
 | `meta.json`   | Format version, counts, bbox, source                                     |
 | `places.bin`  | Fixed 40-byte record per place: position, layer, importance, geometry kind, offsets |
+| `importance.bin` | Importance per place (f32), copied from `places.bin`: read for every text match, small enough to stay cached |
+| `centers.bin` | Centre per place (2 × i32), copied from `places.bin`: read for every text match when the search has a location |
 | `docs.bin`    | Compact binary documents (postcard): names, address, OSM ids. Fields already in `places.bin` are omitted |
 | `geom.bin`    | Line geometry (with a bbox per part) and polygon geometry, i32 fixed point |
 | `tags.json`   | Interned `(osm_key, osm_value)` pairs referenced by documents            |

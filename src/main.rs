@@ -158,7 +158,7 @@ enum Command {
         data: PathBuf,
     },
     /// Add files that newer versions write at import to existing partitions
-    /// (currently `importance.bin`, which speeds up text search on large
+    /// (`importance.bin`, `centers.bin`: they speed up text search on large
     /// data sets), without re-importing.
     Upgrade {
         #[arg(long, env = "GEORS_DATA", default_value = DEFAULT_DATA_DIR)]
@@ -291,8 +291,9 @@ fn upgrade_cmd(data: &Path) -> Result<()> {
     let mut changed = 0;
     for cc in geors_index::engine::list_partitions(data)? {
         let t = std::time::Instant::now();
-        if geors_index::partition::add_importance(&data.join(&cc))? {
-            println!("{cc}  added importance.bin ({:.1?})", t.elapsed());
+        let added = geors_index::partition::add_derived_files(&data.join(&cc))?;
+        if !added.is_empty() {
+            println!("{cc}  added {} ({:.1?})", added.join(", "), t.elapsed());
             changed += 1;
         }
     }
