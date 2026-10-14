@@ -400,6 +400,17 @@ fn diff_update(
         info!(source = %source.name, behind = latest - rep.sequence, "too far behind for diffs; downloading in full");
         return Ok(None);
     }
+    // Bases merged before merges kept the header bbox have none; the
+    // original extract (for local sources) still has it. Imports need it
+    // to keep small countries the extract covers completely.
+    let bbox = geors_ingest::reader::header_bbox(&base).or_else(|| {
+        (!source.is_remote())
+            .then(|| geors_ingest::reader::header_bbox(Path::new(&source.location)))
+            .flatten()
+    });
+    if bbox.is_none() {
+        warn!(source = %source.name, "base PBF has no bounding box: small countries the extract covers completely may be dropped; run `geors update --full` once to restore it");
+    }
     let managed = base_path(data_dir, &source.name);
     let path = if latest > rep.sequence {
         info!(source = %source.name, from = rep.sequence, to = latest, "applying diffs");
@@ -411,7 +422,7 @@ fn diff_update(
             sequence: latest,
             timestamp,
         };
-        replicate::apply_changes(&base, changes, &tmp, &new_rep)?;
+        replicate::apply_changes(&base, changes, &tmp, &new_rep, bbox.as_ref())?;
         std::fs::rename(&tmp, &managed)?;
         managed.clone()
     } else {
@@ -421,14 +432,11 @@ fn diff_update(
         .file_name()
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_default();
-    let partitions = import_file(
-        &path,
-        source.format,
-        data_dir,
-        &source.import_options(),
-        &label,
-        false,
-    )?;
+    let opts = geors_ingest::ImportOptions {
+        extent: bbox,
+        ..source.import_options()
+    };
+    let partitions = import_file(&path, source.format, data_dir, &opts, &label, false)?;
     remove_stale_partitions(data_dir, source, &partitions)?;
     let rep = replicate::read_replication(&path)?.context("base lost its replication header")?;
     let iso = (rep.timestamp > 0).then(|| unix_to_iso(rep.timestamp));
@@ -876,7 +884,7 @@ mod tests {
         });
         std::fs::write(
             path,
-            pbf_write::blob("OSMHeader", &pbf_write::header_block(rep.as_ref())).unwrap(),
+            pbf_write::blob("OSMHeader", &pbf_write::header_block(rep.as_ref(), None)).unwrap(),
         )
         .unwrap();
     }

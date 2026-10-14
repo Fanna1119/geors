@@ -71,6 +71,9 @@ pub struct ImportOptions {
     pub work_dir: Option<PathBuf>,
     /// How ways find their nodes' coordinates.
     pub node_lookup: NodeLookup,
+    /// The extract's bounding box, for a PBF whose header has none (see
+    /// the coverage rules in `import_pbf`).
+    pub extent: Option<BBox>,
 }
 
 /// How ways get their nodes' coordinates during import.
@@ -153,6 +156,7 @@ impl Default for ImportOptions {
             min_share: 0.01,
             work_dir: None,
             node_lookup: default_node_lookup(),
+            extent: None,
         }
     }
 }
@@ -772,7 +776,7 @@ pub fn import_pbf(path: &Path, opts: &ImportOptions) -> Result<Import> {
     // An area crossing the antimeridian has a box spanning every longitude
     // (the United States, through the Aleutians), which fits inside any
     // extract that crosses it too (Asia, North America) and so says nothing.
-    let extent = reader::header_bbox(path);
+    let extent = reader::header_bbox(path).or(opts.extent);
     let mut covered: BTreeMap<String, sink::Coverage> = BTreeMap::new();
     for a in &admin_areas {
         if let (Some(cc), Some(e)) = (&a.country_code, &extent)
@@ -998,6 +1002,8 @@ mod tests {
         assert!(crosses_antimeridian(&BBox::new(-179.2, 18.9, 179.8, 71.4)));
         // Europe, and a country next to the antimeridian.
         assert!(!crosses_antimeridian(&BBox::new(-32.7, 29.6, 46.8, 81.5)));
-        assert!(!crosses_antimeridian(&BBox::new(166.4, -47.3, 178.6, -34.4)));
+        assert!(!crosses_antimeridian(&BBox::new(
+            166.4, -47.3, 178.6, -34.4
+        )));
     }
 }

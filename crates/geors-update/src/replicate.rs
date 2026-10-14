@@ -19,6 +19,8 @@ use osmpbf::{BlobDecode, BlobReader};
 use rayon::prelude::*;
 use tracing::info;
 
+use geors_core::geom::BBox;
+
 use crate::osm::{ChangeSet, Elem, Kind};
 use crate::pbf_write::{self, BLOCK_SIZE, Replication};
 use crate::{osc, remote};
@@ -202,14 +204,15 @@ fn write_blocks(out: &mut impl Write, blocks: Vec<Vec<Elem>>) -> Result<()> {
     Ok(())
 }
 
-/// Write `base` with `changes` applied to `out`, stamped with `replication`.
-/// Decoding and compression run on all cores; memory stays at a few
-/// batches of blocks.
+/// Write `base` with `changes` applied to `out`, stamped with `replication`
+/// and the extract's bounding box (`bbox`). Decoding and compression run
+/// on all cores; memory stays at a few batches of blocks.
 pub fn apply_changes(
     base: &Path,
     changes: ChangeSet,
     out: &Path,
     replication: &Replication,
+    bbox: Option<&BBox>,
 ) -> Result<MergeStats> {
     let t = Instant::now();
     let mut reader =
@@ -217,7 +220,7 @@ pub fn apply_changes(
     let mut file = BufWriter::with_capacity(1 << 20, File::create(out)?);
     file.write_all(&pbf_write::blob(
         "OSMHeader",
-        &pbf_write::header_block(Some(replication)),
+        &pbf_write::header_block(Some(replication), bbox),
     )?)?;
     let ChangeSet {
         nodes,
@@ -297,7 +300,7 @@ mod tests {
     }
 
     fn write(path: &Path, groups: &[Vec<Elem>]) {
-        let mut f = pbf_write::blob("OSMHeader", &pbf_write::header_block(None)).unwrap();
+        let mut f = pbf_write::blob("OSMHeader", &pbf_write::header_block(None, None)).unwrap();
         for g in groups {
             f.extend(pbf_write::blob("OSMData", &pbf_write::primitive_block(g)).unwrap());
         }
@@ -341,7 +344,11 @@ mod tests {
             sequence: 9,
             timestamp: 1,
         };
-        let stats = apply_changes(&base, cs, &out, &rep).unwrap();
+        // The extract's bbox carries over (imports need it), at the
+        // nanodegree precision of the format.
+        let bbox = BBox::new(-180.0, 5.57228, 180.0, 85.04177);
+        let stats = apply_changes(&base, cs, &out, &rep, Some(&bbox)).unwrap();
+        assert_eq!(geors_ingest::reader::header_bbox(&out), Some(bbox));
         assert_eq!(
             read(&out),
             vec![
@@ -369,7 +376,7 @@ mod tests {
         let (base, out) = (dir.path().join("base.pbf"), dir.path().join("out.pbf"));
         write(&base, &[vec![node(5, 0)], vec![node(3, 0)]]);
         let rep = Replication::default();
-        assert!(apply_changes(&base, ChangeSet::default(), &out, &rep).is_err());
+        assert!(apply_changes(&base, ChangeSet::default(), &out, &rep, None).is_err());
     }
 
     #[test]

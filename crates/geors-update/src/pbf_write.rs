@@ -10,6 +10,8 @@ use std::io::Write;
 use flate2::Compression;
 use flate2::write::ZlibEncoder;
 
+use geors_core::geom::BBox;
+
 use crate::osm::{Elem, Kind};
 
 /// Elements per block, as written by osmium.
@@ -75,8 +77,19 @@ pub struct Replication {
 }
 
 /// Raw (uncompressed) HeaderBlock.
-pub fn header_block(replication: Option<&Replication>) -> Vec<u8> {
+pub fn header_block(replication: Option<&Replication>, bbox: Option<&BBox>) -> Vec<u8> {
     let mut b = Vec::new();
+    // The extract's bounding box: imports use it to tell which countries
+    // the extract covers completely, so a rewritten base must keep it.
+    if let Some(bb) = bbox {
+        let nano = |deg: f64| zigzag((deg * 1e9).round() as i64);
+        let mut m = Vec::new();
+        uint_field(&mut m, 1, nano(bb.min_lon));
+        uint_field(&mut m, 2, nano(bb.max_lon));
+        uint_field(&mut m, 3, nano(bb.max_lat));
+        uint_field(&mut m, 4, nano(bb.min_lat));
+        bytes_field(&mut b, 1, &m);
+    }
     bytes_field(&mut b, 4, b"OsmSchema-V0.6");
     bytes_field(&mut b, 4, b"DenseNodes");
     bytes_field(&mut b, 5, b"Sort.Type_then_ID");
@@ -296,7 +309,7 @@ mod tests {
             sequence: 42,
             timestamp: 1_700_000_000,
         };
-        let mut file = blob("OSMHeader", &header_block(Some(&rep))).unwrap();
+        let mut file = blob("OSMHeader", &header_block(Some(&rep), None)).unwrap();
         for group in sample() {
             file.extend(blob("OSMData", &primitive_block(&group)).unwrap());
         }

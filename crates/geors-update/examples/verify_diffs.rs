@@ -60,7 +60,8 @@ fn main() -> Result<()> {
     let changes = replicate::fetch_changes(&http, &from.base_url, from.sequence, to.sequence)?;
     let fetched = t.elapsed();
     let merged = old.with_extension("merged.pbf");
-    let stats = replicate::apply_changes(old, changes, &merged, &to)?;
+    let bbox = geors_ingest::reader::header_bbox(old);
+    let stats = replicate::apply_changes(old, changes, &merged, &to, bbox.as_ref())?;
     println!(
         "download {fetched:.1?}, merge {:.1?}: {stats:?}",
         t.elapsed() - fetched
