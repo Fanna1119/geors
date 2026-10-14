@@ -1,0 +1,576 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>geors API map tester</title>
+  <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@5.6.1/dist/maplibre-gl.css">
+  <style>
+    :root { color-scheme: light dark; font: 14px/1.45 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #f3f5f7; color: #18212b; }
+    header { padding: 14px 18px; background: #14212d; color: #fff; display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
+    header h1 { font-size: 18px; margin: 0; font-weight: 650; }
+    header label { color: #c9d4df; font-size: 12px; }
+    input, select, button { font: inherit; border: 1px solid #c8d0d8; border-radius: 7px; padding: 9px 10px; background: #fff; color: #18212b; }
+    input:disabled, select:disabled { background: #eef1f4; color: #8b97a3; }
+    #baseUrl { width: min(310px, 75vw); }
+    button { cursor: pointer; background: #1769d2; border-color: #1769d2; color: white; font-weight: 600; }
+    button.secondary { background: #fff; color: #18212b; border-color: #c8d0d8; }
+    button:disabled { opacity: .55; cursor: wait; }
+    main { display: grid; grid-template-columns: minmax(0, 1fr) 410px; height: calc(100vh - 64px); min-height: 480px; }
+    #map { min-height: 350px; background: #e1e7eb; }
+    aside { overflow: auto; border-left: 1px solid #d5dce2; background: #fff; padding: 16px; }
+    .controls { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 8px; }
+    .autocomplete-wrap { position: relative; min-width: 0; }
+    .autocomplete-wrap input { width: 100%; }
+    #suggestions { display: none; position: absolute; z-index: 20; top: calc(100% + 4px); left: 0; right: 0; max-height: 340px; overflow-y: auto; background: #fff; color: #18212b; border: 1px solid #c8d0d8; border-radius: 9px; box-shadow: 0 8px 28px #14212d26; }
+    #suggestions.open { display: block; }
+    .suggestion { padding: 10px 12px; cursor: pointer; border-bottom: 1px solid #edf0f3; }
+    .suggestion:last-child { border-bottom: 0; }
+    .suggestion:hover, .suggestion.active { background: #eef5ff; }
+    .suggestion strong { display: block; font-size: 13px; }
+    .suggestion .meta { margin-top: 2px; }
+    .suggestion-empty { padding: 12px; color: #637181; font-size: 12px; }
+    .field { margin-top: 10px; }
+    .field > label { display: block; color: #4b5865; font-size: 12px; margin-bottom: 4px; }
+    .field input:not([type=checkbox]) { width: 100%; }
+    .field.off > label, .row label.off, .layers.off { opacity: .45; }
+    .row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; align-items: center; }
+    .row label { display: flex; gap: 5px; align-items: center; color: #4b5865; font-size: 12px; }
+    .row input[type=number] { width: 95px; }
+    .layers { display: flex; flex-wrap: wrap; gap: 4px 10px; font-size: 12px; color: #4b5865; }
+    .layers label { display: flex; gap: 4px; align-items: center; }
+    .point { display: flex; justify-content: space-between; gap: 8px; align-items: center; margin-top: 10px; padding: 8px 10px; border-radius: 7px; background: #f6f8fa; font-size: 12px; color: #344252; }
+    .hint { color: #637181; font-size: 12px; margin: 10px 0; }
+    #status { padding: 9px 10px; border-radius: 7px; background: #eef2f6; color: #344252; margin: 12px 0 6px; overflow-wrap: anywhere; }
+    #status.error { background: #fff0ef; color: #a3251d; }
+    #requestUrl { font: 11px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; color: #637181; }
+    #requestUrl a { color: #1769d2; }
+    #results { display: grid; gap: 8px; }
+    .result { border: 1px solid #dce2e8; border-radius: 8px; padding: 10px; cursor: pointer; }
+    .result:hover { border-color: #1769d2; background: #f6f9ff; }
+    .result.active { outline: 2px solid #1769d2; }
+    .result strong { display: block; font-size: 14px; }
+    .result a { color: #1769d2; }
+    .meta { color: #637181; font-size: 12px; margin-top: 3px; overflow-wrap: anywhere; }
+    table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    th, td { text-align: left; padding: 4px 6px; border-bottom: 1px solid #edf0f3; }
+    td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+    tbody tr { cursor: pointer; }
+    tbody tr:hover { background: #f6f9ff; }
+    details { margin-top: 14px; }
+    pre { white-space: pre-wrap; overflow-wrap: anywhere; background: #101820; color: #d7e2ec; padding: 10px; border-radius: 7px; font: 11px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; max-height: 300px; overflow: auto; }
+    .section-title { margin: 18px 0 8px; font-size: 13px; color: #4b5865; text-transform: uppercase; letter-spacing: .06em; }
+    @media (max-width: 780px) { main { height: auto; min-height: 0; grid-template-columns: 1fr; } #map { height: 52vh; } aside { border-left: 0; border-top: 1px solid #d5dce2; overflow: visible; } header { align-items: flex-start; } }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>geors API tester</h1>
+    <div><label for="baseUrl">API base URL</label><br><input id="baseUrl" value="http://127.0.0.1:2322" spellcheck="false"></div>
+    <button id="healthBtn" class="secondary" type="button">Check status</button>
+  </header>
+  <main>
+    <div id="map" aria-label="Map; click to set the query point"></div>
+    <aside>
+      <form id="searchForm">
+        <label for="mode"><strong>Endpoint</strong></label>
+        <select id="mode" style="width:100%;margin-top:6px">
+          <option value="search">/search: text, with optional point, radius, bbox</option>
+          <option value="reverse">/reverse: what is at the point</option>
+          <option value="nearest">/nearest: closest places to the point</option>
+          <option value="contains">/contains: areas containing the point</option>
+          <option value="lookup">/lookup: by OSM or Nominatim id</option>
+          <option value="status">/status: partitions and sources</option>
+          <option value="metrics">/metrics: Prometheus counters</option>
+        </select>
+
+        <div class="field" data-param="q">
+          <label for="query">Search text (<code>q</code>)</label>
+          <div class="controls">
+            <div class="autocomplete-wrap">
+              <input id="query" placeholder="e.g. bahnhof, Vaduz, Kunstmuseum" autocomplete="off" aria-autocomplete="list" aria-controls="suggestions" aria-expanded="false" role="combobox">
+              <div id="suggestions" role="listbox" aria-label="Location suggestions"></div>
+            </div>
+            <button id="runBtn" type="submit">Search</button>
+          </div>
+        </div>
+        <div class="row">
+          <label data-param="autocomplete"><input id="autocomplete" type="checkbox" checked> Last word is a prefix (<code>autocomplete</code>)</label>
+        </div>
+
+        <div class="field" data-param="osm_ids">
+          <label for="osmIds">Ids (<code>osm_ids</code>): N/W/R + OSM id, or P + Nominatim place_id</label>
+          <input id="osmIds" placeholder="N1932181216,W28712148,R1155955" spellcheck="false">
+        </div>
+
+        <div class="point">
+          <span id="pointText">Point: none (click the map)</span>
+          <label data-param="usePoint" style="display:flex;gap:5px;align-items:center"><input id="usePoint" type="checkbox"> Send with search</label>
+        </div>
+
+        <div class="row">
+          <label data-param="limit">Limit <input id="limit" type="number" min="1" max="100" placeholder="default"></label>
+          <label data-param="radius">Radius (m) <input id="radius" type="number" min="1" placeholder="default"></label>
+        </div>
+
+        <div class="field" data-param="layers">
+          <label>Layers (<code>layers</code>; none = endpoint default)</label>
+          <div class="layers" id="layers"></div>
+        </div>
+
+        <div class="row">
+          <label data-param="country">Country <input id="country" placeholder="de,at" style="width:80px" spellcheck="false"></label>
+          <label data-param="lang">Language <input id="lang" placeholder="en" style="width:60px" spellcheck="false"></label>
+          <label data-param="geometry"><input id="fullGeometry" type="checkbox"> Full geometry</label>
+        </div>
+
+        <div class="field" data-param="osm_tag">
+          <label for="osmTags">Category filter (<code>osm_tag</code>): key:value, key, :value, ! to exclude</label>
+          <input id="osmTags" placeholder="amenity:cafe,shop:bakery,!amenity:parking" spellcheck="false">
+        </div>
+        <div class="field" data-param="bbox">
+          <label for="bbox">Bounding box (<code>bbox</code>): min_lon,min_lat,max_lon,max_lat</label>
+          <div class="controls"><input id="bbox" placeholder="1.50,42.50,1.54,42.52" spellcheck="false"><button id="viewBboxBtn" type="button" class="secondary">Map view</button></div>
+        </div>
+
+        <div class="row">
+          <button id="locationBtn" type="button" class="secondary">Use my location</button>
+          <button id="nearMeBtn" type="button" class="secondary">POIs near me</button>
+          <button id="useMapBtn" type="button" class="secondary">Use map centre</button>
+          <button id="clearBtn" type="button" class="secondary">Clear</button>
+        </div>
+        <p class="hint">Fields the selected endpoint does not accept are greyed out. Empty fields are not sent, so the server's defaults apply. Click the map to set the point. Location access requires HTTPS or localhost.</p>
+      </form>
+      <div id="status" role="status">Ready. Basemap: OpenFreeMap (no API key). Make sure geors is running on the API URL above.</div>
+      <div id="requestUrl"></div>
+      <div class="section-title">Results</div>
+      <div id="results"></div>
+      <details>
+        <summary>Raw API response</summary>
+        <pre id="raw">No request yet.</pre>
+      </details>
+    </aside>
+  </main>
+  <script src="https://unpkg.com/maplibre-gl@5.6.1/dist/maplibre-gl.js"></script>
+  <script>
+    const $ = (id) => document.getElementById(id);
+
+    // Parameters each endpoint accepts (crates/geors-api/src/params.rs).
+    // `point` = lat/lon from the selected point; `usePoint` = optional for /search.
+    const ENDPOINTS = {
+      search:   { params: ['q', 'autocomplete', 'usePoint', 'limit', 'radius', 'layers', 'country', 'lang', 'geometry', 'osm_tag', 'bbox'], label: 'Search' },
+      reverse:  { params: ['point', 'limit', 'radius', 'layers', 'country', 'lang', 'geometry', 'osm_tag'], label: 'Reverse' },
+      nearest:  { params: ['point', 'limit', 'radius', 'layers', 'country', 'lang', 'geometry', 'osm_tag'], label: 'Find nearest' },
+      contains: { params: ['point', 'layers', 'country', 'lang', 'geometry'], label: 'Find areas', areaLayers: true },
+      lookup:   { params: ['osm_ids', 'country', 'lang', 'geometry'], label: 'Look up' },
+      status:   { params: [], label: 'Get status' },
+      metrics:  { params: [], label: 'Get metrics' },
+    };
+    const LAYERS = ['house', 'poi', 'street', 'locality', 'district', 'city', 'county', 'state', 'country'];
+    const AREA_LAYERS = ['locality', 'district', 'city', 'county', 'state', 'country'];
+    const OSM_TYPES = { N: 'node', W: 'way', R: 'relation' };
+
+    $('layers').innerHTML = LAYERS.map(l => `<label><input type="checkbox" value="${l}"> ${l}</label>`).join('');
+
+    // --- map --------------------------------------------------------------
+    const map = new maplibregl.Map({
+      container: 'map',
+      style: 'https://tiles.openfreemap.org/styles/positron', // no API key needed
+      center: [31.0218, -29.8587],
+      zoom: 12,
+      attributionControl: true
+    });
+    map.addControl(new maplibregl.NavigationControl(), 'top-right');
+    const EMPTY = { type: 'FeatureCollection', features: [] };
+    let pendingShapes = EMPTY;
+    map.on('load', () => {
+      // Lines and polygons of results (geometry=full) and partition boxes (/status).
+      map.addSource('shapes', { type: 'geojson', data: pendingShapes });
+      map.addLayer({ id: 'shape-fill', type: 'fill', source: 'shapes', filter: ['match', ['geometry-type'], ['Polygon', 'MultiPolygon'], true, false], paint: { 'fill-color': '#1769d2', 'fill-opacity': 0.12 } });
+      map.addLayer({ id: 'shape-line', type: 'line', source: 'shapes', filter: ['all', ['match', ['geometry-type'], ['Point', 'MultiPoint'], false, true], ['!=', ['get', 'kind'], 'bbox']], paint: { 'line-color': '#1769d2', 'line-width': 2.5 } });
+      map.addLayer({ id: 'bbox-line', type: 'line', source: 'shapes', filter: ['==', ['get', 'kind'], 'bbox'], paint: { 'line-color': '#d2401d', 'line-width': 1.5, 'line-dasharray': [2, 2] } });
+    });
+    function setShapes(fc) {
+      pendingShapes = fc;
+      map.getSource('shapes')?.setData(fc);
+    }
+
+    const markers = [];
+    let pointMarker = null;
+    function clearResults() {
+      markers.forEach(m => m.remove());
+      markers.length = 0;
+      setShapes(EMPTY);
+      $('results').innerHTML = '';
+    }
+    function addMarker(lon, lat, popupHtml, index) {
+      const popup = new maplibregl.Popup({ offset: 24 }).setHTML(popupHtml);
+      const marker = new maplibregl.Marker().setLngLat([lon, lat]).setPopup(popup).addTo(map);
+      if (index != null) marker.getElement().addEventListener('click', () => highlightCard(index));
+      markers.push(marker);
+      return marker;
+    }
+
+    let point = null;       // { lat, lon } sent as lat/lon
+    let userLocation = null;
+    let suggestionTimer = null;
+    let suggestionController = null;
+    let suggestionItems = [];
+    let activeSuggestion = -1;
+
+    // --- helpers ----------------------------------------------------------
+    function apiBase() { return $('baseUrl').value.trim().replace(/\/+$/, ''); }
+    function setStatus(message, error = false) {
+      $('status').textContent = message;
+      $('status').className = error ? 'error' : '';
+    }
+    function escapeHtml(value) {
+      return String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    }
+    function featureName(f) {
+      const p = f?.properties || {};
+      return p.name || [p.street, p.housenumber].filter(Boolean).join(' ') || p.city || `${p.osm_type || ''}${p.osm_id || ''}` || 'Unnamed result';
+    }
+    // [lat, lon] of the feature's centre: the point geometry, or `center` with geometry=full.
+    function featureLatLon(f) {
+      const g = f?.geometry;
+      if (g?.type === 'Point') return [g.coordinates[1], g.coordinates[0]];
+      const c = f?.properties?.center;
+      if (Array.isArray(c) && c.length >= 2) return [c[1], c[0]];
+      const e = f?.properties?.extent;
+      if (Array.isArray(e) && e.length === 4) return [(e[1] + e[3]) / 2, (e[0] + e[2]) / 2];
+      return null;
+    }
+    function eachCoord(coords, fn) {
+      if (typeof coords?.[0] === 'number') fn(coords);
+      else coords?.forEach(c => eachCoord(c, fn));
+    }
+    function addressLine(p) {
+      const street = [p.street, p.housenumber].filter(Boolean).join(' ');
+      const city = [p.postcode, p.city].filter(Boolean).join(' ');
+      return [street, p.district, city, p.county, p.state, p.country]
+        .filter(Boolean).filter(v => v !== p.name).filter((v, i, a) => a.indexOf(v) === i).join(', ');
+    }
+    function osmLink(p) {
+      const type = OSM_TYPES[p.osm_type];
+      if (!type || p.osm_id == null) return '';
+      return `<a href="https://www.openstreetmap.org/${type}/${p.osm_id}" target="_blank" rel="noopener">${escapeHtml(p.osm_type + p.osm_id)}</a>`;
+    }
+    function fitTo(lonLats) {
+      if (!lonLats.length) return;
+      const lons = lonLats.map(c => c[0]), lats = lonLats.map(c => c[1]);
+      const b = [[Math.min(...lons), Math.min(...lats)], [Math.max(...lons), Math.max(...lats)]];
+      if (b[0][0] === b[1][0] && b[0][1] === b[1][1]) map.flyTo({ center: b[0], zoom: Math.max(map.getZoom(), 16) });
+      else map.fitBounds(b, { padding: 40, maxZoom: 17 });
+    }
+    function bboxPolygon([w, s, e, n], props) {
+      return { type: 'Feature', properties: props, geometry: { type: 'Polygon', coordinates: [[[w, s], [e, s], [e, n], [w, n], [w, s]]] } };
+    }
+
+    async function request(path, label) {
+      const url = apiBase() + path;
+      setStatus(`${label}…`);
+      $('requestUrl').innerHTML = `GET <a href="${escapeHtml(url)}" target="_blank" rel="noopener">${escapeHtml(url)}</a>`;
+      document.querySelectorAll('button').forEach(b => b.disabled = true);
+      const t0 = performance.now();
+      try {
+        const response = await fetch(url, { headers: { 'Accept': 'application/geo+json, application/json, text/plain' } });
+        const bodyText = await response.text();
+        const ms = Math.round(performance.now() - t0);
+        let data;
+        try { data = JSON.parse(bodyText); } catch { data = bodyText; }
+        $('raw').textContent = typeof data === 'string' ? data : JSON.stringify(data, null, 2);
+        // Errors are {"error": "..."} with a 4xx/5xx status.
+        if (!response.ok) throw new Error(`HTTP ${response.status}: ${data?.error || bodyText}`);
+        const count = Array.isArray(data?.features) ? ` · ${data.features.length} result(s)` : '';
+        setStatus(`${label}: HTTP ${response.status} · ${ms} ms${count}`);
+        return data;
+      } catch (err) {
+        const network = err instanceof TypeError;
+        setStatus(`${label} failed: ${err.message}${network ? '. Is geors running at this URL? CORS is on by default (api.cors).' : ''}`, true);
+        if (network) $('raw').textContent = 'The browser could not read the response. Check that geors is running, the URL is correct, and CORS is enabled.';
+        return null;
+      } finally {
+        document.querySelectorAll('button').forEach(b => b.disabled = false);
+      }
+    }
+
+    // --- results ----------------------------------------------------------
+    function showFeatures(data) {
+      clearResults();
+      const features = Array.isArray(data?.features) ? data.features : [];
+      if (!features.length) {
+        $('results').innerHTML = '<p class="hint">No results.</p>';
+        return;
+      }
+      const coords = [];
+      const shapes = [];
+      features.forEach((f, i) => {
+        const p = f.properties || {};
+        const ll = featureLatLon(f);
+        if (f.geometry && f.geometry.type !== 'Point') {
+          shapes.push({ type: 'Feature', properties: { kind: 'result' }, geometry: f.geometry });
+          eachCoord(f.geometry.coordinates, c => coords.push(c));
+        } else if (Array.isArray(p.extent)) {
+          coords.push([p.extent[0], p.extent[1]], [p.extent[2], p.extent[3]]);
+        }
+        if (ll) {
+          coords.push([ll[1], ll[0]]);
+          addMarker(ll[1], ll[0], `<strong>${escapeHtml(featureName(f))}</strong><br>${escapeHtml(addressLine(p))}`, i);
+        }
+        const tag = p.osm_key ? `${p.osm_key}=${p.osm_value}` : '';
+        const meta = [
+          p.type, tag,
+          Number.isFinite(p.distance) ? `${Math.round(p.distance)} m` : '',
+          p.score != null ? `score ${Number(p.score).toFixed(2)}` : '',
+          p.importance != null ? `importance ${p.importance}` : '',
+        ].filter(Boolean).map(escapeHtml);
+        const link = osmLink(p);
+        if (link) meta.push(link);
+        const card = document.createElement('div');
+        card.className = 'result';
+        card.dataset.index = String(i);
+        const address = addressLine(p);
+        card.innerHTML = `<strong>${escapeHtml(featureName(f))}</strong>${address ? `<div>${escapeHtml(address)}</div>` : ''}<div class="meta">${meta.join(' · ')}</div>`;
+        card.addEventListener('click', e => {
+          if (e.target.closest('a')) return;
+          highlightCard(i);
+          if (f.geometry && f.geometry.type !== 'Point') {
+            const c = []; eachCoord(f.geometry.coordinates, x => c.push(x)); fitTo(c);
+          } else if (ll) map.flyTo({ center: [ll[1], ll[0]], zoom: Math.max(map.getZoom(), 16) });
+          if (ll) markers[i]?.togglePopup?.();
+        });
+        $('results').appendChild(card);
+      });
+      setShapes({ type: 'FeatureCollection', features: shapes });
+      fitTo(coords);
+    }
+    function highlightCard(index) {
+      document.querySelectorAll('.result').forEach(el => el.classList.toggle('active', Number(el.dataset.index) === index));
+    }
+    function showStatus(data) {
+      clearResults();
+      const parts = Array.isArray(data?.partitions) ? data.partitions : [];
+      const total = parts.reduce((s, p) => s + (p.places || 0), 0);
+      const loaded = data.loaded_unix ? new Date(data.loaded_unix * 1000).toLocaleString() : '-';
+      const rows = parts.map((p, i) => `<tr data-index="${i}"><td>${escapeHtml(p.country_code)}</td><td>${escapeHtml(p.country_name || '')}</td><td class="num">${(p.places || 0).toLocaleString()}</td><td>${p.created_unix ? new Date(p.created_unix * 1000).toLocaleDateString() : ''}</td></tr>`).join('');
+      $('results').innerHTML = `<div class="meta">geors ${escapeHtml(data.version || '')} · ${parts.length} partition(s) · ${total.toLocaleString()} places · loaded ${escapeHtml(loaded)}</div>
+        <table><thead><tr><th>cc</th><th>name</th><th class="num">places</th><th>imported</th></tr></thead><tbody>${rows}</tbody></table>`;
+      const boxes = parts.filter(p => Array.isArray(p.bbox)).map(p => bboxPolygon(p.bbox, { kind: 'bbox' }));
+      setShapes({ type: 'FeatureCollection', features: boxes });
+      $('results').querySelectorAll('tbody tr').forEach(tr => tr.addEventListener('click', () => {
+        const b = parts[Number(tr.dataset.index)].bbox;
+        fitTo([[b[0], b[1]], [b[2], b[3]]]);
+      }));
+      fitTo(parts.filter(p => Array.isArray(p.bbox)).flatMap(p => [[p.bbox[0], p.bbox[1]], [p.bbox[2], p.bbox[3]]]));
+    }
+
+    // --- parameters ---------------------------------------------------------
+    function selectedLayers() {
+      return [...$('layers').querySelectorAll('input:checked:not(:disabled)')].map(i => i.value);
+    }
+    function buildParams(mode, forSuggestions = false) {
+      const allowed = ENDPOINTS[mode].params;
+      const p = new URLSearchParams();
+      const has = name => allowed.includes(name);
+      const q = $('query').value.trim();
+      if (has('q') && q) p.set('q', q);
+      if (has('autocomplete') && !$('autocomplete').checked) p.set('autocomplete', 'false');
+      if (has('osm_ids')) p.set('osm_ids', $('osmIds').value.replace(/\s+/g, ''));
+      if ((has('point') || (has('usePoint') && $('usePoint').checked)) && point) {
+        p.set('lat', point.lat.toFixed(7));
+        p.set('lon', point.lon.toFixed(7));
+      }
+      if (forSuggestions) p.set('limit', '8');
+      else if (has('limit') && $('limit').value) p.set('limit', $('limit').value);
+      if (has('radius') && $('radius').value && !forSuggestions) p.set('radius', $('radius').value);
+      if (has('layers') && selectedLayers().length) p.set('layers', selectedLayers().join(','));
+      if (has('country') && $('country').value.trim()) p.set('country', $('country').value.trim());
+      if (has('lang') && $('lang').value.trim()) p.set('lang', $('lang').value.trim());
+      if (has('geometry') && $('fullGeometry').checked && !forSuggestions) p.set('geometry', 'full');
+      if (has('osm_tag')) $('osmTags').value.split(',').map(x => x.trim()).filter(Boolean).forEach(t => p.append('osm_tag', t));
+      if (has('bbox') && $('bbox').value.trim() && !forSuggestions) p.set('bbox', $('bbox').value.replace(/\s+/g, ''));
+      return p;
+    }
+    // Client-side checks for the API's required parameters.
+    function missing(mode, p) {
+      if (ENDPOINTS[mode].params.includes('point') && !point) return 'Click the map (or use your location) to set the point first.';
+      if (mode === 'lookup' && !p.get('osm_ids')) return 'Enter one or more ids, e.g. N1932181216,W28712148.';
+      if (mode === 'search' && !p.has('q') && !p.has('lat') && !p.has('bbox')) return 'Enter text, or send a point or a bbox.';
+      if (mode === 'search' && p.has('radius') && !p.has('lat')) return "'radius' needs the point: tick \"Send with search\".";
+      return null;
+    }
+
+    // --- autocomplete -------------------------------------------------------
+    function closeSuggestions() {
+      $('suggestions').classList.remove('open');
+      $('suggestions').innerHTML = '';
+      $('query').setAttribute('aria-expanded', 'false');
+      $('query').removeAttribute('aria-activedescendant');
+      activeSuggestion = -1;
+    }
+    function renderSuggestions(features) {
+      const box = $('suggestions');
+      suggestionItems = features;
+      activeSuggestion = -1;
+      if (!features.length) {
+        box.innerHTML = '<div class="suggestion-empty">No matching places</div>';
+      } else {
+        box.innerHTML = features.map((f, i) => {
+          const p = f.properties || {};
+          const context = [p.type, addressLine(p)].filter(Boolean).join(' · ');
+          return `<div class="suggestion" id="suggestion-${i}" role="option" aria-selected="false" data-index="${i}"><strong>${escapeHtml(featureName(f))}</strong>${context ? `<div class="meta">${escapeHtml(context)}</div>` : ''}</div>`;
+        }).join('');
+        box.querySelectorAll('.suggestion').forEach(el => {
+          // mousedown fires before the input's blur, keeping selection reliable.
+          el.addEventListener('mousedown', e => { e.preventDefault(); selectSuggestion(Number(el.dataset.index)); });
+        });
+      }
+      box.classList.add('open');
+      $('query').setAttribute('aria-expanded', 'true');
+    }
+    function selectSuggestion(index) {
+      const f = suggestionItems[index];
+      if (!f) return;
+      $('query').value = featureName(f);
+      closeSuggestions();
+      showFeatures({ type: 'FeatureCollection', features: [f] });
+      const ll = featureLatLon(f);
+      if (ll) setStatus(`Selected ${featureName(f)} · ${ll[0].toFixed(6)}, ${ll[1].toFixed(6)}`);
+    }
+    function moveSuggestionSelection(nextIndex) {
+      const els = [...$('suggestions').querySelectorAll('.suggestion')];
+      if (!els.length) return;
+      activeSuggestion = (nextIndex + els.length) % els.length;
+      els.forEach((el, i) => {
+        el.classList.toggle('active', i === activeSuggestion);
+        el.setAttribute('aria-selected', String(i === activeSuggestion));
+      });
+      $('query').setAttribute('aria-activedescendant', `suggestion-${activeSuggestion}`);
+      els[activeSuggestion].scrollIntoView({ block: 'nearest' });
+    }
+    $('query').addEventListener('input', () => {
+      clearTimeout(suggestionTimer);
+      if (suggestionController) suggestionController.abort();
+      const q = $('query').value.trim();
+      if ($('mode').value !== 'search' || !$('autocomplete').checked || q.length < 2) { closeSuggestions(); return; }
+      suggestionTimer = setTimeout(async () => {
+        const controller = new AbortController();
+        suggestionController = controller;
+        const params = buildParams('search', true);
+        try {
+          const response = await fetch(`${apiBase()}/search?${params}`, { headers: { Accept: 'application/geo+json, application/json' }, signal: controller.signal });
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          const data = await response.json();
+          if (controller !== suggestionController || $('query').value.trim() !== q) return;
+          renderSuggestions(Array.isArray(data?.features) ? data.features : []);
+        } catch (err) {
+          // Suggestions are optional: the Search button still works.
+          if (err.name !== 'AbortError') closeSuggestions();
+        }
+      }, 150);
+    });
+    $('query').addEventListener('keydown', e => {
+      if (!$('suggestions').classList.contains('open')) return;
+      if (e.key === 'ArrowDown') { e.preventDefault(); moveSuggestionSelection(activeSuggestion + 1); }
+      else if (e.key === 'ArrowUp') { e.preventDefault(); moveSuggestionSelection(activeSuggestion < 0 ? suggestionItems.length - 1 : activeSuggestion - 1); }
+      else if (e.key === 'Enter' && activeSuggestion >= 0) { e.preventDefault(); selectSuggestion(activeSuggestion); }
+      else if (e.key === 'Escape') closeSuggestions();
+    });
+    document.addEventListener('click', e => { if (!e.target.closest('.autocomplete-wrap')) closeSuggestions(); });
+
+    // --- submit ---------------------------------------------------------------
+    $('searchForm').addEventListener('submit', async e => {
+      e.preventDefault();
+      closeSuggestions();
+      const mode = $('mode').value;
+      const p = buildParams(mode);
+      const problem = missing(mode, p);
+      if (problem) { setStatus(problem, true); return; }
+      const qs = p.toString();
+      const data = await request(`/${mode}${qs ? '?' + qs : ''}`, ENDPOINTS[mode].label);
+      if (data == null) return;
+      if (mode === 'status') showStatus(data);
+      else if (mode === 'metrics') { clearResults(); $('results').innerHTML = `<pre>${escapeHtml(data)}</pre>`; }
+      else showFeatures(data);
+    });
+
+    // --- point ------------------------------------------------------------------
+    function setPoint(lon, lat, label) {
+      point = { lat, lon };
+      if (!pointMarker) pointMarker = new maplibregl.Marker({ color: '#d2401d' }).setLngLat([lon, lat]).addTo(map);
+      else pointMarker.setLngLat([lon, lat]);
+      $('pointText').textContent = `${label}: ${lat.toFixed(5)}, ${lon.toFixed(5)}`;
+      $('usePoint').checked = true;
+      setStatus(`${label} set.${$('mode').value === 'search' ? ' Searches are biased towards it (untick "Send with search" to stop).' : ''}`);
+    }
+    map.on('click', e => setPoint(e.lngLat.lng, e.lngLat.lat, 'Map point'));
+    function requestUserLocation(onSuccess) {
+      if (!navigator.geolocation) { setStatus('Geolocation is not supported by this browser.', true); return; }
+      setStatus('Requesting your location…');
+      navigator.geolocation.getCurrentPosition(pos => {
+        const { latitude: lat, longitude: lon } = pos.coords;
+        userLocation = { lat, lon };
+        setPoint(lon, lat, 'Your location');
+        map.flyTo({ center: [lon, lat], zoom: 15 });
+        if (onSuccess) onSuccess();
+      }, err => setStatus(`Could not get location: ${err.message}`, true), { enableHighAccuracy: true, timeout: 10000, maximumAge: 30000 });
+    }
+    $('locationBtn').addEventListener('click', () => requestUserLocation());
+    $('nearMeBtn').addEventListener('click', () => {
+      // A search without text: places around the point, filtered by layer and radius.
+      const run = () => {
+        $('mode').value = 'search';
+        $('mode').dispatchEvent(new Event('change'));
+        $('query').value = '';
+        $('usePoint').checked = true;
+        if (!$('radius').value) $('radius').value = '1000';
+        if (!selectedLayers().length) $('layers').querySelector('input[value=poi]').checked = true;
+        $('searchForm').requestSubmit();
+      };
+      if (userLocation) { setPoint(userLocation.lon, userLocation.lat, 'Your location'); run(); }
+      else requestUserLocation(run);
+    });
+    $('useMapBtn').addEventListener('click', () => { const c = map.getCenter(); setPoint(c.lng, c.lat, 'Map centre'); });
+    $('viewBboxBtn').addEventListener('click', () => {
+      const b = map.getBounds();
+      $('bbox').value = [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()].map(v => v.toFixed(5)).join(',');
+    });
+    $('clearBtn').addEventListener('click', () => {
+      clearResults();
+      point = null;
+      pointMarker?.remove(); pointMarker = null;
+      $('pointText').textContent = 'Point: none (click the map)';
+      $('usePoint').checked = false;
+      setStatus('Cleared.');
+    });
+
+    // --- endpoint switch: enable only the parameters it accepts -----------------
+    $('mode').addEventListener('change', () => {
+      const mode = $('mode').value;
+      const allowed = ENDPOINTS[mode].params;
+      closeSuggestions();
+      document.querySelectorAll('[data-param]').forEach(el => {
+        const on = allowed.includes(el.dataset.param);
+        el.classList.toggle('off', !on);
+        el.querySelectorAll('input').forEach(i => i.disabled = !on);
+      });
+      // /contains only takes area layers.
+      $('layers').querySelectorAll('input').forEach(i => {
+        if (allowed.includes('layers') && ENDPOINTS[mode].areaLayers && !AREA_LAYERS.includes(i.value)) i.disabled = true;
+      });
+      $('runBtn').textContent = ENDPOINTS[mode].label;
+      $('query').placeholder = mode === 'search' ? 'e.g. bahnhof, Vaduz, Kunstmuseum' : 'Not used by this endpoint';
+      // Bold when the endpoint requires the point.
+      $('pointText').style.fontWeight = allowed.includes('point') ? '600' : '';
+    });
+    $('mode').dispatchEvent(new Event('change'));
+    $('healthBtn').addEventListener('click', async () => {
+      const data = await request('/status', 'Status');
+      if (data && typeof data === 'object') showStatus(data);
+    });
+  </script>
+</body>
+</html>
