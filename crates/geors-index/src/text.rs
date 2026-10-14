@@ -11,11 +11,13 @@ use std::sync::{Arc, OnceLock};
 
 use geors_core::{Layer, OsmType, Place};
 use levenshtein_automata::{DFA, Distance, LevenshteinAutomatonBuilder};
-use tantivy::collector::{FilterCollector, TopDocs};
+use tantivy::collector::TopDocs;
+use tantivy::columnar::ColumnValues;
 use tantivy::directory::error::{DeleteError, LockError, OpenReadError, OpenWriteError};
 use tantivy::directory::{
     Directory, DirectoryLock, FileHandle, Lock, MmapDirectory, WatchCallback, WatchHandle, WritePtr,
 };
+use tantivy::index::SegmentId;
 use tantivy::indexer::NoMergePolicy;
 use tantivy::query::{
     BooleanQuery, BoostQuery, ConstScoreQuery, DisjunctionMaxQuery, FuzzyTermQuery, Occur, Query,
@@ -476,6 +478,11 @@ impl Directory for ReadOnlyDirectory {
 pub struct TextIndex {
     reader: IndexReader,
     fields: Fields,
+    /// `place_id` of every document, per segment. Opening the column
+    /// decodes its block headers (tens of thousands for a large country),
+    /// too slow to repeat for every search. The segments never change
+    /// (read-only index, manual reload).
+    place_ids: HashMap<SegmentId, Arc<dyn ColumnValues<u64>>>,
     /// Lowercase country code of the partition: selects synonym rules.
     country: String,
 }
@@ -489,13 +496,23 @@ impl TextIndex {
         let index = Index::open(ReadOnlyDirectory(mmap))?;
         register_tokenizers(&index);
         let (_, fields) = schema();
-        let reader = index
+        let reader: IndexReader = index
             .reader_builder()
             .reload_policy(ReloadPolicy::Manual)
             .try_into()?;
+        let place_ids = reader
+            .searcher()
+            .segment_readers()
+            .iter()
+            .map(|seg| {
+                let ids = seg.fast_fields().u64("place_id")?.first_or_default_col(0);
+                Ok((seg.segment_id(), ids))
+            })
+            .collect::<tantivy::Result<_>>()?;
         Ok(Self {
             reader,
             fields,
+            place_ids,
             country: country.to_ascii_lowercase(),
         })
     }
@@ -1022,33 +1039,26 @@ impl TextIndex {
         limit: usize,
     ) -> tantivy::Result<Vec<(Score, u32)>> {
         let searcher = self.reader.searcher();
+        let place_ids = self.place_ids.clone();
+        // Places outside `filter` score -inf: any real hit outranks them,
+        // and they are dropped below.
         let top = TopDocs::with_limit(limit.max(1)).tweak_score(move |segment: &SegmentReader| {
-            let ids = segment
-                .fast_fields()
-                .u64("place_id")
-                .expect("place_id fast field")
-                .first_or_default_col(0);
+            let ids = place_ids[&segment.segment_id()].clone();
             let scorer = scorer.clone();
+            let filter = filter.clone();
             move |doc: DocId, score: Score| {
                 let id = ids.get_val(doc) as u32;
+                if filter.as_ref().is_some_and(|f| !f.contains(id)) {
+                    return (Score::NEG_INFINITY, id);
+                }
                 (scorer(id, score), id)
             }
         });
-        // Without a filter, skip reading every match's id a second time.
-        let hits = match filter {
-            None => searcher.search(query, &top)?,
-            Some(f) => {
-                let collector = FilterCollector::new(
-                    "place_id".to_string(),
-                    move |id: u64| f.contains(id as u32),
-                    top,
-                );
-                searcher.search(query, &collector)?
-            }
-        };
-        Ok(hits
+        Ok(searcher
+            .search(query, &top)?
             .into_iter()
             .map(|((score, id), _)| (score, id))
+            .filter(|(score, _)| *score > Score::NEG_INFINITY)
             .collect())
     }
 }
