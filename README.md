@@ -305,6 +305,10 @@ curl 'localhost:2322/contains?lat=48.1374&lon=11.5755'
 curl 'localhost:2322/metrics'
 ```
 
+To try the API on a map, open `examples/geors-map-test.html` in a browser
+while geors runs. It covers every endpoint and parameter, draws full
+geometry, and shows `/status` partitions as boxes on the map.
+
 ## API
 
 Every endpoint returns a GeoJSON `FeatureCollection`, except `/status`. Errors
