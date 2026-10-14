@@ -104,6 +104,18 @@ pub fn import_file(
     let mut written = Vec::new();
     for c in &import.countries {
         let code = c.country_code.clone();
+        if let Some(existing) = replaced_by_fragment(data_dir, &code, source_label, c.places.count)
+            && !opts.countries.contains(&code)
+        {
+            warn!(
+                partition = %code,
+                places = c.places.count,
+                existing_places = existing.num_places,
+                existing_source = %existing.source,
+                "not replacing a much larger partition from another source with what looks like a fragment; name the country with --countries to replace it anyway"
+            );
+            continue;
+        }
         write_partition(
             data_dir,
             PartitionInput {
@@ -261,6 +273,24 @@ fn fetch_and_import(
     source.state.imported_at = Some(now());
     source.state.last_error = None;
     Ok(partitions)
+}
+
+/// The existing partition `code`, if writing `places` places from
+/// `source_label` over it looks like a mistake: it came from another source
+/// and has more than ten times the places. Overlapping extracts (Asia and
+/// North America both hold parts of the United States and Russia) must not
+/// replace a country's real import with the strip they contain.
+fn replaced_by_fragment(
+    data_dir: &Path,
+    code: &str,
+    source_label: &str,
+    places: u64,
+) -> Option<geors_core::storage::PartitionMeta> {
+    let dir = geors_core::storage::partition_dir(data_dir, code);
+    let bytes = std::fs::read(dir.join(geors_core::storage::META_FILE)).ok()?;
+    let meta: geors_core::storage::PartitionMeta = serde_json::from_slice(&bytes).ok()?;
+    (meta.source != source_label && places.saturating_mul(10) < meta.num_places as u64)
+        .then_some(meta)
 }
 
 /// Delete partitions that `source` produced before but not this time (for
@@ -786,6 +816,56 @@ mod tests {
         import_location(&data, other.to_str().unwrap(), &all).unwrap();
         import_location(&data, input, &default).unwrap();
         assert!(geors_core::storage::partition_dir(&data, "ch").exists());
+    }
+
+    #[test]
+    fn fragments_do_not_replace_another_sources_partition() {
+        let dir = tempfile::tempdir().unwrap();
+        let data = dir.path().join("data");
+        let dump = |name: &str, li: usize, ch: usize| {
+            let path = dir.path().join(name);
+            let mut out =
+                String::from(r#"{"type":"NominatimDumpFile","content":{"version":"0.1.0"}}"#);
+            let codes = std::iter::repeat_n("li", li).chain(std::iter::repeat_n("ch", ch));
+            for (i, cc) in codes.enumerate() {
+                out.push_str(&format!(
+                    "\n{{\"type\":\"Place\",\"content\":[{{\"place_id\":{i},\"object_type\":\"N\",\"object_id\":{i},\"osm_key\":\"amenity\",\"osm_value\":\"cafe\",\"rank_address\":30,\"name\":{{\"name\":\"Cafe {i}\"}},\"country_code\":\"{cc}\",\"centroid\":[9.52,47.14]}}]}}"
+                ));
+            }
+            std::fs::write(&path, out + "\n").unwrap();
+            path.to_str().unwrap().to_string()
+        };
+        let places = |cc: &str| {
+            let meta = std::fs::read(
+                geors_core::storage::partition_dir(&data, cc).join(geors_core::storage::META_FILE),
+            )
+            .unwrap();
+            serde_json::from_slice::<geors_core::storage::PartitionMeta>(&meta)
+                .unwrap()
+                .num_places
+        };
+        let all = AddOptions {
+            track: true,
+            all_countries: true,
+            ..Default::default()
+        };
+        // Source A has most of li, source B most of ch; each holds a strip
+        // of the other.
+        let a = dump("a.jsonl", 200, 1);
+        let b = dump("b.jsonl", 1, 200);
+        import_location(&data, &a, &all).unwrap();
+        assert_eq!(import_location(&data, &b, &all).unwrap(), vec!["ch"]);
+        assert_eq!((places("li"), places("ch")), (200, 200));
+        // Re-importing A replaces its own li, and does not touch B's ch.
+        assert_eq!(import_location(&data, &a, &all).unwrap(), vec!["li"]);
+        assert_eq!(places("ch"), 200);
+        // Naming the country replaces it anyway.
+        let explicit = AddOptions {
+            countries: vec!["ch".into()],
+            ..all
+        };
+        assert_eq!(import_location(&data, &a, &explicit).unwrap(), vec!["ch"]);
+        assert_eq!(places("ch"), 1);
     }
 
     fn pbf(path: &Path, seq: Option<u64>) {

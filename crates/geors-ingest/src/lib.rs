@@ -137,6 +137,13 @@ fn use_sorted_join(path: &Path, mode: NodeLookup) -> bool {
     }
 }
 
+/// Whether an area's box wraps around the antimeridian: boxes are kept in
+/// plain min/max longitudes, so such an area spans (nearly) every
+/// longitude. No real area is wider than 180 degrees.
+fn crosses_antimeridian(b: &BBox) -> bool {
+    b.max_lon - b.min_lon > 180.0
+}
+
 impl Default for ImportOptions {
     fn default() -> Self {
         Self {
@@ -762,11 +769,15 @@ pub fn import_pbf(path: &Path, opts: &ImportOptions) -> Result<Import> {
     // neighbour's boundary can be complete in an extract that holds only a
     // strip along it (South Africa's extract has a hole for Lesotho), so a
     // country whose regions are cut counts as covered by regions only.
+    // An area crossing the antimeridian has a box spanning every longitude
+    // (the United States, through the Aleutians), which fits inside any
+    // extract that crosses it too (Asia, North America) and so says nothing.
     let extent = reader::header_bbox(path);
     let mut covered: BTreeMap<String, sink::Coverage> = BTreeMap::new();
     for a in &admin_areas {
         if let (Some(cc), Some(e)) = (&a.country_code, &extent)
             && e.contains_bbox(&a.bbox)
+            && !crosses_antimeridian(&a.bbox)
         {
             let kind = if a.layer == Layer::Country && !clipped.contains(cc) {
                 sink::Coverage::Boundary
@@ -975,4 +986,18 @@ pub fn import_pbf(path: &Path, opts: &ImportOptions) -> Result<Import> {
         countries,
         _work: work,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn antimeridian_boxes() {
+        // The United States: the Aleutians reach past 180 degrees.
+        assert!(crosses_antimeridian(&BBox::new(-179.2, 18.9, 179.8, 71.4)));
+        // Europe, and a country next to the antimeridian.
+        assert!(!crosses_antimeridian(&BBox::new(-32.7, 29.6, 46.8, 81.5)));
+        assert!(!crosses_antimeridian(&BBox::new(166.4, -47.3, 178.6, -34.4)));
+    }
 }
