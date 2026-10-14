@@ -584,3 +584,35 @@ fn lookup_by_nominatim_place_id() {
     let names: Vec<_> = hits.iter().map(|h| h.place.name.clone().unwrap()).collect();
     assert_eq!(names, vec!["Post", "Rathaus"]);
 }
+
+#[test]
+fn derived_files_match_records_and_can_be_added() {
+    use geors_core::storage::{CENTERS_FILE, IMPORTANCE_FILE};
+    let (d, engine, _) = fixture();
+    drop(engine);
+    let dir = d.path().join("li");
+    let check = || {
+        let p = geors_index::Partition::open(&dir).unwrap();
+        for id in 0..p.len() {
+            let rec = p.record(id).unwrap();
+            assert_eq!(p.importance(id), Some(rec.importance));
+            assert_eq!(p.center(id), Some(rec.center()));
+        }
+    };
+    // Written at import.
+    assert!(dir.join(IMPORTANCE_FILE).exists() && dir.join(CENTERS_FILE).exists());
+    check();
+    // Older partitions without them fall back to the records...
+    std::fs::remove_file(dir.join(IMPORTANCE_FILE)).unwrap();
+    std::fs::remove_file(dir.join(CENTERS_FILE)).unwrap();
+    check();
+    // ...and get them from `geors upgrade`, once.
+    let add = || geors_index::partition::add_derived_files(&dir).unwrap();
+    assert_eq!(add(), [IMPORTANCE_FILE, CENTERS_FILE]);
+    assert!(add().is_empty());
+    check();
+    // Only the missing one is added.
+    std::fs::remove_file(dir.join(CENTERS_FILE)).unwrap();
+    assert_eq!(add(), [CENTERS_FILE]);
+    check();
+}

@@ -423,11 +423,20 @@ impl Engine {
                     let ranking = self.ranking.clone();
                     let focus = req.focus;
                     let scorer = Arc::new(move |id: u32, s: f32| {
-                        let Some(rec) = scorer_part.record(id) else {
+                        // Importance and centre come from small files (a
+                        // tenth and a fifth of the records' size), which
+                        // stay cached when the records do not.
+                        let Some(importance) = scorer_part.importance(id) else {
                             return 0.0;
                         };
-                        let d = focus.map(|f| geors_core::geom::haversine(f, rec.center()));
-                        ranking.combined(s, rec.importance, d) * penalty
+                        let d = match focus {
+                            None => None,
+                            Some(f) => match scorer_part.center(id) {
+                                Some(c) => Some(geors_core::geom::haversine(f, c)),
+                                None => return 0.0,
+                            },
+                        };
+                        ranking.combined(s, importance, d) * penalty
                     });
                     let hits = part
                         .text

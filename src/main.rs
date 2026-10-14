@@ -157,6 +157,13 @@ enum Command {
         #[arg(long, env = "GEORS_DATA", default_value = DEFAULT_DATA_DIR)]
         data: PathBuf,
     },
+    /// Add files that newer versions write at import to existing partitions
+    /// (`importance.bin`, `centers.bin`: they speed up text search on large
+    /// data sets), without re-importing.
+    Upgrade {
+        #[arg(long, env = "GEORS_DATA", default_value = DEFAULT_DATA_DIR)]
+        data: PathBuf,
+    },
 }
 
 /// Server configuration file.
@@ -277,6 +284,24 @@ fn info_cmd(data: &Path) -> Result<()> {
         let layers: Vec<String> = m.layers.iter().map(|(k, v)| format!("{k}={v}")).collect();
         println!("    {}", layers.join(" "));
     }
+    Ok(())
+}
+
+fn upgrade_cmd(data: &Path) -> Result<()> {
+    let mut changed = 0;
+    for cc in geors_index::engine::list_partitions(data)? {
+        let t = std::time::Instant::now();
+        let added = geors_index::partition::add_derived_files(&data.join(&cc))?;
+        if !added.is_empty() {
+            println!("{cc}  added {} ({:.1?})", added.join(", "), t.elapsed());
+            changed += 1;
+        }
+    }
+    if changed > 0 {
+        // A running server reopens its partitions.
+        geors_core::storage::bump_generation(data)?;
+    }
+    println!("{changed} partition(s) upgraded");
     Ok(())
 }
 
@@ -611,6 +636,7 @@ fn main() -> Result<()> {
         ),
         Command::Sources { data, remove } => sources_cmd(&data, remove),
         Command::Info { data } => info_cmd(&data),
+        Command::Upgrade { data } => upgrade_cmd(&data),
         Command::Synonyms {
             words,
             config,

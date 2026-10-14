@@ -397,6 +397,14 @@ pub fn write_partition(data_dir: &Path, input: PartitionInput) -> Result<PathBuf
         1 << 20,
         fs::File::create(tmp_dir.join(storage::PLACES_FILE))?,
     );
+    let mut importance = BufWriter::with_capacity(
+        1 << 20,
+        fs::File::create(tmp_dir.join(storage::IMPORTANCE_FILE))?,
+    );
+    let mut centers = BufWriter::with_capacity(
+        1 << 20,
+        fs::File::create(tmp_dir.join(storage::CENTERS_FILE))?,
+    );
     let mut geom =
         BufWriter::with_capacity(1 << 20, fs::File::create(tmp_dir.join(storage::GEOM_FILE))?);
     let mut text = TextIndexWriter::create(&tmp_dir.join(storage::TEXT_DIR))?;
@@ -466,6 +474,9 @@ pub fn write_partition(data_dir: &Path, input: PartitionInput) -> Result<PathBuf
             };
             rec.set_center(place.center);
             places_out.write_all(&rec.encode())?;
+            importance.write_all(&rec.importance.to_le_bytes())?;
+            centers.write_all(&rec.lon_e7.to_le_bytes())?;
+            centers.write_all(&rec.lat_e7.to_le_bytes())?;
             doc_offset += doc_buf.len() as u64;
             geom_offset += geom_buf.len() as u64;
 
@@ -499,6 +510,8 @@ pub fn write_partition(data_dir: &Path, input: PartitionInput) -> Result<PathBuf
     geors_core::mem::mark("writer: places written");
     docs.flush()?;
     places_out.flush()?;
+    importance.flush()?;
+    centers.flush()?;
     geom.flush()?;
     boxes.flush()?;
     drop(boxes);

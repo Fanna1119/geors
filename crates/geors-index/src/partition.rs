@@ -52,6 +52,81 @@ impl Blob {
     }
 }
 
+/// Small per-place files copied out of the records, so that scoring text
+/// matches touches a fraction of `places.bin` (see `storage`): file name
+/// and bytes per place. Imports write them; partitions written before they
+/// existed fall back to the records, and `geors upgrade` adds them.
+const DERIVED: [(&str, usize); 2] = [(storage::IMPORTANCE_FILE, 4), (storage::CENTERS_FILE, 8)];
+
+/// The value a derived file stores for `rec`.
+fn derived_value(file: &str, rec: &PlaceRecord, out: &mut Vec<u8>) {
+    if file == storage::IMPORTANCE_FILE {
+        out.extend_from_slice(&rec.importance.to_le_bytes());
+    } else {
+        out.extend_from_slice(&rec.lon_e7.to_le_bytes());
+        out.extend_from_slice(&rec.lat_e7.to_le_bytes());
+    }
+}
+
+/// A derived file, or `None` if missing or of the wrong size (ignored, as
+/// the records have the same values).
+fn open_derived(dir: &Path, file: &str, num_places: u32) -> Result<Option<Blob>, IndexError> {
+    let path = dir.join(file);
+    if !path.exists() {
+        return Ok(None);
+    }
+    let (_, size) = DERIVED
+        .iter()
+        .find(|(f, _)| *f == file)
+        .expect("derived file");
+    let blob = Blob::open(&path)?;
+    if blob.bytes().len() != num_places as usize * size {
+        tracing::warn!("ignoring {}: wrong size", path.display());
+        return Ok(None);
+    }
+    Ok(Some(blob))
+}
+
+/// Write the derived files a partition lacks, from its records (one
+/// sequential pass). Returns the names of the files written.
+pub fn add_derived_files(dir: &Path) -> Result<Vec<&'static str>, IndexError> {
+    let missing: Vec<&'static str> = DERIVED
+        .iter()
+        .map(|(f, _)| *f)
+        .filter(|f| !dir.join(f).exists())
+        .collect();
+    if missing.is_empty() {
+        return Ok(missing);
+    }
+    let records = Blob::open(&dir.join(storage::PLACES_FILE))?;
+    let tmp = |f: &str| dir.join(format!(".{f}.tmp-{}", std::process::id()));
+    let mut outs = missing
+        .iter()
+        .map(|f| {
+            Ok(std::io::BufWriter::with_capacity(
+                1 << 20,
+                File::create(tmp(f))?,
+            ))
+        })
+        .collect::<Result<Vec<_>, IndexError>>()?;
+    let mut buf = Vec::new();
+    for chunk in records.bytes().chunks_exact(PlaceRecord::SIZE) {
+        let rec = PlaceRecord::decode(chunk)
+            .ok_or_else(|| IndexError::Format(format!("bad record in {}", dir.display())))?;
+        for (f, out) in missing.iter().zip(&mut outs) {
+            buf.clear();
+            derived_value(f, &rec, &mut buf);
+            std::io::Write::write_all(out, &buf)?;
+        }
+    }
+    for (f, mut out) in missing.iter().zip(outs) {
+        std::io::Write::flush(&mut out)?;
+        drop(out);
+        std::fs::rename(tmp(f), dir.join(f))?;
+    }
+    Ok(missing)
+}
+
 impl AsRef<[u8]> for Blob {
     fn as_ref(&self) -> &[u8] {
         self.bytes()
@@ -68,6 +143,9 @@ pub struct Partition {
     cc_upper: String,
     pub text: TextIndex,
     records: Blob,
+    /// `importance.bin` and `centers.bin`, if present with the right size.
+    importance: Option<Blob>,
+    centers: Option<Blob>,
     docs: Blob,
     geom: Blob,
     spatial: Blob,
@@ -102,6 +180,8 @@ impl Partition {
         let p = Self {
             text: TextIndex::open(&dir.join(storage::TEXT_DIR), &meta.country_code)?,
             records: Blob::open(&dir.join(storage::PLACES_FILE))?,
+            importance: open_derived(dir, storage::IMPORTANCE_FILE, meta.num_places)?,
+            centers: open_derived(dir, storage::CENTERS_FILE, meta.num_places)?,
             docs: Blob::open(&dir.join(storage::DOCS_FILE))?,
             geom: Blob::open(&dir.join(storage::GEOM_FILE))?,
             spatial: Blob::open(&dir.join(storage::SPATIAL_FILE))?,
@@ -153,6 +233,34 @@ impl Partition {
     pub fn record(&self, id: u32) -> Option<PlaceRecord> {
         let start = id as usize * PlaceRecord::SIZE;
         PlaceRecord::decode(self.records.bytes().get(start..start + PlaceRecord::SIZE)?)
+    }
+
+    /// Importance of place `id`: from `importance.bin` when the partition
+    /// has one, else from its record.
+    pub fn importance(&self, id: u32) -> Option<f32> {
+        match &self.importance {
+            Some(blob) => {
+                let start = id as usize * 4;
+                let b = blob.bytes().get(start..start + 4)?;
+                Some(f32::from_le_bytes(b.try_into().ok()?))
+            }
+            None => self.record(id).map(|r| r.importance),
+        }
+    }
+
+    /// Centre of place `id`: from `centers.bin` when the partition has one,
+    /// else from its record.
+    pub fn center(&self, id: u32) -> Option<LonLat> {
+        match &self.centers {
+            Some(blob) => {
+                let start = id as usize * 8;
+                let b = blob.bytes().get(start..start + 8)?;
+                let lon = i32::from_le_bytes(b[0..4].try_into().ok()?);
+                let lat = i32::from_le_bytes(b[4..8].try_into().ok()?);
+                Some(LonLat::new(geom::from_e7(lon), geom::from_e7(lat)))
+            }
+            None => self.record(id).map(|r| r.center()),
+        }
     }
 
     /// Load the JSON document. Geometry is attached only if `with_geometry`.
