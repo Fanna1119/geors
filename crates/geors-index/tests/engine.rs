@@ -422,6 +422,29 @@ fn partitions_without_a_typed_word_are_skipped_safely() {
 }
 
 #[test]
+fn short_prefixes_suggest_major_places_first() {
+    let (_d, engine, _) = fixture();
+    // Enough cities start with "vad": only they are suggested.
+    let names = search(&engine, |r| {
+        r.query = Some("vad".into());
+        r.limit = 2;
+    });
+    assert_eq!(names, ["Vaduz", "Vaduz Andorra"]);
+    // Too few: everything is searched.
+    let names = search(&engine, |r| r.query = Some("vad".into()));
+    assert!(names.contains(&"Café Vaduz".to_string()), "{names:?}");
+    let names = search(&engine, |r| r.query = Some("sho".into()));
+    assert_eq!(names.len(), 10);
+    // A location narrows the search: no major-first step.
+    let names = search(&engine, |r| {
+        r.query = Some("vad".into());
+        r.limit = 2;
+        r.focus = Some(LonLat::new(9.5215, 47.1405));
+    });
+    assert!(names.contains(&"Café Vaduz".to_string()), "{names:?}");
+}
+
+#[test]
 fn other_scripts_match_in_latin_letters() {
     let dir = tempfile::tempdir().unwrap();
     let places = vec![

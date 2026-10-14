@@ -49,7 +49,7 @@ const MAX_PREFIX: usize = 12;
 /// shorter ones match too many terms to be useful.
 const MIN_ADDRESS_PREFIX: usize = 3;
 /// Prefixes up to this length are answered from `major_prefix`.
-const SHORT_PREFIX: usize = 2;
+pub const SHORT_PREFIX: usize = 2;
 /// Importance from which a place counts as "major" (cities, towns,
 /// villages, regions; POIs with a Wikipedia/Wikidata link).
 const MAJOR_IMPORTANCE: f32 = 0.3;
@@ -777,6 +777,24 @@ impl TextIndex {
                     && !t.chars().any(|c| c.is_ascii_digit())
                     && !self.split_compound(t, false).is_empty())
         })
+    }
+
+    /// `query`, restricted to major places with a name word starting with
+    /// `token`'s first letters (cities and up, well-known POIs; see
+    /// `major_prefix`).
+    pub fn major_only(&self, query: Box<dyn Query>, token: &str) -> Box<dyn Query> {
+        let short: String = token.chars().take(SHORT_PREFIX).collect();
+        let major = TermQuery::new(
+            Term::from_field_text(self.fields.major_prefix, &short),
+            IndexRecordOption::Basic,
+        );
+        Box::new(BooleanQuery::new(vec![
+            (Occur::Must, query),
+            (
+                Occur::Must,
+                Box::new(ConstScoreQuery::new(Box::new(major), 0.0)),
+            ),
+        ]))
     }
 
     /// Whether a later phase of `q` (fuzzy, `slack` words allowed to be
