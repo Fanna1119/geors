@@ -96,6 +96,11 @@ enum Command {
         /// Download extracts in full even when diffs are available.
         #[arg(long)]
         full: bool,
+        /// Merge pending diffs into the base and re-import in full, instead
+        /// of updating the patch (done automatically once the patch holds
+        /// 5 % of the places or is 30 days old).
+        #[arg(long)]
+        rebuild: bool,
         /// After a diff update, delete the local extract a source was
         /// imported from (its newer copy in <data>/.base replaces it).
         #[arg(long)]
@@ -385,6 +390,20 @@ fn sources_cmd(data: &Path, remove: Option<String>) -> Result<()> {
             _ if !s.diffs => println!("    diffs: disabled (--no-diffs)"),
             _ => println!("    diffs: not available (full downloads)"),
         }
+        if let Some(p) = &s.state.patch {
+            println!(
+                "    patch: up to sequence {} ({}), {} places replacing {}, since {}",
+                p.sequence,
+                if p.timestamp > 0 {
+                    iso_time(p.timestamp as u64)
+                } else {
+                    "-".into()
+                },
+                p.places,
+                p.tombstones,
+                iso_time(p.since)
+            );
+        }
         if let Some(e) = &s.state.last_error {
             println!("    last error: {e}");
         }
@@ -610,6 +629,7 @@ fn main() -> Result<()> {
             sources,
             force,
             full,
+            rebuild,
             prune_originals,
             keep_download,
         } => update_cmd(
@@ -620,6 +640,7 @@ fn main() -> Result<()> {
                 sources,
                 keep_download,
                 prune_originals,
+                rebuild,
             },
         ),
         Command::Sources { data, remove } => sources_cmd(&data, remove),

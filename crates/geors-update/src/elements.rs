@@ -50,19 +50,12 @@ fn stamp(path: &Path) -> Result<(u64, u64)> {
     Ok((m.len(), mtime))
 }
 
-/// Where the block index of `pbf` is kept.
-pub fn index_path(pbf: &Path) -> PathBuf {
-    let mut name = pbf.file_name().unwrap_or_default().to_os_string();
-    name.push(".blocks");
-    pbf.with_file_name(name)
-}
-
 impl BlockIndex {
-    /// The saved index of `pbf` if it is current, else build and save it.
-    pub fn load_or_build(pbf: &Path) -> Result<Self> {
-        let path = index_path(pbf);
+    /// The index of `pbf` saved at `path` if it is current, else build and
+    /// save it there.
+    pub fn load_or_build(pbf: &Path, path: &Path) -> Result<Self> {
         let (len, mtime) = stamp(pbf)?;
-        if let Ok(bytes) = std::fs::read(&path)
+        if let Ok(bytes) = std::fs::read(path)
             && let Ok(index) = postcard::from_bytes::<BlockIndex>(&bytes)
             && index.file_len == len
             && index.file_mtime == mtime
@@ -70,7 +63,7 @@ impl BlockIndex {
             return Ok(index);
         }
         let index = Self::build(pbf)?;
-        std::fs::write(&path, postcard::to_allocvec(&index)?)
+        std::fs::write(path, postcard::to_allocvec(&index)?)
             .with_context(|| format!("cannot write '{}'", path.display()))?;
         Ok(index)
     }
@@ -337,10 +330,12 @@ mod tests {
     fn reads_base_and_changes() {
         let dir = tempfile::tempdir().unwrap();
         let pbf = base(dir.path());
-        let index = BlockIndex::load_or_build(&pbf).unwrap();
+        let saved = dir.path().join("blocks");
+        let index = BlockIndex::load_or_build(&pbf, &saved).unwrap();
         assert_eq!(index.blocks.len(), 4);
-        // Saved next to the file and reused while the file is unchanged.
-        assert_eq!(BlockIndex::load_or_build(&pbf).unwrap(), index);
+        // Saved and reused while the file is unchanged.
+        assert!(saved.exists());
+        assert_eq!(BlockIndex::load_or_build(&pbf, &saved).unwrap(), index);
 
         let mut changes = ChangeSet::default();
         changes.upsert(Elem::Node {

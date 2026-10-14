@@ -28,6 +28,11 @@ use crate::elements::{BlockIndex, ElementSource};
 use crate::osm::{ChangeSet, Elem, Kind};
 use crate::pbf_write::{blob, header_block, primitive_block};
 
+/// The base's block index, in the state directory.
+const BLOCK_INDEX: &str = "blocks.bin";
+/// The change store (all changes since the base), in the state directory.
+pub const CHANGES: &str = "changes.bin";
+
 /// What a patch run did.
 #[derive(Debug, Default)]
 pub struct PatchStats {
@@ -118,7 +123,7 @@ pub fn build_patch(
 ) -> Result<PatchStats> {
     let t = Instant::now();
     std::fs::create_dir_all(work)?;
-    let index = BlockIndex::load_or_build(base)?;
+    let index = BlockIndex::load_or_build(base, &state_dir.join(BLOCK_INDEX))?;
     let source = ElementSource::new(base, &index, changes);
     let parts: Vec<Partition> = geors_index::engine::list_partitions(data_dir)?
         .into_iter()

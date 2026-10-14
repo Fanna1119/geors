@@ -107,6 +107,23 @@ pub struct SourceState {
     /// Replication state of `base`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub replication: Option<ReplicationState>,
+    /// Diffs applied as a patch since `base` was imported (incremental
+    /// updates); `None` right after a full import.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub patch: Option<PatchState>,
+}
+
+/// The patch on top of a source's last full import.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PatchState {
+    /// Last diff applied, and the time of its data (Unix seconds).
+    pub sequence: u64,
+    pub timestamp: i64,
+    /// When the first patch after the full import was made (Unix seconds).
+    pub since: u64,
+    /// Places in the patch partitions, and main places they replace.
+    pub places: u64,
+    pub tombstones: u64,
 }
 
 /// Where a base file's diffs come from and how far it is applied.

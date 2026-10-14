@@ -32,6 +32,35 @@ pub use source::{
 const DOWNLOAD_DIR: &str = ".downloads";
 const LOCK_FILE: &str = ".lock";
 const BASE_DIR: &str = ".base";
+/// Kept state per source for incremental updates: the address hierarchy,
+/// the change store and the base's block index.
+const STATE_DIR: &str = ".state";
+
+/// Fold the patch into a full rebuild once it holds more than this share of
+/// the source's places...
+const PATCH_MAX_SHARE: f64 = 0.05;
+/// ...or is older than this (seconds).
+const PATCH_MAX_AGE: u64 = 30 * 24 * 3600;
+
+fn state_dir(data_dir: &Path, name: &str) -> PathBuf {
+    data_dir.join(STATE_DIR).join(name)
+}
+
+/// An empty state directory for a full import of `source` that keeps its
+/// hierarchy (a PBF with replication info, tracked for updates); `None`
+/// (and any old state removed) otherwise.
+fn fresh_state(data_dir: &Path, source: &Source, keep: bool) -> Result<Option<PathBuf>> {
+    let dir = state_dir(data_dir, &source.name);
+    if dir.exists() {
+        std::fs::remove_dir_all(&dir)
+            .with_context(|| format!("cannot clear '{}'", dir.display()))?;
+    }
+    if !keep {
+        return Ok(None);
+    }
+    std::fs::create_dir_all(&dir)?;
+    Ok(Some(dir))
+}
 
 fn now() -> u64 {
     SystemTime::now()
@@ -183,6 +212,7 @@ pub fn import_location(data_dir: &Path, input: &str, opts: &AddOptions) -> Resul
         &mut source,
         None,
         opts.keep_download,
+        opts.track,
     )?;
     if opts.track {
         let mut reg = Registry::load(data_dir)?;
@@ -194,14 +224,17 @@ pub fn import_location(data_dir: &Path, input: &str, opts: &AddOptions) -> Resul
 }
 
 /// Fetch the source's current version (if remote) and import it.
+/// With `keep_state`, a PBF with replication info keeps its address
+/// hierarchy for incremental updates (see [`patch`]).
 fn fetch_and_import(
     http: &Http,
     data_dir: &Path,
     source: &mut Source,
     known: Option<Version>,
     keep_download: bool,
+    keep_state: bool,
 ) -> Result<Vec<String>> {
-    let opts = source.import_options();
+    let mut opts = source.import_options();
     let (partitions, version) = if source.is_remote() {
         let dir = data_dir.join(DOWNLOAD_DIR);
         std::fs::create_dir_all(&dir)?;
@@ -238,6 +271,7 @@ fn fetch_and_import(
             }
             None => (dest, !keep_download),
         };
+        opts.state_dir = fresh_state(data_dir, source, keep_state && replication.is_some())?;
         let partitions = import_file(&path, source.format, data_dir, &opts, &label, discard)?;
         set_base(source, replication.map(|r| (path, r)));
         (partitions, version)
@@ -248,6 +282,8 @@ fn fetch_and_import(
             .file_name()
             .map(|n| n.to_string_lossy().to_string())
             .unwrap_or_default();
+        let keep = keep_state && replication_of(source, path).is_some();
+        opts.state_dir = fresh_state(data_dir, source, keep)?;
         let partitions = import_file(path, source.format, data_dir, &opts, &label, false)?;
         // A local Geofabrik extract can be kept current with diffs too; the
         // user's file itself is never modified (see `diff_update`).
@@ -262,6 +298,7 @@ fn fetch_and_import(
     source.state.partitions = partitions.clone();
     source.state.imported_at = Some(now());
     source.state.last_error = None;
+    source.state.patch = None;
     Ok(partitions)
 }
 
@@ -338,15 +375,19 @@ fn set_base(source: &mut Source, base: Option<(PathBuf, pbf_write::Replication)>
 /// download is also simply faster.
 const MAX_DIFFS: u64 = 90;
 
-/// Bring a source with a base PBF up to date by applying diffs, then
-/// re-import. `Ok(None)` means diffs cannot be used and the caller should
-/// do a full update instead.
+/// Bring a source with a base PBF up to date with replication diffs.
+///
+/// With a kept state (see [`fresh_state`]), the diffs go into the change
+/// store and become a patch on top of the last full import ([`patch`]); the
+/// base PBF is left as it is. Once the patch is large or old (or with
+/// `opts.rebuild`), all pending changes are merged into the base and the
+/// source is imported in full. `Ok(None)` means diffs cannot be used and the
+/// caller should download in full.
 fn diff_update(
     http: &Http,
     data_dir: &Path,
     source: &mut Source,
-    force: bool,
-    prune_original: bool,
+    opts: &UpdateOptions,
 ) -> Result<Option<Outcome>> {
     let (Some(base), Some(rep)) = (source.state.base.clone(), source.state.replication.clone())
     else {
@@ -363,19 +404,65 @@ fn diff_update(
     {
         return Ok(None);
     }
+    let applied = source.state.patch.as_ref().map_or(rep.sequence, |p| p.sequence);
     let (latest, timestamp) = replicate::latest_state(http, &rep.base_url)?;
-    if latest <= rep.sequence && !force {
-        info!(source = %source.name, sequence = rep.sequence, "up to date");
+    if latest <= applied && !opts.force && !opts.rebuild {
+        info!(source = %source.name, sequence = applied, "up to date");
         return Ok(Some(Outcome::UpToDate));
     }
     if latest > rep.sequence + MAX_DIFFS {
         info!(source = %source.name, behind = latest - rep.sequence, "too far behind for diffs; downloading in full");
         return Ok(None);
     }
+    let state = state_dir(data_dir, &source.name);
+    let store = state.join(patch::CHANGES);
+    let mut changes = elements::load_changes(&store)?;
+    if latest > applied {
+        info!(source = %source.name, from = applied, to = latest, "downloading diffs");
+        changes.merge(replicate::fetch_changes(http, &rep.base_url, applied, latest)?);
+    }
+    let iso = (timestamp > 0).then(|| unix_to_iso(timestamp));
+
+    // Incremental: a patch from all changes since the base.
+    if !opts.rebuild && geors_ingest::hierarchy::Hierarchy::is_kept(&state) {
+        elements::save_changes(&store, &changes)?;
+        let work = state.join("work");
+        let _ = std::fs::remove_dir_all(&work);
+        let stats = patch::build_patch(&base, &changes, &state, data_dir, &work)?;
+        let _ = std::fs::remove_dir_all(&work);
+        let since = source.state.patch.as_ref().map_or_else(now, |p| p.since);
+        source.state.patch = Some(source::PatchState {
+            sequence: latest,
+            timestamp,
+            since,
+            places: stats.places,
+            tombstones: stats.tombstones as u64,
+        });
+        source.state.version = Some(Version {
+            sequence: Some(latest),
+            timestamp: iso.clone(),
+            ..Default::default()
+        });
+        source.state.imported_at = Some(now());
+        source.state.last_error = None;
+        let total = places_of(data_dir, &source.state.partitions);
+        let large = stats.places as f64 > PATCH_MAX_SHARE * total as f64;
+        let old = now().saturating_sub(since) > PATCH_MAX_AGE;
+        if !large && !old {
+            info!(source = %source.name, sequence = latest, places = stats.places, replaced = stats.tombstones, "patched");
+            return Ok(Some(Outcome::Updated {
+                partitions: stats.countries,
+            }));
+        }
+        info!(source = %source.name, places = stats.places, total, large, old, "patch is large or old; rebuilding in full");
+    }
+
+    // Full rebuild: merge all pending changes into the base once, import.
     let managed = base_path(data_dir, &source.name);
-    let path = if latest > rep.sequence {
-        info!(source = %source.name, from = rep.sequence, to = latest, "applying diffs");
-        let changes = replicate::fetch_changes(http, &rep.base_url, rep.sequence, latest)?;
+    let path = if changes.is_empty() {
+        base
+    } else {
+        info!(source = %source.name, from = rep.sequence, to = latest, "merging changes into the base");
         std::fs::create_dir_all(managed.parent().unwrap())?;
         let tmp = managed.with_extension("pbf.tmp");
         let new_rep = pbf_write::Replication {
@@ -386,21 +473,14 @@ fn diff_update(
         replicate::apply_changes(&base, changes, &tmp, &new_rep)?;
         std::fs::rename(&tmp, &managed)?;
         managed.clone()
-    } else {
-        base
     };
     let label = path
         .file_name()
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_default();
-    let partitions = import_file(
-        &path,
-        source.format,
-        data_dir,
-        &source.import_options(),
-        &label,
-        false,
-    )?;
+    let mut import_opts = source.import_options();
+    import_opts.state_dir = fresh_state(data_dir, source, true)?;
+    let partitions = import_file(&path, source.format, data_dir, &import_opts, &label, false)?;
     remove_stale_partitions(data_dir, source, &partitions)?;
     let rep = replicate::read_replication(&path)?.context("base lost its replication header")?;
     let iso = (rep.timestamp > 0).then(|| unix_to_iso(rep.timestamp));
@@ -412,12 +492,27 @@ fn diff_update(
     source.state.partitions = partitions.clone();
     source.state.imported_at = Some(now());
     source.state.last_error = None;
+    source.state.patch = None;
     let sequence = rep.sequence;
     set_base(source, Some((path.clone(), rep)));
-    if prune_original && !source.is_remote() && path == managed {
+    if opts.prune_originals && !source.is_remote() && path == managed {
         prune_original_file(source, &managed, sequence);
     }
     Ok(Some(Outcome::Updated { partitions }))
+}
+
+/// Places in the given partitions (from their metadata).
+fn places_of(data_dir: &Path, partitions: &[String]) -> u64 {
+    partitions
+        .iter()
+        .filter_map(|cc| {
+            let path = geors_core::storage::partition_dir(data_dir, cc)
+                .join(geors_core::storage::META_FILE);
+            let meta: geors_core::storage::PartitionMeta =
+                serde_json::from_slice(&std::fs::read(path).ok()?).ok()?;
+            Some(meta.num_places as u64)
+        })
+        .sum()
 }
 
 /// Delete the local extract a source was imported from once the managed
@@ -505,6 +600,16 @@ pub fn clean_data_dir(data_dir: &Path, registry: &Registry) -> u64 {
             doomed.push(path);
         }
     }
+    let names: Vec<&str> = registry.sources.iter().map(|s| s.name.as_str()).collect();
+    for entry in std::fs::read_dir(data_dir.join(STATE_DIR))
+        .into_iter()
+        .flatten()
+        .flatten()
+    {
+        if !names.contains(&entry.file_name().to_string_lossy().as_ref()) {
+            doomed.push(entry.path());
+        }
+    }
     for entry in std::fs::read_dir(data_dir.join(DOWNLOAD_DIR))
         .into_iter()
         .flatten()
@@ -573,6 +678,8 @@ pub struct UpdateOptions {
     /// After a diff update of a source imported from a local file, delete
     /// that file: the newer managed copy in `<data>/.base` replaces it.
     pub prune_originals: bool,
+    /// Fold pending diffs into a full rebuild instead of a patch.
+    pub rebuild: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -626,7 +733,7 @@ pub fn update(data_dir: &Path, opts: &UpdateOptions) -> Result<Vec<SourceReport>
         let diffed = if opts.full {
             Ok(None)
         } else {
-            diff_update(&http, data_dir, source, opts.force, opts.prune_originals)
+            diff_update(&http, data_dir, source, opts)
         };
         let outcome = match diffed {
             Ok(Some(outcome)) => outcome,
@@ -670,7 +777,7 @@ fn full_update(http: &Http, data_dir: &Path, source: &mut Source, opts: &UpdateO
         return Outcome::UpToDate;
     }
     info!(source = %source.name, sequence = ?current.sequence, timestamp = current.timestamp.as_deref().unwrap_or("-"), "new version available");
-    match fetch_and_import(http, data_dir, source, Some(current), opts.keep_download) {
+    match fetch_and_import(http, data_dir, source, Some(current), opts.keep_download, true) {
         Ok(partitions) => Outcome::Updated { partitions },
         Err(e) => Outcome::Failed(format!("{e:#}")),
     }

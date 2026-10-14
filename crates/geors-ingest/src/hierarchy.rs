@@ -548,6 +548,11 @@ impl Hierarchy {
         Ok(())
     }
 
+    /// Whether `dir` holds a hierarchy saved with [`Hierarchy::save`].
+    pub fn is_kept(dir: &Path) -> bool {
+        dir.join(META).is_file() && dir.join(UNITS).is_file()
+    }
+
     /// Load a hierarchy saved with [`Hierarchy::save`].
     pub fn load(dir: &Path) -> Result<Self> {
         let bytes = std::fs::read(dir.join(META))

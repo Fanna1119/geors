@@ -1,6 +1,8 @@
 # Incremental updates: design
 
-Status: proposal, based on measurements (branch `incremental-updates-test`).
+Status (2026-10-14): milestones 1–5 done and verified, milestone 6 written
+but not yet tested end to end; work paused. See "Where it stands" at the
+end. Branch `incremental-updates-test`.
 Goal (issue #1): apply replication diffs without re-importing the whole
 extract. Today `geors update` merges the diffs into the base PBF and then
 re-imports everything: Germany 4 min 20 s, Europe 28 min.
@@ -196,8 +198,9 @@ diffs; then hourly diffs.
    rebuild for all 24,611,917 places; patch 93 s (full import 4 min 20 s
    plus 74 s to merge the diff into the base). South Africa: identical,
    2.4 s.
-6. **Policy:** `geors update` patches by default, folds into a full rebuild
-   by size / age, `--full` forces one.
+6. **Policy** (code written, untested): `geors update` patches by default
+   and folds into a full rebuild by size / age; `--rebuild` forces one,
+   `--full` still downloads in full. See "Where it stands".
 
 Each milestone is usable and testable on its own on small extracts.
 
@@ -207,3 +210,50 @@ Each milestone is usable and testable on its own on small extracts.
 - Disk: kept import state adds ~400 MB for Germany, a few GB for Europe.
 - Minutely diffs (planet.openstreetmap.org) would work with the same
   design; Geofabrik publishes daily.
+
+## Where it stands (2026-10-14)
+
+**Done and verified** (milestones 1–5, committed and pushed): patch-aware
+serving, block index + element source + change store, kept hierarchy,
+diff → patch through the normal importer, changed boundaries and areas.
+Germany, one daily diff: patched data identical to a full rebuild for all
+24,611,917 places; patch 93 s (full import 4 min 20 s + 74 s base merge).
+South Africa: identical, 2.4 s.
+
+**Written, not tested** (milestone 6, uncommitted at the time of writing):
+- `<data>/.state/<source>/` per source: kept hierarchy, change store
+  (`changes.bin`), block index (`blocks.bin`, moved here from next to the
+  base PBF so user directories are not written to).
+- Full imports of tracked PBF sources with replication info keep the state
+  (`fresh_state`); `SourceState::patch` (`sources.json`) records the applied
+  sequence, places, replaced places and since when.
+- `diff_update`: downloads diffs since the last *applied* sequence, adds
+  them to the change store, rebuilds the patch (`build_patch`). Folds into a
+  full rebuild (merge all pending changes into the base once, re-import with
+  fresh state) when the patch holds > 5 % of the source's places, is older
+  than 30 days, or with `geors update --rebuild`. Sources without kept state
+  take that rebuild path once and patch from then on.
+- `clean_data_dir` removes state of removed sources; `geors sources` shows
+  the patch.
+
+**Left to do:**
+1. End-to-end test through the CLI (planned on Germany): `geors import
+   germany-latest.osm.pbf` (keeps state), `geors update` (patch), export,
+   `geors update --rebuild` (same pending changes, full rebuild), export,
+   compare sorted exports (as `examples/verify_patch` does). Then a second
+   `geors update` on top of a patch (applied sequence > base sequence), and
+   the fold thresholds. Test extracts and `/tmp` work dirs were deleted;
+   re-download Germany / South Africa (both had diffs available).
+2. Server: the in-server updater (`serve --update-interval`) goes through
+   the same `update()`; check that hot reload picks up patch-only changes
+   (generation is bumped by `build_patch`).
+3. Docs: README "Keeping data up to date" (patches, `.state`, `--rebuild`,
+   disk cost: Germany ~400 MB of kept state), and close issue #1.
+4. Follow-ups found along the way:
+   - Overlapping areas of equal rank now resolve deterministically (smaller
+     area, then name). This changed 22 % of Austrian places' "state":
+     `place=region` landscape areas are classified as state level and
+     outrank the real state boundary (Steiermark). Worth its own issue.
+   - Patch time is dominated by the two small imports (Germany: phase A
+     ~30 s, phase B ~50 s) and the root scan (~13 s).
+
