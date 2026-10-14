@@ -10,6 +10,7 @@
 //! 4. **Re-ranking** of the merged top hits with name-match boosts, dedup.
 
 use std::cmp::Ordering;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
@@ -436,10 +437,17 @@ impl Engine {
         let mut hits = self.load(cands, req.focus)?;
         hits.retain(|h| req.tags.matches(&h.place.osm_key, &h.place.osm_value));
         let mut analyzer = self.analyzer.clone();
+        // Hits share their parents (country, state, ...), each with up to
+        // hundreds of translated names: tokenize every unit once.
+        let mut units: HashMap<(*const Partition, u32), Vec<String>> = HashMap::new();
         for hit in &mut hits {
+            // Translations are often the same string ("Berlin" in most
+            // languages).
+            let mut seen = HashSet::new();
             let names: Vec<Vec<String>> = hit
                 .place
                 .all_names()
+                .filter(|n| seen.insert(*n))
                 .map(|n| text::tokenize(&mut analyzer, n))
                 .collect();
             let boost = names
@@ -449,7 +457,7 @@ impl Engine {
                         .name_match(&parsed.tokens, n, parsed.last_is_prefix)
                 })
                 .fold(1.0f32, f32::max);
-            let context = context_tokens(hit, &mut analyzer);
+            let context = context_tokens(hit, &mut analyzer, &mut units);
             let echo =
                 self.ranking
                     .city_echo(&parsed.tokens, &names, &context, parsed.last_is_prefix);
@@ -787,17 +795,31 @@ fn tags_match(part: &Partition, rec: &geors_core::storage::PlaceRecord, tags: &T
 
 /// Words of a place's address context: the names (all languages) of its
 /// admin units, and its `addr:city`.
-fn context_tokens(hit: &Hit, analyzer: &mut TextAnalyzer) -> Vec<String> {
-    let units = hit
-        .place
-        .parents
-        .iter()
-        .filter_map(|&i| hit.partition.admins.get(i as usize));
+/// `units`: tokens of each admin unit seen so far, by partition and index.
+fn context_tokens(
+    hit: &Hit,
+    analyzer: &mut TextAnalyzer,
+    units: &mut HashMap<(*const Partition, u32), Vec<String>>,
+) -> Vec<String> {
     let mut out = Vec::new();
-    for unit in units {
-        for n in std::iter::once(&unit.name).chain(unit.names.values()) {
-            out.extend(text::tokenize(analyzer, n));
-        }
+    for &i in &hit.place.parents {
+        let Some(unit) = hit.partition.admins.get(i as usize) else {
+            continue;
+        };
+        let tokens = units
+            .entry((Arc::as_ptr(&hit.partition), i))
+            .or_insert_with(|| {
+                let mut seen = HashSet::new();
+                let mut t: Vec<String> = std::iter::once(&unit.name)
+                    .chain(unit.names.values())
+                    .filter(|n| seen.insert(n.as_str()))
+                    .flat_map(|n| text::tokenize(analyzer, n))
+                    .collect();
+                t.sort_unstable();
+                t.dedup();
+                t
+            });
+        out.extend(tokens.iter().cloned());
     }
     if let Some(city) = &hit.place.city {
         out.extend(text::tokenize(analyzer, city));

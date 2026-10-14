@@ -980,12 +980,18 @@ impl TextIndex {
                 (scorer(id, score), id)
             }
         });
-        let collector = FilterCollector::new(
-            "place_id".to_string(),
-            move |id: u64| filter.as_ref().is_none_or(|f| f.contains(id as u32)),
-            top,
-        );
-        let hits = searcher.search(query, &collector)?;
+        // Without a filter, skip reading every match's id a second time.
+        let hits = match filter {
+            None => searcher.search(query, &top)?,
+            Some(f) => {
+                let collector = FilterCollector::new(
+                    "place_id".to_string(),
+                    move |id: u64| f.contains(id as u32),
+                    top,
+                );
+                searcher.search(query, &collector)?
+            }
+        };
         Ok(hits
             .into_iter()
             .map(|((score, id), _)| (score, id))
