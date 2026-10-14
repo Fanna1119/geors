@@ -19,7 +19,18 @@ cd examples/demo
 npm install
 node record.mjs                        # demo.webm, demo.mp4, demo.gif
 GIF_FROM=search-burst GIF_SECONDS=8 node record.mjs
+
+# Only some scenes, zoomed out over all three continents:
+SCENES=search-burst SECONDS=12 NAME=search GIF_SECONDS=12 node record.mjs
+SCENES=reverse-world SECONDS=12 NAME=reverse GIF_SECONDS=12 node record.mjs
 ```
+
+Scenes: `autocomplete`, `tour`, `reverse-na`, `reverse-eu`, `reverse-as`,
+`reverse-world`, `search-burst` (also `?scenes=` on the page itself).
+
+Browsers open at most 6 connections per host, which limits a burst more
+than the server does. For an API on `127.0.0.1` or `localhost`, bursts use
+both names, so the page gets twice as many connections.
 
 `make-data.py` samples North America (US, Canada, Mexico), Europe and Asia;
 edit `CONTINENTS` in it for other regions. Countries missing from the data

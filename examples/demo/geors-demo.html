@@ -81,7 +81,9 @@
   <script>
     // Self-running demo for screen recordings. Data: `make-data.py`.
     // URL parameters: api (default http://127.0.0.1:2322), autostart=0 to
-    // wait for a click, loop=1 to repeat.
+    // wait for a click, loop=1 to repeat, scenes=a,b to play only those
+    // (autocomplete, tour, reverse-na, reverse-eu, reverse-as, reverse-world,
+    // search-burst; with no intro or outro), seconds=N for burst length.
     const params = new URLSearchParams(location.search);
     const API = (params.get('api') || 'http://127.0.0.1:2322').replace(/\/+$/, '');
     const D = window.DEMO_DATA;
@@ -157,9 +159,20 @@
       const rest = [p.city, p.countrycode].filter(v => v && v !== first);
       return [first, ...rest].filter(Boolean).join(', ');
     }
-    async function get(path) {
+    // Browsers open at most 6 connections per host, which caps a burst
+    // far below what the server handles. 127.0.0.1 and localhost are the
+    // same server but separate hosts to the browser: bursts use both.
+    const HOSTS = [API];
+    {
+      const u = new URL(API);
+      const other = { '127.0.0.1': 'localhost', localhost: '127.0.0.1' }[u.hostname];
+      if (other) { u.hostname = other; HOSTS.push(u.href.replace(/\/+$/, '')); }
+    }
+    let nextHost = 0;
+    async function get(path, spread = false) {
+      const host = spread ? HOSTS[nextHost++ % HOSTS.length] : API;
       const t0 = performance.now();
-      const r = await fetch(API + path);
+      const r = await fetch(host + path);
       const data = await r.json();
       const ms = performance.now() - t0;
       record(ms);
@@ -283,8 +296,31 @@
       const c = D[key];
       await fit(c.bounds);
       await title(`Reverse geocoding · ${c.name}`, 'what is at this point? nearest address, street or place');
-      await burst(c.points, seconds, 16, async ([lon, lat]) => {
-        const { data, ms } = await get(`/reverse?lat=${lat}&lon=${lon}`);
+      await burst(c.points, seconds, 12, async ([lon, lat]) => {
+        const { data, ms } = await get(`/reverse?lat=${lat}&lon=${lon}`, true);
+        const f = (data.features || [])[0];
+        log('reverse', `${lat.toFixed(4)}, ${lon.toFixed(4)}`, f ? label(f) : null, ms);
+        if (f) addDot(f.geometry.coordinates[0], f.geometry.coordinates[1], key);
+      });
+    }
+
+    const WORLD = [[-130, -10], [150, 62]];
+
+    // All three continents at once, interleaved.
+    function interleave(field, n) {
+      const out = [];
+      for (let i = 0; i < n; i++) for (const key of ['na', 'eu', 'as']) {
+        const v = D[key][field][i]; if (v) out.push([v, key]);
+      }
+      return out;
+    }
+
+    async function sceneReverseWorld(seconds) {
+      mark('reverse-world');
+      await fit(WORLD, 1800);
+      await title('Reverse geocoding · three continents at once', 'what is at this point? Asia, Europe and North America in one server');
+      await burst(interleave('points', 6000), seconds, 12, async ([[lon, lat], key]) => {
+        const { data, ms } = await get(`/reverse?lat=${lat}&lon=${lon}`, true);
         const f = (data.features || [])[0];
         log('reverse', `${lat.toFixed(4)}, ${lon.toFixed(4)}`, f ? label(f) : null, ms);
         if (f) addDot(f.geometry.coordinates[0], f.geometry.coordinates[1], key);
@@ -293,14 +329,10 @@
 
     async function sceneSearchBurst(seconds) {
       mark('search-burst');
-      await fit([[-130, -10], [150, 62]], 2200);
+      await fit(WORLD, 2200);
       await title('Text search · three continents at once', 'names, streets and addresses from Asia, Europe and North America');
-      const mixed = [];
-      for (let i = 0; i < 3000; i++) for (const key of ['na', 'eu', 'as']) {
-        const s = D[key].searches[i]; if (s) mixed.push([s, key]);
-      }
-      await burst(mixed, seconds, 16, async ([s, key]) => {
-        const { data, ms } = await get(`/search?q=${enc(s.q)}&limit=1`);
+      await burst(interleave('searches', 3000), seconds, 12, async ([s, key]) => {
+        const { data, ms } = await get(`/search?q=${enc(s.q)}&limit=1`, true);
         const f = (data.features || [])[0];
         log('search', s.q, f ? label(f) : null, ms);
         if (f) addDot(f.geometry.coordinates[0], f.geometry.coordinates[1], key);
@@ -318,16 +350,24 @@
       await Promise.all(qs.map(q => fetch(API + q).catch(() => null)));
     }
 
-    async function intro() {
-      mark('intro');
+    // "252 M places · 105 countries · one laptop", from /status.
+    async function dataset() {
       try {
         const st = await (await fetch(API + '/status')).json();
         const places = st.partitions.reduce((s, p) => s + p.places, 0);
-        const text = `${(places / 1e6).toFixed(0)} M places · ${st.partitions.length} countries · one laptop`;
-        $('dataset').textContent = text;
-        await title('geors', `${text} · OpenStreetMap geocoder in Rust`, 2600);
+        $('dataset').textContent = `${(places / 1e6).toFixed(0)} M places · ${st.partitions.length} countries · one laptop`;
+        return true;
       } catch (e) {
         $('dataset').textContent = 'API not reachable at ' + API;
+        return false;
+      }
+    }
+
+    async function intro() {
+      mark('intro');
+      if (await dataset()) {
+        await title('geors', `${$('dataset').textContent} · OpenStreetMap geocoder in Rust`, 2600);
+      } else {
         await title('API not reachable', API, 100000);
       }
     }
@@ -339,8 +379,34 @@
       await title(`${total.toLocaleString()} requests`, `median ${p50 == null ? '–' : p50.toFixed(1)} ms · single server process`, 3500);
     }
 
+    const SCENES = {
+      autocomplete: () => sceneAutocomplete(),
+      tour: () => sceneTour(),
+      'reverse-na': () => sceneReverse('na', BURST || 6),
+      'reverse-eu': () => sceneReverse('eu', BURST || 6),
+      'reverse-as': () => sceneReverse('as', BURST || 6),
+      'reverse-world': () => sceneReverseWorld(BURST || 10),
+      'search-burst': () => sceneSearchBurst(BURST || 8),
+    };
+    const BURST = Number(params.get('seconds')) || 0;
+
     async function play() {
       await warmUp();
+      const only = (params.get('scenes') || '').split(',').filter(Boolean);
+      if (only.length) {
+        await dataset();
+        // Start zoomed out, as the bursts are; stats show from the start.
+        map.jumpTo({ center: [10, 30], zoom: 1.6 });
+        await idle(3000);
+        for (const name of only) {
+          if (!SCENES[name]) { await title('Unknown scene', name, 3000); continue; }
+          await SCENES[name]();
+        }
+        await sleep(800);
+        mark('end');
+        window.DEMO_DONE = true;
+        return;
+      }
       await intro();
       await sceneAutocomplete();
       await sceneTour();
