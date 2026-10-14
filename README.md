@@ -102,8 +102,8 @@ almost three times the laptop's RAM:
 | full address | 682 | 42 ms | 284 ms |
 | autocomplete prefix | 176 | 169 ms | 426 ms |
 | with typos | 42 | 707 ms | 1.6 s |
-| name + location bias | 99 | 202 ms | 994 ms |
-| category within 2 km radius | 721 | 42 ms | 105 ms |
+| name + location bias | 346 | 74 ms | 578 ms |
+| category within 2 km radius | 960 | 30 ms | 89 ms |
 | reverse | 36,385 | 0.8 ms | 2.7 ms |
 | 10 nearest | 20,036 | 1.5 ms | 4.3 ms |
 
@@ -122,12 +122,11 @@ almost three times the laptop's RAM:
   partitions), so that file stays cached. Before it existed, reading
   `places.bin` (8.1 GB) for every match made prefix searches 5x slower.
   Searches with a location read each match's centre from `centers.bin`
-  (1.6 GB) for the distance; the numbers above were measured before that
-  file existed, when they read `places.bin` and varied most between runs
-  (99 req/s here, 160–205 in earlier runs).
+  (1.6 GB) for the distance: reading `places.bin` instead, they reached
+  99–205 req/s depending on the run, now 346.
   Typo queries are still the slowest; see
   [#21](https://github.com/Fanna1119/geors/issues/21).
-- **Before #18–#20:** on the same data, full address 143 req/s, prefix 17,
+- **Before #18–#23:** on the same data, full address 143 req/s, prefix 17,
   typos 23 (sampling every 20th place).
 - **Single client:** a lone search uses all cores, one partition per core.
   Under load, each search uses one core: splitting searches when all cores
