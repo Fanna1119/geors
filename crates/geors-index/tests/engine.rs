@@ -116,6 +116,15 @@ fn text_search_ranks_city_first() {
         search(&engine, |r| r.query = Some("kunstmusem".into()))[0],
         "Kunstmuseum"
     );
+    // Two typos in a complete word (a word being typed allows one): only
+    // a later phase allows them.
+    assert_eq!(
+        search(&engine, |r| {
+            r.query = Some("kunstmuzem".into());
+            r.autocomplete = false;
+        })[0],
+        "Kunstmuseum"
+    );
 }
 
 #[test]
