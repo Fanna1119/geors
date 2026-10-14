@@ -364,8 +364,16 @@ impl Engine {
         // Cheapest first; a later phase only runs if the earlier ones found
         // nothing (a precise address legitimately has a single hit, so
         // "fewer than limit" would make every such query pay for fuzzy
-        // matching): (fuzzy, words allowed to be missing, penalty).
-        let phases = [(false, 0usize, 1.0f32), (true, 0, 1.0), (true, 1, 0.5)];
+        // matching): (largest edit distance, words allowed to be missing,
+        // penalty). One typo before two: a distance-2 automaton matches far
+        // more terms, and all typo matches score alike, so two-typo matches
+        // would otherwise rank as high as one-typo ones. Skipped when no word
+        // is long enough for two.
+        let two_typos = text::max_fuzzy_distance(&parsed) >= 2;
+        let phases: Vec<(u8, usize, f32)> = [(0, 0, 1.0), (1, 0, 1.0), (2, 0, 1.0), (2, 1, 0.5)]
+            .into_iter()
+            .filter(|&(d, s, _)| two_typos || !(d == 2 && s == 0))
+            .collect();
         let mut cands: Vec<Candidate> = Vec::new();
         // A short word being typed, with nothing else to go on (no other
         // words, location or filter), matches a large part of every
@@ -380,12 +388,12 @@ impl Engine {
             && filter_box.is_none()
             && req.layers.is_empty()
             && req.tags.is_empty();
-        let phases: Vec<(bool, usize, f32, bool)> = major_first
-            .then_some((false, 0, 1.0, true))
+        let phases: Vec<(u8, usize, f32, bool)> = major_first
+            .then_some((0, 0, 1.0, true))
             .into_iter()
             .chain(phases.iter().map(|&(f, s, p)| (f, s, p, false)))
             .collect();
-        for (phase, &(fuzzy, slack, penalty, major)) in phases.iter().enumerate() {
+        for (phase, &(max_distance, slack, penalty, major)) in phases.iter().enumerate() {
             if phase > 0 && !cands.is_empty() {
                 break;
             }
@@ -400,10 +408,10 @@ impl Engine {
                 .iter()
                 .filter(|(pi, _)| {
                     let text = &self.partitions[*pi].text;
-                    if !fuzzy {
+                    if max_distance == 0 {
                         text.may_match_exact(&parsed, &self.synonyms)
                     } else {
-                        text.may_match_relaxed(&parsed, &self.synonyms, slack)
+                        text.may_match_relaxed(&parsed, &self.synonyms, slack, max_distance)
                     }
                 })
                 .cloned()
@@ -415,7 +423,7 @@ impl Engine {
                     let part = &self.partitions[*pi];
                     let mut query =
                         part.text
-                            .build_query(&parsed, &req.layers, slack, fuzzy, &self.synonyms);
+                            .build_query(&parsed, &req.layers, slack, max_distance, &self.synonyms);
                     if major {
                         query = part.text.major_only(query, &parsed.tokens[0]);
                     }

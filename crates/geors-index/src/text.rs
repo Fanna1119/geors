@@ -11,11 +11,13 @@ use std::sync::{Arc, OnceLock};
 
 use geors_core::{Layer, OsmType, Place};
 use levenshtein_automata::{DFA, Distance, LevenshteinAutomatonBuilder};
-use tantivy::collector::{FilterCollector, TopDocs};
+use tantivy::collector::TopDocs;
+use tantivy::columnar::ColumnValues;
 use tantivy::directory::error::{DeleteError, LockError, OpenReadError, OpenWriteError};
 use tantivy::directory::{
     Directory, DirectoryLock, FileHandle, Lock, MmapDirectory, WatchCallback, WatchHandle, WritePtr,
 };
+use tantivy::index::SegmentId;
 use tantivy::indexer::NoMergePolicy;
 use tantivy::query::{
     BooleanQuery, BoostQuery, ConstScoreQuery, DisjunctionMaxQuery, FuzzyTermQuery, Occur, Query,
@@ -366,6 +368,25 @@ fn levenshtein(distance: u8) -> &'static LevenshteinAutomatonBuilder {
     BUILDERS[distance as usize].get_or_init(|| LevenshteinAutomatonBuilder::new(distance, true))
 }
 
+/// Largest edit distance any word of `q` may be misspelled by (the word
+/// being typed is matched as a prefix with at most one).
+pub fn max_fuzzy_distance(q: &ParsedQuery) -> u8 {
+    let n = q.tokens.len();
+    q.tokens
+        .iter()
+        .enumerate()
+        .map(|(i, t)| {
+            let d = fuzzy_distance(t);
+            if q.last_is_prefix && i + 1 == n {
+                d.min(1)
+            } else {
+                d
+            }
+        })
+        .max()
+        .unwrap_or(0)
+}
+
 /// A Levenshtein DFA as a term dictionary automaton (as tantivy's fuzzy
 /// query does).
 #[derive(Clone)]
@@ -457,6 +478,11 @@ impl Directory for ReadOnlyDirectory {
 pub struct TextIndex {
     reader: IndexReader,
     fields: Fields,
+    /// `place_id` of every document, per segment. Opening the column
+    /// decodes its block headers (tens of thousands for a large country),
+    /// too slow to repeat for every search. The segments never change
+    /// (read-only index, manual reload).
+    place_ids: HashMap<SegmentId, Arc<dyn ColumnValues<u64>>>,
     /// Lowercase country code of the partition: selects synonym rules.
     country: String,
 }
@@ -470,13 +496,23 @@ impl TextIndex {
         let index = Index::open(ReadOnlyDirectory(mmap))?;
         register_tokenizers(&index);
         let (_, fields) = schema();
-        let reader = index
+        let reader: IndexReader = index
             .reader_builder()
             .reload_policy(ReloadPolicy::Manual)
             .try_into()?;
+        let place_ids = reader
+            .searcher()
+            .segment_readers()
+            .iter()
+            .map(|seg| {
+                let ids = seg.fast_fields().u64("place_id")?.first_or_default_col(0);
+                Ok((seg.segment_id(), ids))
+            })
+            .collect::<tantivy::Result<_>>()?;
         Ok(Self {
             reader,
             fields,
+            place_ids,
             country: country.to_ascii_lowercase(),
         })
     }
@@ -486,9 +522,9 @@ impl TextIndex {
     ///
     /// Abbreviations ("str" -> "strasse") are added as exact alternatives.
     ///
-    /// With `fuzzy`, misspellings within the allowed edit distance match too
-    /// (much more expensive: the engine only does this when exact and prefix
-    /// matching found too little).
+    /// With `max_distance` > 0, misspellings within the allowed edit
+    /// distance (at most `max_distance`) match too (much more expensive: the
+    /// engine only does this when exact and prefix matching found nothing).
     ///
     /// `context` says other words are present: only then may the last word
     /// prefix-match address context (city, country). A lone word is
@@ -500,12 +536,12 @@ impl TextIndex {
         token: &str,
         prefix: bool,
         context: bool,
-        fuzzy: bool,
+        max_distance: u8,
         relaxed: bool,
         synonyms: &Synonyms,
     ) -> Box<dyn Query> {
         let f = self.fields;
-        let distance = if fuzzy { fuzzy_distance(token) } else { 0 };
+        let distance = fuzzy_distance(token).min(max_distance);
         let mut expansions = synonyms.expand(token, Some(&self.country));
         // A word in another script also matches its Latin form.
         if let Some(latin) = transliterate(token) {
@@ -653,7 +689,7 @@ impl TextIndex {
         q: &ParsedQuery,
         layers: &[Layer],
         slack: usize,
-        fuzzy: bool,
+        max_distance: u8,
         synonyms: &Synonyms,
     ) -> Box<dyn Query> {
         let n = q.tokens.len();
@@ -665,9 +701,13 @@ impl TextIndex {
                 let prefix = q.last_is_prefix && i + 1 == n;
                 // Words that exist as typed need no typo expansion (the
                 // expensive part): only fuzz the unknown ones.
-                let relaxed = fuzzy;
-                let fuzzy = fuzzy && (prefix || !self.is_known(t));
-                self.token_clause(t, prefix, n > 1, fuzzy, relaxed, synonyms)
+                let relaxed = max_distance > 0;
+                let distance = if prefix || !self.is_known(t) {
+                    max_distance
+                } else {
+                    0
+                };
+                self.token_clause(t, prefix, n > 1, distance, relaxed, synonyms)
             })
             .collect();
         let required = n.saturating_sub(slack).max(1);
@@ -797,18 +837,24 @@ impl TextIndex {
         ]))
     }
 
-    /// Whether a later phase of `q` (fuzzy, `slack` words allowed to be
-    /// missing) can match anything here: at least all but `slack` words
-    /// must occur in some form. Mirrors `token_clause` with `fuzzy` and
-    /// `relaxed` on; may say yes for a partition that then has no hits,
-    /// never no for one that has.
-    pub fn may_match_relaxed(&self, q: &ParsedQuery, synonyms: &Synonyms, slack: usize) -> bool {
+    /// Whether a later phase of `q` (misspellings up to `max_distance`,
+    /// `slack` words allowed to be missing) can match anything here: at
+    /// least all but `slack` words must occur in some form. Mirrors
+    /// `token_clause` with `relaxed` on; may say yes for a partition that
+    /// then has no hits, never no for one that has.
+    pub fn may_match_relaxed(
+        &self,
+        q: &ParsedQuery,
+        synonyms: &Synonyms,
+        slack: usize,
+        max_distance: u8,
+    ) -> bool {
         let n = q.tokens.len();
         let required = n.saturating_sub(slack).max(1);
         let mut found = 0;
         for (i, t) in q.tokens.iter().enumerate() {
             let prefix = q.last_is_prefix && i + 1 == n;
-            if self.may_match_token(t, prefix, n > 1, synonyms) {
+            if self.may_match_token(t, prefix, n > 1, synonyms, max_distance) {
                 found += 1;
                 if found >= required {
                     return true;
@@ -820,7 +866,14 @@ impl TextIndex {
         false
     }
 
-    fn may_match_token(&self, t: &str, prefix: bool, context: bool, synonyms: &Synonyms) -> bool {
+    fn may_match_token(
+        &self,
+        t: &str,
+        prefix: bool,
+        context: bool,
+        synonyms: &Synonyms,
+        max_distance: u8,
+    ) -> bool {
         let f = self.fields;
         let chars = t.chars().count();
         let numeric = t.chars().any(|c| c.is_ascii_digit());
@@ -848,7 +901,7 @@ impl TextIndex {
         {
             return true;
         }
-        let distance = fuzzy_distance(t);
+        let distance = fuzzy_distance(t).min(max_distance);
         if distance > 0 {
             let dfa = if prefix {
                 levenshtein(1).build_prefix_dfa(t)
@@ -986,33 +1039,26 @@ impl TextIndex {
         limit: usize,
     ) -> tantivy::Result<Vec<(Score, u32)>> {
         let searcher = self.reader.searcher();
+        let place_ids = self.place_ids.clone();
+        // Places outside `filter` score -inf: any real hit outranks them,
+        // and they are dropped below.
         let top = TopDocs::with_limit(limit.max(1)).tweak_score(move |segment: &SegmentReader| {
-            let ids = segment
-                .fast_fields()
-                .u64("place_id")
-                .expect("place_id fast field")
-                .first_or_default_col(0);
+            let ids = place_ids[&segment.segment_id()].clone();
             let scorer = scorer.clone();
+            let filter = filter.clone();
             move |doc: DocId, score: Score| {
                 let id = ids.get_val(doc) as u32;
+                if filter.as_ref().is_some_and(|f| !f.contains(id)) {
+                    return (Score::NEG_INFINITY, id);
+                }
                 (scorer(id, score), id)
             }
         });
-        // Without a filter, skip reading every match's id a second time.
-        let hits = match filter {
-            None => searcher.search(query, &top)?,
-            Some(f) => {
-                let collector = FilterCollector::new(
-                    "place_id".to_string(),
-                    move |id: u64| f.contains(id as u32),
-                    top,
-                );
-                searcher.search(query, &collector)?
-            }
-        };
-        Ok(hits
+        Ok(searcher
+            .search(query, &top)?
             .into_iter()
             .map(|((score, id), _)| (score, id))
+            .filter(|(score, _)| *score > Score::NEG_INFINITY)
             .collect())
     }
 }

@@ -44,7 +44,7 @@ times include writing the index.
 > **Import memory is not serving memory.** The "Import memory" column is
 > what *building* the index takes, once per import or update. Serving the
 > finished index needs far less: all of Europe runs in about 230 MB at idle
-> and 380 MB under load, Asia + Europe + North America in 620 MB and 890 MB
+> and 380 MB under load, Asia + Europe + North America in 650 MB and 840 MB
 > (see below). You can build the index on a larger
 > machine and serve it from a small one. High import memory for continent
 > extracts is a known limitation that I'm still working on (see
@@ -99,20 +99,20 @@ almost three times the laptop's RAM:
 
 | Query mix | req/s | p50 | p99 |
 |---|---|---|---|
-| full address | 682 | 42 ms | 284 ms |
-| autocomplete prefix | 176 | 169 ms | 426 ms |
-| with typos | 42 | 707 ms | 1.6 s |
-| name + location bias | 346 | 74 ms | 578 ms |
-| category within 2 km radius | 960 | 30 ms | 89 ms |
-| reverse | 36,385 | 0.8 ms | 2.7 ms |
-| 10 nearest | 20,036 | 1.5 ms | 4.3 ms |
+| full address | 1,379 | 20 ms | 280 ms |
+| autocomplete prefix | 206 | 141 ms | 436 ms |
+| with typos | 65 | 457 ms | 1.6 s |
+| name + location bias | 634 | 43 ms | 449 ms |
+| category within 2 km radius | 1,554 | 18 ms | 66 ms |
+| reverse | 37,093 | 0.8 ms | 2.9 ms |
+| 10 nearest | 20,305 | 1.5 ms | 4.2 ms |
 
-- **Memory:** **619 MB** physical footprint at start and **888 MB** after
+- **Memory:** **654 MB** physical footprint at start and **836 MB** after
   the load test (Europe alone: 232 MB and 380 MB). For comparison, Photon's
   README recommends "at least 64GB RAM" for its planet-wide database (about
   95 GB on disk). These three continents hold most of OSM's addresses, but
   not all.
-- **Page cache:** RSS reached 7.3 GB. These are cached index pages, which
+- **Page cache:** RSS reached 7.1 GB. These are cached index pages, which
   the OS drops under pressure.
 - **Errors:** none.
 - **Spatial queries** (reverse, nearest) are as fast as on a single country.
@@ -123,11 +123,12 @@ almost three times the laptop's RAM:
   `places.bin` (8.1 GB) for every match made prefix searches 5x slower.
   Searches with a location read each match's centre from `centers.bin`
   (1.6 GB) for the distance: reading `places.bin` instead, they reached
-  99–205 req/s depending on the run, now 346.
-  Typo queries are still the slowest; see
-  [#21](https://github.com/Fanna1119/geors/issues/21).
-- **Before #18–#23:** on the same data, full address 143 req/s, prefix 17,
-  typos 23 (sampling every 20th place).
+  99–205 req/s depending on the run.
+- **Typos:** words are first matched with one typo, with two (words of 8+
+  letters) only if that finds nothing. Typo searches remain the slowest:
+  every misspelled word expands to all similar words in every partition.
+- **Before #18–#25:** on the same data, full address 143 req/s, prefix 17,
+  typos 23, location bias 87 (sampling every 20th place).
 - **Single client:** a lone search uses all cores, one partition per core.
   Under load, each search uses one core: splitting searches when all cores
   are busy only adds overhead (measured: 20 % fewer req/s at 32 connections).
