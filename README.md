@@ -99,23 +99,20 @@ almost three times the laptop's RAM:
 
 | Query mix | req/s | p50 | p99 |
 |---|---|---|---|
-| full address | 682 | 42 ms | 290 ms |
-| autocomplete prefix | 172 | 174 ms | 430 ms |
-| with typos | 41 | 745 ms | 1.6 s |
-| name + location bias | 182 | 133 ms | 695 ms |
-| category within 2 km radius* | 871 | 32 ms | 742 ms |
-| reverse* | 35,081 | 0.8 ms | 3.0 ms |
-| 10 nearest* | 18,427 | 1.6 ms | 7.2 ms |
+| full address | 682 | 42 ms | 284 ms |
+| autocomplete prefix | 176 | 169 ms | 426 ms |
+| with typos | 42 | 707 ms | 1.6 s |
+| name + location bias | 99 | 202 ms | 994 ms |
+| category within 2 km radius | 721 | 42 ms | 105 ms |
+| reverse | 36,385 | 0.8 ms | 2.7 ms |
+| 10 nearest | 20,036 | 1.5 ms | 4.3 ms |
 
-\* From an earlier run sampling every 20th place; these code paths did not
-change since. Other rows: mean of two runs.
-
-- **Memory:** **620 MB** physical footprint at start and **~890 MB** after
+- **Memory:** **619 MB** physical footprint at start and **888 MB** after
   the load test (Europe alone: 232 MB and 380 MB). For comparison, Photon's
   README recommends "at least 64GB RAM" for its planet-wide database (about
   95 GB on disk). These three continents hold most of OSM's addresses, but
   not all.
-- **Page cache:** RSS reached 6.1 GB. These are cached index pages, which
+- **Page cache:** RSS reached 7.3 GB. These are cached index pages, which
   the OS drops under pressure.
 - **Errors:** none.
 - **Spatial queries** (reverse, nearest) are as fast as on a single country.
@@ -124,6 +121,8 @@ change since. Other rows: mean of two runs.
   one importance value per match from `importance.bin` (0.8 GB for all 105
   partitions), so that file stays cached. Before it existed, reading
   `places.bin` (8.1 GB) for every match made prefix searches 5x slower.
+  Searches with a location still read `places.bin` for the distance, so
+  they vary most between runs (99 req/s here, 160–205 in earlier runs).
   Typo queries are still the slowest; see
   [#21](https://github.com/Fanna1119/geors/issues/21).
 - **Before #18–#20:** on the same data, full address 143 req/s, prefix 17,
