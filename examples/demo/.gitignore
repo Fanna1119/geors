@@ -1,0 +1,8 @@
+node_modules/
+package-lock.json
+demo-data.js
+demo.webm
+demo.mp4
+demo.gif
+.video/
+.palette.png

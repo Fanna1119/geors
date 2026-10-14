@@ -1,0 +1,13 @@
+{
+  "name": "geors-demo",
+  "private": true,
+  "type": "module",
+  "description": "Records examples/demo/geors-demo.html to video (see README.md)",
+  "scripts": {
+    "postinstall": "playwright install ffmpeg",
+    "record": "node record.mjs"
+  },
+  "devDependencies": {
+    "playwright": "^1.48.0"
+  }
+}
