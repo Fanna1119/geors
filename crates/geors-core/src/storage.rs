@@ -4,6 +4,7 @@
 //! <data>/<cc>/
 //!   meta.json     PartitionMeta (format version, counts, bbox, source)
 //!   places.bin    fixed size PlaceRecord per place, indexed by place id
+//!   importance.bin  f32 importance per place (optional; also in places.bin)
 //!   docs.bin      compact binary `Place` documents (see `doc`)
 //!   geom.bin      line / polygon geometry as little-endian i32 (lon_e7, lat_e7) pairs
 //!   spatial.idx   packed Hilbert R-tree (flatbush ABI, f32) over place bboxes
@@ -28,6 +29,12 @@ pub const FORMAT_VERSION: u32 = 7;
 
 pub const META_FILE: &str = "meta.json";
 pub const PLACES_FILE: &str = "places.bin";
+/// Importance per place (little-endian f32), a tenth of `places.bin`:
+/// scoring every text match reads it, and on data sets larger than the
+/// page cache the small file stays cached where the records do not.
+/// Optional: partitions written before it existed fall back to the records
+/// (`geors upgrade` adds it).
+pub const IMPORTANCE_FILE: &str = "importance.bin";
 pub const DOCS_FILE: &str = "docs.bin";
 pub const GEOM_FILE: &str = "geom.bin";
 pub const SPATIAL_FILE: &str = "spatial.idx";

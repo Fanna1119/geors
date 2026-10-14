@@ -443,6 +443,7 @@ RUST_LOG=debug geors serve                      # logging to stderr (default: in
 | `geors sources`            | List tracked sources with version and update state (`--remove NAME`) |
 | `geors serve`              | HTTP server (`--update-interval`, `--config`, `--countries`)         |
 | `geors info`               | Partitions in the data directory, with sizes and layer counts        |
+| `geors upgrade`            | Add files newer versions write at import (`importance.bin`) to existing partitions, without re-importing |
 | `geors export CC`          | A partition's places as JSON lines (`--every N` samples), for inspection and diffs |
 | `geors synonyms WORDS...`  | Show abbreviation / synonym expansions (`-c` to include config rules) |
 

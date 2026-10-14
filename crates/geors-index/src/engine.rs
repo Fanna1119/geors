@@ -423,11 +423,19 @@ impl Engine {
                     let ranking = self.ranking.clone();
                     let focus = req.focus;
                     let scorer = Arc::new(move |id: u32, s: f32| {
+                        // Without a focus point only the importance is
+                        // needed, from a file a tenth of the records' size.
+                        let Some(f) = focus else {
+                            let Some(importance) = scorer_part.importance(id) else {
+                                return 0.0;
+                            };
+                            return ranking.combined(s, importance, None) * penalty;
+                        };
                         let Some(rec) = scorer_part.record(id) else {
                             return 0.0;
                         };
-                        let d = focus.map(|f| geors_core::geom::haversine(f, rec.center()));
-                        ranking.combined(s, rec.importance, d) * penalty
+                        let d = geors_core::geom::haversine(f, rec.center());
+                        ranking.combined(s, rec.importance, Some(d)) * penalty
                     });
                     let hits = part
                         .text

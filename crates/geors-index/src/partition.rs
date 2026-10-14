@@ -52,6 +52,47 @@ impl Blob {
     }
 }
 
+/// `importance.bin`, or `None` if missing (partitions written before it
+/// existed) or of the wrong size (ignored, as the records have the same
+/// values).
+fn open_importance(dir: &Path, num_places: u32) -> Result<Option<Blob>, IndexError> {
+    let path = dir.join(storage::IMPORTANCE_FILE);
+    if !path.exists() {
+        return Ok(None);
+    }
+    let blob = Blob::open(&path)?;
+    if blob.bytes().len() != num_places as usize * 4 {
+        tracing::warn!("ignoring {}: wrong size", path.display());
+        return Ok(None);
+    }
+    Ok(Some(blob))
+}
+
+/// Write `importance.bin` for a partition that lacks one, from its
+/// records. Returns whether it was written.
+pub fn add_importance(dir: &Path) -> Result<bool, IndexError> {
+    let path = dir.join(storage::IMPORTANCE_FILE);
+    if path.exists() {
+        return Ok(false);
+    }
+    let records = Blob::open(&dir.join(storage::PLACES_FILE))?;
+    let tmp = dir.join(format!(
+        ".{}.tmp-{}",
+        storage::IMPORTANCE_FILE,
+        std::process::id()
+    ));
+    let mut out = std::io::BufWriter::with_capacity(1 << 20, File::create(&tmp)?);
+    for chunk in records.bytes().chunks_exact(PlaceRecord::SIZE) {
+        let rec = PlaceRecord::decode(chunk)
+            .ok_or_else(|| IndexError::Format(format!("bad record in {}", dir.display())))?;
+        std::io::Write::write_all(&mut out, &rec.importance.to_le_bytes())?;
+    }
+    std::io::Write::flush(&mut out)?;
+    drop(out);
+    std::fs::rename(&tmp, &path)?;
+    Ok(true)
+}
+
 impl AsRef<[u8]> for Blob {
     fn as_ref(&self) -> &[u8] {
         self.bytes()
@@ -68,6 +109,8 @@ pub struct Partition {
     cc_upper: String,
     pub text: TextIndex,
     records: Blob,
+    /// `importance.bin`, if the partition has one of the right size.
+    importance: Option<Blob>,
     docs: Blob,
     geom: Blob,
     spatial: Blob,
@@ -102,6 +145,7 @@ impl Partition {
         let p = Self {
             text: TextIndex::open(&dir.join(storage::TEXT_DIR), &meta.country_code)?,
             records: Blob::open(&dir.join(storage::PLACES_FILE))?,
+            importance: open_importance(dir, meta.num_places)?,
             docs: Blob::open(&dir.join(storage::DOCS_FILE))?,
             geom: Blob::open(&dir.join(storage::GEOM_FILE))?,
             spatial: Blob::open(&dir.join(storage::SPATIAL_FILE))?,
@@ -153,6 +197,19 @@ impl Partition {
     pub fn record(&self, id: u32) -> Option<PlaceRecord> {
         let start = id as usize * PlaceRecord::SIZE;
         PlaceRecord::decode(self.records.bytes().get(start..start + PlaceRecord::SIZE)?)
+    }
+
+    /// Importance of place `id`: from `importance.bin` when the partition
+    /// has one, else from its record.
+    pub fn importance(&self, id: u32) -> Option<f32> {
+        match &self.importance {
+            Some(blob) => {
+                let start = id as usize * 4;
+                let b = blob.bytes().get(start..start + 4)?;
+                Some(f32::from_le_bytes(b.try_into().ok()?))
+            }
+            None => self.record(id).map(|r| r.importance),
+        }
     }
 
     /// Load the JSON document. Geometry is attached only if `with_geometry`.

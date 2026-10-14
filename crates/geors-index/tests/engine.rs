@@ -584,3 +584,27 @@ fn lookup_by_nominatim_place_id() {
     let names: Vec<_> = hits.iter().map(|h| h.place.name.clone().unwrap()).collect();
     assert_eq!(names, vec!["Post", "Rathaus"]);
 }
+
+#[test]
+fn importance_file_matches_records_and_can_be_added() {
+    let (d, engine, _) = fixture();
+    drop(engine);
+    let dir = d.path().join("li");
+    let file = dir.join(geors_core::storage::IMPORTANCE_FILE);
+    let check = || {
+        let p = geors_index::Partition::open(&dir).unwrap();
+        for id in 0..p.len() {
+            assert_eq!(p.importance(id), p.record(id).map(|r| r.importance));
+        }
+    };
+    // Written at import.
+    assert!(file.exists());
+    check();
+    // Older partitions without it fall back to the records...
+    std::fs::remove_file(&file).unwrap();
+    check();
+    // ...and get it from `geors upgrade`.
+    assert!(geors_index::partition::add_importance(&dir).unwrap());
+    assert!(!geors_index::partition::add_importance(&dir).unwrap());
+    check();
+}
