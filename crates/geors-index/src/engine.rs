@@ -10,6 +10,7 @@
 //! 4. **Re-ranking** of the merged top hits with name-match boosts, dedup.
 
 use std::cmp::Ordering;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
@@ -27,6 +28,11 @@ use crate::synonyms::Synonyms;
 use crate::tag_filter::TagFilter;
 use crate::text::{self, ParsedQuery};
 use crate::{EngineError, IndexError};
+
+/// Longest word being typed that is first looked up among major places
+/// only (when nothing else narrows the search). Longer prefixes match few
+/// enough places to search everything.
+const MAJOR_FIRST_PREFIX: usize = 5;
 
 /// Free-text and/or spatial search.
 #[derive(Debug, Clone, Default)]
@@ -361,7 +367,25 @@ impl Engine {
         // matching): (fuzzy, words allowed to be missing, penalty).
         let phases = [(false, 0usize, 1.0f32), (true, 0, 1.0), (true, 1, 0.5)];
         let mut cands: Vec<Candidate> = Vec::new();
-        for (phase, &(fuzzy, slack, penalty)) in phases.iter().enumerate() {
+        // A short word being typed, with nothing else to go on (no other
+        // words, location or filter), matches a large part of every
+        // partition. Major places (cities and up, well-known POIs) are
+        // what such a search should suggest anyway: look among them
+        // first, and search everything only if they are too few.
+        let major_first = parsed.tokens.len() == 1
+            && parsed.last_is_prefix
+            && (text::SHORT_PREFIX + 1..=MAJOR_FIRST_PREFIX)
+                .contains(&parsed.tokens[0].chars().count())
+            && req.focus.is_none()
+            && filter_box.is_none()
+            && req.layers.is_empty()
+            && req.tags.is_empty();
+        let phases: Vec<(bool, usize, f32, bool)> = major_first
+            .then_some((false, 0, 1.0, true))
+            .into_iter()
+            .chain(phases.iter().map(|&(f, s, p)| (f, s, p, false)))
+            .collect();
+        for (phase, &(fuzzy, slack, penalty, major)) in phases.iter().enumerate() {
             if phase > 0 && !cands.is_empty() {
                 break;
             }
@@ -376,7 +400,7 @@ impl Engine {
                 .iter()
                 .filter(|(pi, _)| {
                     let text = &self.partitions[*pi].text;
-                    if phase == 0 {
+                    if !fuzzy {
                         text.may_match_exact(&parsed, &self.synonyms)
                     } else {
                         text.may_match_relaxed(&parsed, &self.synonyms, slack)
@@ -389,9 +413,12 @@ impl Engine {
             // start from an empty list, so no duplicate check is needed.
             let search_part = |(pi, filter): &(usize, Option<Arc<BitSet>>)| -> Result<Vec<Candidate>, EngineError> {
                     let part = &self.partitions[*pi];
-                    let query =
+                    let mut query =
                         part.text
                             .build_query(&parsed, &req.layers, slack, fuzzy, &self.synonyms);
+                    if major {
+                        query = part.text.major_only(query, &parsed.tokens[0]);
+                    }
                     let scorer_part = part.clone();
                     let ranking = self.ranking.clone();
                     let focus = req.focus;
@@ -428,6 +455,9 @@ impl Engine {
                     .collect::<Result<_, EngineError>>()?
             };
             cands.extend(per_part.into_iter().flatten());
+            if major && cands.len() < limit {
+                cands.clear();
+            }
         }
         debug!(candidates = cands.len(), tokens = ?parsed.tokens, "text search");
         sort_by_score(&mut cands);
@@ -436,10 +466,17 @@ impl Engine {
         let mut hits = self.load(cands, req.focus)?;
         hits.retain(|h| req.tags.matches(&h.place.osm_key, &h.place.osm_value));
         let mut analyzer = self.analyzer.clone();
+        // Hits share their parents (country, state, ...), each with up to
+        // hundreds of translated names: tokenize every unit once.
+        let mut units: HashMap<(*const Partition, u32), Vec<String>> = HashMap::new();
         for hit in &mut hits {
+            // Translations are often the same string ("Berlin" in most
+            // languages).
+            let mut seen = HashSet::new();
             let names: Vec<Vec<String>> = hit
                 .place
                 .all_names()
+                .filter(|n| seen.insert(*n))
                 .map(|n| text::tokenize(&mut analyzer, n))
                 .collect();
             let boost = names
@@ -449,7 +486,7 @@ impl Engine {
                         .name_match(&parsed.tokens, n, parsed.last_is_prefix)
                 })
                 .fold(1.0f32, f32::max);
-            let context = context_tokens(hit, &mut analyzer);
+            let context = context_tokens(hit, &mut analyzer, &mut units);
             let echo =
                 self.ranking
                     .city_echo(&parsed.tokens, &names, &context, parsed.last_is_prefix);
@@ -787,17 +824,31 @@ fn tags_match(part: &Partition, rec: &geors_core::storage::PlaceRecord, tags: &T
 
 /// Words of a place's address context: the names (all languages) of its
 /// admin units, and its `addr:city`.
-fn context_tokens(hit: &Hit, analyzer: &mut TextAnalyzer) -> Vec<String> {
-    let units = hit
-        .place
-        .parents
-        .iter()
-        .filter_map(|&i| hit.partition.admins.get(i as usize));
+/// `units`: tokens of each admin unit seen so far, by partition and index.
+fn context_tokens(
+    hit: &Hit,
+    analyzer: &mut TextAnalyzer,
+    units: &mut HashMap<(*const Partition, u32), Vec<String>>,
+) -> Vec<String> {
     let mut out = Vec::new();
-    for unit in units {
-        for n in std::iter::once(&unit.name).chain(unit.names.values()) {
-            out.extend(text::tokenize(analyzer, n));
-        }
+    for &i in &hit.place.parents {
+        let Some(unit) = hit.partition.admins.get(i as usize) else {
+            continue;
+        };
+        let tokens = units
+            .entry((Arc::as_ptr(&hit.partition), i))
+            .or_insert_with(|| {
+                let mut seen = HashSet::new();
+                let mut t: Vec<String> = std::iter::once(&unit.name)
+                    .chain(unit.names.values())
+                    .filter(|n| seen.insert(n.as_str()))
+                    .flat_map(|n| text::tokenize(analyzer, n))
+                    .collect();
+                t.sort_unstable();
+                t.dedup();
+                t
+            });
+        out.extend(tokens.iter().cloned());
     }
     if let Some(city) = &hit.place.city {
         out.extend(text::tokenize(analyzer, city));
