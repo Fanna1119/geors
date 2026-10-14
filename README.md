@@ -16,6 +16,21 @@ under 1 GB of memory on a laptop.
 - Continuous updates from replication diffs, hot-swapped with no downtime
 - Single ~14 MB binary (70 MB distroless Docker image)
 
+## Demo
+
+One server on a laptop with Asia, Europe and North America loaded
+(105 countries, 252 M places), queried from a browser:
+
+**Text search on three continents at once:** about 650 requests/s, median 14 ms.
+
+![Text search across Asia, Europe and North America](docs/media/search-burst.gif)
+
+**Reverse geocoding on three continents at once:** about 2,000 requests/s, median 5 ms.
+
+![Reverse geocoding across Asia, Europe and North America](docs/media/reverse-world.gif)
+
+The page and the recording script are in [`examples/demo/`](examples/demo/).
+
 ## Quick start
 
 ```sh
