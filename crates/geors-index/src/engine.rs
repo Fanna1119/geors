@@ -202,6 +202,8 @@ impl Drop for InFlight {
 
 pub struct Engine {
     partitions: Vec<Arc<Partition>>,
+    /// Text statistics over all partitions (see [`text::GlobalStats`]).
+    stats: Arc<text::GlobalStats>,
     ranking: RankingConfig,
     synonyms: Synonyms,
     analyzer: TextAnalyzer,
@@ -243,16 +245,22 @@ impl Engine {
             info!(partition = %cc, places = p.len(), source = %p.meta.source, "loaded partition");
             partitions.push(Arc::new(p));
         }
-        Ok(Self::from_partitions(partitions, config))
+        Self::from_partitions(partitions, config)
     }
 
-    pub fn from_partitions(partitions: Vec<Arc<Partition>>, config: EngineConfig) -> Self {
-        Self {
+    pub fn from_partitions(
+        partitions: Vec<Arc<Partition>>,
+        config: EngineConfig,
+    ) -> Result<Self, IndexError> {
+        let indexes: Vec<&text::TextIndex> = partitions.iter().map(|p| &p.text).collect();
+        let stats = Arc::new(text::GlobalStats::new(&indexes)?);
+        Ok(Self {
             partitions,
+            stats,
             ranking: config.ranking,
             synonyms: config.synonyms,
             analyzer: text::analyzer(),
-        }
+        })
     }
 
     pub fn partitions(&self) -> &[Arc<Partition>] {
@@ -448,7 +456,7 @@ impl Engine {
                     });
                     let hits = part
                         .text
-                        .search(query.as_ref(), filter.clone(), scorer, fetch)
+                        .search(query.as_ref(), filter.clone(), scorer, fetch, &*self.stats)
                         .map_err(IndexError::from)?;
                     Ok(hits
                         .into_iter()
