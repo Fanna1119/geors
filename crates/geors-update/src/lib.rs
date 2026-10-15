@@ -1056,6 +1056,115 @@ mod tests {
         assert_eq!(ids.len(), 5, "duplicates among the nearest");
     }
 
+    /// A small extract: country LI (lon 0..10), an administrative state
+    /// covering its west half, a `place=region` and a `place=state` area
+    /// across both halves, a small `place=region` way, and a cafe at
+    /// (3, 5) inside all of them.
+    fn region_extract(path: &Path) {
+        use crate::osm::{Elem, Kind, Member};
+        let tags = |kv: &[(&str, &str)]| -> Vec<(String, String)> {
+            kv.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
+        };
+        let e7 = |d: f64| (d * 1e7).round() as i32;
+        let mut nodes = Vec::new();
+        let mut ways = Vec::new();
+        let mut relations = Vec::new();
+        // One closed way per area: a rectangle.
+        let mut rect = |id: i64, (x0, x1): (f64, f64)| {
+            let base = id * 10;
+            for (i, (x, y)) in [(x0, 0.0), (x1, 0.0), (x1, 10.0), (x0, 10.0)].iter().enumerate() {
+                nodes.push(Elem::Node { id: base + i as i64, lon: e7(*x), lat: e7(*y), tags: vec![] });
+            }
+            ways.push(Elem::Way {
+                id,
+                refs: vec![base, base + 1, base + 2, base + 3, base],
+                tags: vec![],
+            });
+            vec![Member { kind: Kind::Way, id, role: "outer".into() }]
+        };
+        let country = rect(1, (0.0, 10.0));
+        let state = rect(2, (0.0, 5.0));
+        let region = rect(3, (1.0, 9.0));
+        let place_state = rect(4, (2.0, 8.0));
+        relations.push(Elem::Relation {
+            id: 1,
+            members: country,
+            tags: tags(&[("type", "boundary"), ("boundary", "administrative"), ("admin_level", "2"),
+                ("name", "Testland"), ("ISO3166-1:alpha2", "LI")]),
+        });
+        relations.push(Elem::Relation {
+            id: 2,
+            members: state,
+            tags: tags(&[("type", "boundary"), ("boundary", "administrative"), ("admin_level", "4"),
+                ("name", "Real State")]),
+        });
+        relations.push(Elem::Relation {
+            id: 3,
+            members: region,
+            tags: tags(&[("type", "multipolygon"), ("place", "region"), ("name", "Loose Region")]),
+        });
+        relations.push(Elem::Relation {
+            id: 4,
+            members: place_state,
+            tags: tags(&[("type", "multipolygon"), ("place", "state"), ("name", "Place State")]),
+        });
+        // A region drawn as a closed way (no relation), around the cafe.
+        for (i, (x, y)) in [(2.5, 4.5), (3.5, 4.5), (3.5, 5.5), (2.5, 5.5)].iter().enumerate() {
+            nodes.push(Elem::Node { id: 900 + i as i64, lon: e7(*x), lat: e7(*y), tags: vec![] });
+        }
+        ways.push(Elem::Way {
+            id: 9,
+            refs: vec![900, 901, 902, 903, 900],
+            tags: tags(&[("place", "region"), ("name", "Way Region")]),
+        });
+        nodes.push(Elem::Node {
+            id: 1000,
+            lon: e7(3.0),
+            lat: e7(5.0),
+            tags: tags(&[("amenity", "cafe"), ("name", "Corner Cafe")]),
+        });
+        nodes.sort_by_key(Elem::id);
+        let bbox = geors_core::geom::BBox::new(-1.0, -1.0, 11.0, 11.0);
+        let mut file = pbf_write::blob("OSMHeader", &pbf_write::header_block(None, Some(&bbox))).unwrap();
+        for block in [nodes, ways, relations] {
+            file.extend(pbf_write::blob("OSMData", &pbf_write::primitive_block(&block)).unwrap());
+        }
+        std::fs::write(path, file).unwrap();
+    }
+
+    #[test]
+    fn administrative_state_beats_place_areas() {
+        let dir = tempfile::tempdir().unwrap();
+        let data = dir.path().join("data");
+        let pbf = dir.path().join("test.osm.pbf");
+        region_extract(&pbf);
+        let parts = import_location(&data, pbf.to_str().unwrap(), &AddOptions::default()).unwrap();
+        assert_eq!(parts, vec!["li"]);
+        let engine =
+            geors_index::Engine::open(&data, &[], geors_index::EngineConfig::default()).unwrap();
+        let search = |q: &str| {
+            engine
+                .search(&geors_index::SearchRequest {
+                    query: Some(q.into()),
+                    limit: 1,
+                    ..Default::default()
+                })
+                .unwrap()
+        };
+        let cafe = &search("corner cafe")[0];
+        let state: Vec<&str> = cafe
+            .place
+            .parents
+            .iter()
+            .filter_map(|&i| cafe.partition.admins.get(i as usize))
+            .filter(|a| a.layer == geors_core::Layer::State)
+            .map(|a| a.name.as_str())
+            .collect();
+        assert_eq!(state, ["Real State"]);
+        // The region itself is still a searchable place.
+        assert_eq!(search("loose region")[0].place.name.as_deref(), Some("Loose Region"));
+    }
+
     fn pbf(path: &Path, seq: Option<u64>) {
         let rep = seq.map(|sequence| pbf_write::Replication {
             base_url: "https://example.org/x-updates".into(),
