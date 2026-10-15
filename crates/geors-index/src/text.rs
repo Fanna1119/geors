@@ -1094,6 +1094,7 @@ impl TextIndex {
 /// village called Paris in Nepal), and the small partition wins.
 pub struct GlobalStats {
     searchers: Vec<Searcher>,
+    fields: Fields,
     total_docs: u64,
     total_tokens: HashMap<Field, u64>,
     /// Documents containing a term, summed over all partitions; filled on
@@ -1136,6 +1137,7 @@ impl GlobalStats {
         total_tokens.insert(f.exonym, total_docs);
         Ok(Self {
             searchers,
+            fields: f,
             total_docs,
             total_tokens,
             doc_freqs: (0..DOC_FREQ_SHARDS).map(|_| RwLock::default()).collect(),
@@ -1168,10 +1170,27 @@ impl Bm25StatisticsProvider for GlobalStats {
         if let Some(&n) = shard.read().unwrap().get(term) {
             return Ok(n);
         }
+        // A primary name and an area's English name count as one field:
+        // otherwise a word is rare among the few English names ("berlin"
+        // as the English name of a Russian village) and outscores the same
+        // word as the primary name of the real Berlin.
+        let (name, exonym) = (self.fields.name, self.fields.exonym);
+        let terms: Vec<Term> = match term.value().as_str() {
+            Some(text) if term.field() == name || term.field() == exonym => vec![
+                Term::from_field_text(name, text),
+                Term::from_field_text(exonym, text),
+            ],
+            _ => vec![term.clone()],
+        };
         let mut n = 0;
         for s in &self.searchers {
-            n += s.doc_freq(term)?;
+            for t in &terms {
+                n += s.doc_freq(t)?;
+            }
         }
+        // A document with the word in both fields counts twice; tantivy's
+        // IDF asserts the count never exceeds the documents.
+        let n = n.min(self.total_docs);
         let mut cache = shard.write().unwrap();
         if cache.len() >= DOC_FREQ_CACHE {
             cache.clear();
