@@ -415,6 +415,23 @@ struct RelGeometry {
     feature: Option<(Option<LonLat>, Option<BBox>, Vec<u8>)>,
 }
 
+/// Rank of a `place=*` area in the address hierarchy (the highest rank
+/// wins a level; boundaries rank by `admin_level`), or `None` if it takes
+/// no part in addresses.
+///
+/// `place=*` areas are more specific than boundaries for cities and below
+/// (a `place=suburb` polygon inside a city), but at county level and above
+/// they rank below every boundary: they only fill the slot where no
+/// administrative area does. `place=region` is a loose label (a landscape,
+/// "Contiguous United States") and never part of an address, as in
+/// Nominatim; it stays searchable.
+fn place_area_rank(class: &tags::Class) -> Option<u8> {
+    if class.value == "region" {
+        return None;
+    }
+    Some(if class.layer >= Layer::County { 1 } else { 11 })
+}
+
 fn relation_geometry(
     r: &reader::RelationData,
     member_refs: &HashMap<i64, Vec<i64>>,
@@ -435,7 +452,7 @@ fn relation_geometry(
         r.class
             .as_ref()
             .filter(|c| c.key == "place" && c.layer.is_admin())
-            .map(|c| (c.layer, 11))
+            .and_then(|c| place_area_rank(c).map(|rank| (c.layer, rank)))
     };
     let admin = match (admin_kind, &mp, bbox) {
         (Some((layer, rank)), Some(mp), Some(b)) => Some((layer, rank, BandedPolygon::new(mp), b)),
@@ -672,14 +689,14 @@ pub fn import_pbf(path: &Path, opts: &ImportOptions) -> Result<Import> {
         })
         .collect();
     for (w, poly) in scan.area_ways.iter().zip(way_polys) {
-        if let Some((polygon, bbox)) = poly {
+        if let (Some((polygon, bbox)), Some(rank)) = (poly, place_area_rank(&w.class)) {
             let polygon = admin_store.push(polygon)?;
             let u = add_area(
                 &mut units,
                 &mut admin_areas,
                 &w.tags,
                 w.class.layer,
-                11,
+                rank,
                 polygon,
                 bbox,
             );
