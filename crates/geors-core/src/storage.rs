@@ -26,7 +26,7 @@ use crate::geom::{BBox, LonLat, from_e7, to_e7};
 use crate::layer::Layer;
 
 /// Bump whenever the layout of any partition file changes.
-pub const FORMAT_VERSION: u32 = 7;
+pub const FORMAT_VERSION: u32 = 8;
 
 pub const META_FILE: &str = "meta.json";
 pub const PLACES_FILE: &str = "places.bin";

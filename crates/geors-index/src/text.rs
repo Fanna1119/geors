@@ -80,6 +80,11 @@ pub struct Fields {
     /// regions, well-known POIs): typing "m" suggests München, not one of
     /// millions of names starting with m.
     pub major_prefix: Field,
+    /// English name of an area (city and up) whose primary name differs:
+    /// "Vienna" for Wien, "Tokyo" for 東京都. Scored like `name`: among
+    /// dozens of translations in `alt_names` it would lose to any place
+    /// that has the word as its only name (a town called Vienna).
+    pub exonym: Field,
 }
 
 pub fn schema() -> (Schema, Fields) {
@@ -98,6 +103,7 @@ pub fn schema() -> (Schema, Fields) {
             .set_index_option(IndexRecordOption::Basic)
             .set_fieldnorms(false),
     );
+    let text_exonym = text.clone();
     let fields = Fields {
         place_id: b.add_u64_field("place_id", NumericOptions::default().set_fast()),
         name: b.add_text_field("name", text.clone()),
@@ -108,6 +114,7 @@ pub fn schema() -> (Schema, Fields) {
         osm: b.add_text_field("osm", STRING),
         name_prefix: b.add_text_field("name_prefix", prefix_options.clone()),
         major_prefix: b.add_text_field("major_prefix", prefix_options),
+        exonym: b.add_text_field("exonym", text_exonym),
     };
     (b.build(), fields)
 }
@@ -262,6 +269,12 @@ impl TextIndexWriter {
         if let Some(name) = &place.name {
             seen.insert(name.to_lowercase());
             doc.add_text(f.name, name);
+        }
+        if place.layer >= Layer::City
+            && let Some(en) = place.names.get("en")
+            && seen.insert(en.to_lowercase())
+        {
+            doc.add_text(f.exonym, en);
         }
         // A place without a Latin name is searchable in Latin letters too
         // ("Москва" as "moskva"). Places that have one (often among many
@@ -572,6 +585,7 @@ impl TextIndex {
         let mut per_field: Vec<Box<dyn Query>> = Vec::new();
         for (field, boost) in [
             (f.name, NAME_BOOST),
+            (f.exonym, NAME_BOOST),
             (f.alt_names, ALT_NAME_BOOST),
             (f.address, ADDRESS_BOOST),
             (f.housenumber, HOUSENUMBER_BOOST),
@@ -611,7 +625,8 @@ impl TextIndex {
                     );
                 }
             }
-            let is_name = field == f.name;
+            // The exonym is scored as a name: same prefix and typo clauses.
+            let is_name = field == f.name || field == f.exonym;
             if prefix && is_name {
                 // Names and alternative names share the n-gram field.
                 if chars <= SHORT_PREFIX {
@@ -985,11 +1000,13 @@ impl TextIndex {
     fn is_known(&self, token: &str) -> bool {
         let searcher = self.reader.searcher();
         let f = self.fields;
-        [f.name, f.alt_names, f.address].into_iter().any(|field| {
-            searcher
-                .doc_freq(&Term::from_field_text(field, token))
-                .is_ok_and(|n| n > 0)
-        })
+        [f.name, f.exonym, f.alt_names, f.address]
+            .into_iter()
+            .any(|field| {
+                searcher
+                    .doc_freq(&Term::from_field_text(field, token))
+                    .is_ok_and(|n| n > 0)
+            })
     }
 
     /// Place ids indexed under any of the given OSM keys (see [`osm_key`]).
@@ -1100,6 +1117,7 @@ impl GlobalStats {
         let mut total_tokens = HashMap::new();
         for field in [
             f.name,
+            f.exonym,
             f.alt_names,
             f.address,
             f.housenumber,
@@ -1112,6 +1130,10 @@ impl GlobalStats {
             }
             total_tokens.insert(field, n);
         }
+        // Few documents have an exonym, so its true average length is a
+        // fraction of a word and any match would count as long. Score it
+        // as a one-word field, like a short name.
+        total_tokens.insert(f.exonym, total_docs);
         Ok(Self {
             searchers,
             total_docs,
