@@ -7,7 +7,7 @@
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, OnceLock, RwLock};
 
 use geors_core::{Layer, OsmType, Place};
 use levenshtein_automata::{DFA, Distance, LevenshteinAutomatonBuilder};
@@ -20,8 +20,8 @@ use tantivy::directory::{
 use tantivy::index::SegmentId;
 use tantivy::indexer::NoMergePolicy;
 use tantivy::query::{
-    BooleanQuery, BoostQuery, ConstScoreQuery, DisjunctionMaxQuery, FuzzyTermQuery, Occur, Query,
-    TermQuery,
+    Bm25StatisticsProvider, BooleanQuery, BoostQuery, ConstScoreQuery, DisjunctionMaxQuery,
+    FuzzyTermQuery, Occur, Query, TermQuery,
 };
 use tantivy::schema::{
     Field, IndexRecordOption, NumericOptions, STRING, Schema, TextFieldIndexing, TextOptions,
@@ -31,8 +31,8 @@ use tantivy::tokenizer::{
     WhitespaceTokenizer,
 };
 use tantivy::{
-    DocId, Index, IndexReader, IndexWriter, ReloadPolicy, Score, SegmentReader, TantivyDocument,
-    Term,
+    DocId, Index, IndexReader, IndexWriter, ReloadPolicy, Score, Searcher, SegmentReader,
+    TantivyDocument, Term,
 };
 use tantivy_fst::Automaton;
 
@@ -1004,7 +1004,7 @@ impl TextIndex {
         );
         let scorer = Arc::new(|_: u32, s: Score| s);
         Ok(self
-            .search(&query, None, scorer, keys.len() * 4)?
+            .search(&query, None, scorer, keys.len() * 4, &self.searcher())?
             .into_iter()
             .map(|(_, id)| id)
             .collect())
@@ -1023,7 +1023,7 @@ impl TextIndex {
         let all = self.reader.searcher().num_docs() as usize;
         let scorer = Arc::new(|_: u32, s: Score| s);
         let mut ids: Vec<u32> = self
-            .search(&query, None, scorer, all)?
+            .search(&query, None, scorer, all, &self.searcher())?
             .into_iter()
             .map(|(_, id)| id)
             .collect();
@@ -1031,12 +1031,19 @@ impl TextIndex {
         Ok(ids)
     }
 
+    pub fn searcher(&self) -> Searcher {
+        self.reader.searcher()
+    }
+
+    /// Top `limit` matches of `query`, scored with term statistics from
+    /// `stats` (see [`GlobalStats`]) and then by `scorer`.
     pub fn search(
         &self,
         query: &dyn Query,
         filter: Option<Arc<BitSet>>,
         scorer: Arc<dyn Fn(u32, Score) -> Score + Send + Sync>,
         limit: usize,
+        stats: &dyn Bm25StatisticsProvider,
     ) -> tantivy::Result<Vec<(Score, u32)>> {
         let searcher = self.reader.searcher();
         let place_ids = self.place_ids.clone();
@@ -1055,11 +1062,100 @@ impl TextIndex {
             }
         });
         Ok(searcher
-            .search(query, &top)?
+            .search_with_statistics_provider(query, &top, stats)?
             .into_iter()
             .map(|((score, id), _)| (score, id))
             .filter(|(score, _)| *score > Score::NEG_INFINITY)
             .collect())
+    }
+}
+
+/// Term statistics over all loaded partitions, so that text scores are
+/// comparable between them. With each partition's own statistics, a name
+/// that is common in its country ("Paris" in France, in every "Rue de
+/// Paris") scores lower there than in a country where it is rare (a
+/// village called Paris in Nepal), and the small partition wins.
+pub struct GlobalStats {
+    searchers: Vec<Searcher>,
+    total_docs: u64,
+    total_tokens: HashMap<Field, u64>,
+    /// Documents containing a term, summed over all partitions; filled on
+    /// first use. The data never changes while it is loaded. Sharded: every
+    /// search thread asks for every term of its query in every partition.
+    doc_freqs: Vec<RwLock<HashMap<Term, u64>>>,
+}
+
+/// Terms remembered per shard of [`GlobalStats`] before it starts over.
+const DOC_FREQ_CACHE: usize = 4096;
+const DOC_FREQ_SHARDS: usize = 64;
+
+impl GlobalStats {
+    pub fn new(indexes: &[&TextIndex]) -> tantivy::Result<Self> {
+        let searchers: Vec<Searcher> = indexes.iter().map(|t| t.searcher()).collect();
+        let mut total_docs = 0;
+        for s in &searchers {
+            total_docs += Bm25StatisticsProvider::total_num_docs(s)?;
+        }
+        let (_, f) = schema();
+        let mut total_tokens = HashMap::new();
+        for field in [
+            f.name,
+            f.alt_names,
+            f.address,
+            f.housenumber,
+            f.name_prefix,
+            f.major_prefix,
+        ] {
+            let mut n = 0;
+            for s in &searchers {
+                n += Bm25StatisticsProvider::total_num_tokens(s, field)?;
+            }
+            total_tokens.insert(field, n);
+        }
+        Ok(Self {
+            searchers,
+            total_docs,
+            total_tokens,
+            doc_freqs: (0..DOC_FREQ_SHARDS).map(|_| RwLock::default()).collect(),
+        })
+    }
+}
+
+impl Bm25StatisticsProvider for GlobalStats {
+    fn total_num_tokens(&self, field: Field) -> tantivy::Result<u64> {
+        match self.total_tokens.get(&field) {
+            Some(&n) => Ok(n),
+            None => {
+                let mut n = 0;
+                for s in &self.searchers {
+                    n += Bm25StatisticsProvider::total_num_tokens(s, field)?;
+                }
+                Ok(n)
+            }
+        }
+    }
+
+    fn total_num_docs(&self) -> tantivy::Result<u64> {
+        Ok(self.total_docs)
+    }
+
+    fn doc_freq(&self, term: &Term) -> tantivy::Result<u64> {
+        let mut h = std::hash::DefaultHasher::new();
+        std::hash::Hash::hash(term, &mut h);
+        let shard = &self.doc_freqs[std::hash::Hasher::finish(&h) as usize % DOC_FREQ_SHARDS];
+        if let Some(&n) = shard.read().unwrap().get(term) {
+            return Ok(n);
+        }
+        let mut n = 0;
+        for s in &self.searchers {
+            n += s.doc_freq(term)?;
+        }
+        let mut cache = shard.write().unwrap();
+        if cache.len() >= DOC_FREQ_CACHE {
+            cache.clear();
+        }
+        cache.insert(term.clone(), n);
+        Ok(n)
     }
 }
 

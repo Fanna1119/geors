@@ -204,6 +204,8 @@ pub struct Engine {
     partitions: Vec<Arc<Partition>>,
     /// Some country has more than one partition.
     split: bool,
+    /// Text statistics over all partitions (see [`text::GlobalStats`]).
+    stats: Arc<text::GlobalStats>,
     ranking: RankingConfig,
     synonyms: Synonyms,
     analyzer: TextAnalyzer,
@@ -258,20 +260,26 @@ impl Engine {
             info!(partition = %cc, places = p.len(), source = %p.meta.source, "loaded partition");
             partitions.push(Arc::new(p));
         }
-        Ok(Self::from_partitions(partitions, config))
+        Self::from_partitions(partitions, config)
     }
 
-    pub fn from_partitions(partitions: Vec<Arc<Partition>>, config: EngineConfig) -> Self {
+    pub fn from_partitions(
+        partitions: Vec<Arc<Partition>>,
+        config: EngineConfig,
+    ) -> Result<Self, IndexError> {
         let mut codes: Vec<&str> = partitions.iter().map(|p| p.code()).collect();
         codes.sort_unstable();
         let split = codes.windows(2).any(|w| w[0] == w[1]);
-        Self {
+        let indexes: Vec<&text::TextIndex> = partitions.iter().map(|p| &p.text).collect();
+        let stats = Arc::new(text::GlobalStats::new(&indexes)?);
+        Ok(Self {
             partitions,
             split,
+            stats,
             ranking: config.ranking,
             synonyms: config.synonyms,
             analyzer: text::analyzer(),
-        }
+        })
     }
 
     pub fn partitions(&self) -> &[Arc<Partition>] {
@@ -471,7 +479,7 @@ impl Engine {
                     });
                     let hits = part
                         .text
-                        .search(query.as_ref(), filter.clone(), scorer, fetch)
+                        .search(query.as_ref(), filter.clone(), scorer, fetch, &*self.stats)
                         .map_err(IndexError::from)?;
                     Ok(hits
                         .into_iter()
