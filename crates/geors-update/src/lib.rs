@@ -70,12 +70,17 @@ pub fn lock(data_dir: &Path) -> Result<DataLock> {
 /// With `discard_input` the input file is deleted as soon as it has been
 /// read, before the partitions are written, so a large download and the
 /// finished index never need disk space at the same time.
+///
+/// A country whose partition another source wrote (a country split between
+/// two extracts) is written as a further part, `<cc>@<source_name>`, unless
+/// it is a strip of it (see [`other_owner`]).
 pub fn import_file(
     path: &Path,
     format: Format,
     data_dir: &Path,
     opts: &ImportOptions,
     source_label: &str,
+    source_name: &str,
     discard_input: bool,
 ) -> Result<Vec<String>> {
     let t = Instant::now();
@@ -101,33 +106,58 @@ pub fn import_file(
         );
     }
     geors_ingest::mem::mark("import done, writing partitions");
+    let registry = Registry::load(data_dir)?;
     let mut written = Vec::new();
     for c in &import.countries {
         let code = c.country_code.clone();
-        if let Some(existing) = replaced_by_fragment(data_dir, &code, source_label, c.places.count)
-            && !opts.countries.contains(&code)
-        {
-            warn!(
-                partition = %code,
-                places = c.places.count,
-                existing_places = existing.num_places,
-                existing_source = %existing.source,
-                "not replacing a much larger partition from another source with what looks like a fragment; name the country with --countries to replace it anyway"
-            );
-            continue;
-        }
+        let name = match other_owner(data_dir, &code, source_label, source_name, &registry) {
+            // Free, ours, or replaced on request (--countries).
+            None => code.clone(),
+            Some(_) if opts.countries.contains(&code) => code.clone(),
+            // The existing partition is a strip of this one: take it over
+            // (the other source skips it from now on, see below).
+            Some((_, existing))
+                if (existing.num_places as u64).saturating_mul(10) < c.places.count =>
+            {
+                code.clone()
+            }
+            // A strip of a country another source imports in full (the
+            // Aleutians of the United States in the Asia extract): it adds
+            // nothing, and as a part of its own it would only duplicate.
+            Some((owner, existing))
+                if c.places.count.saturating_mul(10) < existing.num_places as u64 =>
+            {
+                warn!(
+                    partition = %code,
+                    places = c.places.count,
+                    existing_places = existing.num_places,
+                    owner = %owner,
+                    "skipping what looks like a strip of a country another source imports; name the country with --countries to replace that partition"
+                );
+                continue;
+            }
+            // A substantial part of a country another source also imports
+            // (Russia in the Europe and Asia extracts): kept as a part.
+            Some((owner, _)) => {
+                let name = geors_core::storage::partition_name(&code, Some(source_name));
+                info!(partition = %code, owner = %owner, part = %name, "country also imported by another source; writing this part separately");
+                name
+            }
+        };
         write_partition(
             data_dir,
             PartitionInput {
                 country_code: c.country_code.clone(),
+                name: Some(name.clone()),
+                source_name: Some(source_name.to_string()),
                 country_name: c.country_name.clone(),
                 source: source_label.to_string(),
                 places: c.places.clone(),
                 admins: c.admins.clone(),
             },
         )?;
-        geors_ingest::mem::mark(&format!("partition {code} written"));
-        written.push(code);
+        geors_ingest::mem::mark(&format!("partition {name} written"));
+        written.push(name);
     }
     drop(import); // removes the scratch files
     geors_core::storage::bump_generation(data_dir)?;
@@ -248,7 +278,15 @@ fn fetch_and_import(
             }
             None => (dest, !keep_download),
         };
-        let partitions = import_file(&path, source.format, data_dir, &opts, &label, discard)?;
+        let partitions = import_file(
+            &path,
+            source.format,
+            data_dir,
+            &opts,
+            &label,
+            &source.name,
+            discard,
+        )?;
         set_base(source, replication.map(|r| (path, r)));
         (partitions, version)
     } else {
@@ -258,7 +296,15 @@ fn fetch_and_import(
             .file_name()
             .map(|n| n.to_string_lossy().to_string())
             .unwrap_or_default();
-        let partitions = import_file(path, source.format, data_dir, &opts, &label, false)?;
+        let partitions = import_file(
+            path,
+            source.format,
+            data_dir,
+            &opts,
+            &label,
+            &source.name,
+            false,
+        )?;
         // A local Geofabrik extract can be kept current with diffs too; the
         // user's file itself is never modified (see `diff_update`).
         set_base(
@@ -275,22 +321,44 @@ fn fetch_and_import(
     Ok(partitions)
 }
 
-/// The existing partition `code`, if writing `places` places from
-/// `source_label` over it looks like a mistake: it came from another source
-/// and has more than ten times the places. Overlapping extracts (Asia and
-/// North America both hold parts of the United States and Russia) must not
-/// replace a country's real import with the strip they contain.
-fn replaced_by_fragment(
+/// The source that wrote partition `code`, with its meta, if that is not
+/// `source_name`. Partitions record their source's name; older ones only
+/// the file they were read from, matched against each registered source's
+/// file and base. An unregistered writer counts as another source when its
+/// file differs from `source_label`.
+fn other_owner(
     data_dir: &Path,
     code: &str,
     source_label: &str,
-    places: u64,
-) -> Option<geors_core::storage::PartitionMeta> {
+    source_name: &str,
+    registry: &Registry,
+) -> Option<(String, geors_core::storage::PartitionMeta)> {
     let dir = geors_core::storage::partition_dir(data_dir, code);
     let bytes = std::fs::read(dir.join(geors_core::storage::META_FILE)).ok()?;
     let meta: geors_core::storage::PartitionMeta = serde_json::from_slice(&bytes).ok()?;
-    (meta.source != source_label && places.saturating_mul(10) < meta.num_places as u64)
-        .then_some(meta)
+    let file_name = |p: &str| {
+        Path::new(p)
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+    };
+    let owner = meta.source_name.clone().or_else(|| {
+        registry
+            .sources
+            .iter()
+            .find(|s| {
+                [Some(s.location.as_str()), s.state.base.as_deref()]
+                    .into_iter()
+                    .flatten()
+                    .any(|p| file_name(p).as_deref() == Some(meta.source.as_str()))
+            })
+            .map(|s| s.name.clone())
+    });
+    match owner {
+        Some(o) if o == source_name => None,
+        Some(o) => Some((o, meta)),
+        None if meta.source == source_label => None,
+        None => Some((meta.source.clone(), meta)),
+    }
 }
 
 /// Delete partitions that `source` produced before but not this time (for
@@ -436,7 +504,15 @@ fn diff_update(
         extent: bbox,
         ..source.import_options()
     };
-    let partitions = import_file(&path, source.format, data_dir, &opts, &label, false)?;
+    let partitions = import_file(
+        &path,
+        source.format,
+        data_dir,
+        &opts,
+        &label,
+        &source.name,
+        false,
+    )?;
     remove_stale_partitions(data_dir, source, &partitions)?;
     let rep = replicate::read_replication(&path)?.context("base lost its replication header")?;
     let iso = (rep.timestamp > 0).then(|| unix_to_iso(rep.timestamp));
@@ -817,13 +893,18 @@ mod tests {
         assert!(geors_core::storage::partition_dir(&data, "li").exists());
         assert_ne!(geors_core::storage::read_generation(&data).unwrap(), gen1);
 
-        // A partition another source also produces is kept.
+        // Another source importing the same countries writes its own parts;
+        // when the first one drops ch, the country stays available.
         let other = dir.path().join("other.jsonl");
         dump_li_ch(&other);
         import_location(&data, input, &all).unwrap();
-        import_location(&data, other.to_str().unwrap(), &all).unwrap();
+        assert_eq!(
+            import_location(&data, other.to_str().unwrap(), &all).unwrap(),
+            vec!["ch@other", "li@other"]
+        );
         import_location(&data, input, &default).unwrap();
-        assert!(geors_core::storage::partition_dir(&data, "ch").exists());
+        assert!(!geors_core::storage::partition_dir(&data, "ch").exists());
+        assert!(geors_core::storage::partition_dir(&data, "ch@other").exists());
     }
 
     #[test]
@@ -874,6 +955,92 @@ mod tests {
         };
         assert_eq!(import_location(&data, &a, &explicit).unwrap(), vec!["ch"]);
         assert_eq!(places("ch"), 1);
+    }
+
+    #[test]
+    fn split_countries_keep_every_part() {
+        let dir = tempfile::tempdir().unwrap();
+        let data = dir.path().join("data");
+        // Places 0..n of one country, the same OSM ids in both dumps where
+        // they overlap (as extracts share a buffer along their border).
+        let dump = |name: &str, n: usize, lon: f64| {
+            let path = dir.path().join(name);
+            let mut out =
+                String::from(r#"{"type":"NominatimDumpFile","content":{"version":"0.1.0"}}"#);
+            for i in 0..n {
+                let lon = lon + i as f64 * 1e-4;
+                out.push_str(&format!(
+                    "\n{{\"type\":\"Place\",\"content\":[{{\"place_id\":{i},\"object_type\":\"N\",\"object_id\":{i},\"osm_key\":\"amenity\",\"osm_value\":\"cafe\",\"rank_address\":30,\"name\":{{\"name\":\"Cafe {i}\"}},\"country_code\":\"li\",\"centroid\":[{lon},47.14]}}]}}"
+                ));
+            }
+            std::fs::write(&path, out + "\n").unwrap();
+            path.to_str().unwrap().to_string()
+        };
+        let opts = AddOptions {
+            track: true,
+            all_countries: true,
+            ..Default::default()
+        };
+        let west = dump("west.jsonl", 300, 9.50);
+        let east = dump("east.jsonl", 200, 9.50);
+        assert_eq!(import_location(&data, &west, &opts).unwrap(), vec!["li"]);
+        // Partitions written before they recorded their source's name: the
+        // owner is found through its file.
+        let meta_path =
+            geors_core::storage::partition_dir(&data, "li").join(geors_core::storage::META_FILE);
+        let mut meta: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&meta_path).unwrap()).unwrap();
+        assert!(meta.as_object_mut().unwrap().remove("source_name").is_some());
+        std::fs::write(&meta_path, serde_json::to_vec(&meta).unwrap()).unwrap();
+        // Another source with a substantial part: written next to it.
+        assert_eq!(
+            import_location(&data, &east, &opts).unwrap(),
+            vec!["li@east"]
+        );
+        // Re-importing either replaces only its own part.
+        assert_eq!(import_location(&data, &west, &opts).unwrap(), vec!["li"]);
+        assert_eq!(
+            import_location(&data, &east, &opts).unwrap(),
+            vec!["li@east"]
+        );
+
+        // The engine treats both parts as one country, without duplicates.
+        let engine = geors_index::Engine::open(
+            &data,
+            &["li".to_string()],
+            geors_index::EngineConfig::default(),
+        )
+        .unwrap();
+        assert_eq!(engine.partitions().len(), 2);
+        let hits = engine
+            .search(&geors_index::SearchRequest {
+                query: Some("cafe 5".into()),
+                countries: vec!["li".into()],
+                limit: 10,
+                ..Default::default()
+            })
+            .unwrap();
+        let ids: Vec<i64> = hits.iter().map(|h| h.place.osm_id).collect();
+        let mut unique = ids.clone();
+        unique.sort();
+        unique.dedup();
+        assert_eq!(ids.len(), unique.len(), "duplicates in {ids:?}");
+        assert_eq!(ids.first(), Some(&5));
+        let near = engine
+            .nearest(&geors_index::NearestRequest {
+                point: geors_core::geom::LonLat::new(9.5005, 47.14),
+                max_distance_m: None,
+                countries: vec![],
+                layers: vec![],
+                limit: 5,
+                tags: Default::default(),
+            })
+            .unwrap();
+        let mut ids: Vec<i64> = near.iter().map(|h| h.place.osm_id).collect();
+        assert_eq!(ids.len(), 5);
+        ids.sort();
+        ids.dedup();
+        assert_eq!(ids.len(), 5, "duplicates among the nearest");
     }
 
     fn pbf(path: &Path, seq: Option<u64>) {

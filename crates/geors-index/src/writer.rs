@@ -22,6 +22,11 @@ use crate::text::TextIndexWriter;
 
 pub struct PartitionInput {
     pub country_code: String,
+    /// Directory name, if not the country code (see
+    /// [`storage::partition_name`]).
+    pub name: Option<String>,
+    /// Registered source writing it (see [`PartitionMeta::source_name`]).
+    pub source_name: Option<String>,
     pub country_name: Option<String>,
     pub source: String,
     /// The partition's places, spilled to disk during import.
@@ -342,6 +347,8 @@ pub fn write_partition_from_places(
         data_dir,
         PartitionInput {
             country_code: country_code.to_string(),
+            name: None,
+            source_name: None,
             country_name,
             source: source.to_string(),
             places: w.finish()?,
@@ -359,6 +366,7 @@ pub fn write_partition_from_places(
 /// order.
 pub fn write_partition(data_dir: &Path, input: PartitionInput) -> Result<PathBuf, IndexError> {
     let cc = input.country_code.clone();
+    let name = input.name.clone().unwrap_or_else(|| cc.clone());
     let count = input.places.count;
     if count == 0 {
         return Err(IndexError::Format(format!(
@@ -372,8 +380,8 @@ pub fn write_partition(data_dir: &Path, input: PartitionInput) -> Result<PathBuf
     }
     let t = Instant::now();
     fs::create_dir_all(data_dir)?;
-    let final_dir = storage::partition_dir(data_dir, &cc);
-    let tmp_dir = data_dir.join(format!(".{cc}.tmp-{}", std::process::id()));
+    let final_dir = storage::partition_dir(data_dir, &name);
+    let tmp_dir = data_dir.join(format!(".{name}.tmp-{}", std::process::id()));
     if tmp_dir.exists() {
         fs::remove_dir_all(&tmp_dir)?;
     }
@@ -544,6 +552,7 @@ pub fn write_partition(data_dir: &Path, input: PartitionInput) -> Result<PathBuf
         bbox,
         layers,
         source: input.source.clone(),
+        source_name: input.source_name.clone(),
         created_unix: SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_secs())
@@ -556,7 +565,7 @@ pub fn write_partition(data_dir: &Path, input: PartitionInput) -> Result<PathBuf
 
     if final_dir.exists() {
         warn!(partition = %cc, "replacing existing partition {}", final_dir.display());
-        let old = data_dir.join(format!(".{cc}.old-{}", std::process::id()));
+        let old = data_dir.join(format!(".{name}.old-{}", std::process::id()));
         fs::rename(&final_dir, &old)?;
         fs::rename(&tmp_dir, &final_dir)?;
         fs::remove_dir_all(&old)?;

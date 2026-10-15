@@ -307,8 +307,12 @@ fn upgrade_cmd(data: &Path) -> Result<()> {
 
 fn export_cmd(data: &Path, country: &str, every: u32) -> Result<()> {
     use std::io::Write;
-    let cc = country_codes(&[country.to_string()])?.remove(0);
-    let p = geors_index::Partition::open(&data.join(&cc))?;
+    // A country code, or a part of a split country (`ru@asia`).
+    let name = match country.split_once('@') {
+        Some((cc, part)) => format!("{}@{part}", country_codes(&[cc.to_string()])?.remove(0)),
+        None => country_codes(&[country.to_string()])?.remove(0),
+    };
+    let p = geors_index::Partition::open(&data.join(&name))?;
     let mut out = std::io::BufWriter::new(std::io::stdout().lock());
     for id in (0..p.len()).step_by(every.max(1) as usize) {
         let rec = p.record(id).context("corrupt record")?;
