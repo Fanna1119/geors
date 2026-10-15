@@ -217,6 +217,15 @@ impl Partition {
         &self.meta.country_code
     }
 
+    /// Directory name: the country code, or `<cc>@<source>` for a further
+    /// part of a split country.
+    pub fn name(&self) -> String {
+        self.dir
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| self.code().to_string())
+    }
+
     pub fn len(&self) -> u32 {
         self.meta.num_places
     }

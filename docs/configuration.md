@@ -113,6 +113,24 @@ district then come from `place=*` nodes.
 
 Re-importing a country replaces its partition atomically.
 
+#### Countries split between extracts
+
+Some countries span two extracts: Russia is in both the Europe and the Asia
+extract, and so are Turkey and Kazakhstan. The source that imports a
+country first owns its partition, `<cc>`. When another source holds a
+substantial part of the same country, that part is written next to it as
+`<cc>@<source>` (for example `ru@asia`). Searches treat all parts as one
+country (`country=ru` searches both), and places in the overlap between the
+extracts are returned once. Re-importing either source replaces only its
+own part.
+
+A strip of a country that another source imports in full (the Aleutians of
+the United States in the Asia extract, more than ten times fewer places) is
+skipped instead: it would only duplicate places. If the existing partition
+is the strip, the larger import takes it over. `--countries` always
+replaces the `<cc>` partition. `geors info` and `/status` list each part;
+`geors export ru@asia` exports one.
+
 ## Nominatim / Photon dumps
 
 geors reads the [Nominatim dump format](https://github.com/komoot/photon/blob/master/docs/json-dump-format-0.1.0.md)
