@@ -108,6 +108,7 @@ pub fn import_file(
     geors_ingest::mem::mark("import done, writing partitions");
     let registry = Registry::load(data_dir)?;
     let mut written = Vec::new();
+    let mut skipped: Vec<String> = Vec::new();
     for c in &import.countries {
         let code = c.country_code.clone();
         let name = match other_owner(data_dir, &code, source_label, source_name, &registry) {
@@ -134,6 +135,10 @@ pub fn import_file(
                     owner = %owner,
                     "skipping what looks like a strip of a country another source imports; name the country with --countries to replace that partition"
                 );
+                skipped.push(format!(
+                    "{code} ({} places; {owner} has {})",
+                    c.places.count, existing.num_places
+                ));
                 continue;
             }
             // A substantial part of a country another source also imports
@@ -161,6 +166,9 @@ pub fn import_file(
     }
     drop(import); // removes the scratch files
     geors_core::storage::bump_generation(data_dir)?;
+    if !skipped.is_empty() {
+        warn!(input = %source_label, skipped = %skipped.join(", "), "strips of countries other sources import were not written");
+    }
     info!(input = %source_label, partitions = %written.join(","), elapsed = ?t.elapsed(), "import finished");
     Ok(written)
 }
@@ -990,7 +998,12 @@ mod tests {
             geors_core::storage::partition_dir(&data, "li").join(geors_core::storage::META_FILE);
         let mut meta: serde_json::Value =
             serde_json::from_slice(&std::fs::read(&meta_path).unwrap()).unwrap();
-        assert!(meta.as_object_mut().unwrap().remove("source_name").is_some());
+        assert!(
+            meta.as_object_mut()
+                .unwrap()
+                .remove("source_name")
+                .is_some()
+        );
         std::fs::write(&meta_path, serde_json::to_vec(&meta).unwrap()).unwrap();
         // Another source with a substantial part: written next to it.
         assert_eq!(

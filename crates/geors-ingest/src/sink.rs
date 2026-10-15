@@ -104,20 +104,42 @@ impl CountrySink {
         }
         let admins = Arc::new(admins);
         let mut out = Vec::new();
+        let mut skipped: Vec<String> = Vec::new();
         for (cc, w) in self.writers {
             let keep = if !opts.countries.is_empty() {
-                opts.countries.contains(&cc)
+                let keep = opts.countries.contains(&cc);
+                if !keep {
+                    skipped.push(format!("{cc} ({} places, not in --countries)", w.count()));
+                }
+                keep
             } else if opts.all_countries {
                 true
             } else {
                 let share = w.count() as f64 / total.max(1) as f64;
-                let keep = match covered.get(&cc) {
-                    Some(Coverage::Boundary) => true,
-                    Some(Coverage::Regions) => share >= opts.min_share / 10.0,
-                    None => share >= opts.min_share,
+                let (keep, rule) = match covered.get(&cc) {
+                    Some(Coverage::Boundary) => (true, "boundary inside the extract"),
+                    Some(Coverage::Regions) => (
+                        share >= opts.min_share / 10.0,
+                        "only regions inside the extract, needs 0.1 % of the places",
+                    ),
+                    None => (
+                        share >= opts.min_share,
+                        "boundary not inside the extract, needs 1 % of the places",
+                    ),
                 };
                 if !keep {
-                    info!(country = %cc, places = w.count(), "skipping border sliver (use --all-countries or --countries to keep it)");
+                    info!(
+                        country = %cc,
+                        places = w.count(),
+                        share = %format!("{:.3} %", share * 100.0),
+                        rule,
+                        "skipping border sliver (use --all-countries or --countries to keep it)"
+                    );
+                    skipped.push(format!(
+                        "{cc} ({} places, {:.3} %)",
+                        w.count(),
+                        share * 100.0
+                    ));
                 }
                 keep
             };
@@ -132,6 +154,13 @@ impl CountrySink {
                 places: spill,
                 admins: admins.clone(),
             });
+        }
+        if !skipped.is_empty() {
+            info!(
+                kept = %out.iter().map(|c| c.country_code.as_str()).collect::<Vec<_>>().join(" "),
+                skipped = %skipped.join(", "),
+                "countries skipped by the country rules"
+            );
         }
         Ok(out)
     }
