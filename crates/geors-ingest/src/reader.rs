@@ -207,6 +207,68 @@ fn relation_data(r: &osmpbf::Relation) -> Option<RelationData> {
     (!rel.outer.is_empty()).then_some(rel)
 }
 
+/// Check that `path` ends exactly where the block at `last` (the offset of
+/// the last block read) does. A file cut short (an interrupted download)
+/// otherwise imports without an error: `osmpbf` treats a truncated last
+/// block as the end of the file, and the import would quietly hold only
+/// the elements before the cut. Reads one block header.
+fn check_ends_at(path: &Path, last: u64) -> Result<()> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut file =
+        File::open(path).with_context(|| format!("cannot open PBF file '{}'", path.display()))?;
+    let len = file.metadata()?.len();
+    let invalid = || anyhow!("'{}' is not a valid PBF file", path.display());
+    file.seek(SeekFrom::Start(last))?;
+    let mut size = [0u8; 4];
+    file.read_exact(&mut size)?;
+    let header_len = u32::from_be_bytes(size) as usize;
+    if header_len > 64 * 1024 {
+        return Err(invalid());
+    }
+    let mut header = vec![0u8; header_len];
+    file.read_exact(&mut header)?;
+    let end = last + 4 + header_len as u64 + blob_datasize(&header).ok_or_else(invalid)?;
+    if end != len {
+        anyhow::bail!(
+            "'{}' is incomplete: reading stopped at byte {end} of {len} (was the download interrupted? download it again)",
+            path.display()
+        );
+    }
+    Ok(())
+}
+
+/// `datasize` (field 3) of a protobuf `BlobHeader`.
+fn blob_datasize(mut b: &[u8]) -> Option<u64> {
+    fn varint(b: &mut &[u8]) -> Option<u64> {
+        let mut v = 0u64;
+        for shift in (0..64).step_by(7) {
+            let (&byte, rest) = b.split_first()?;
+            *b = rest;
+            v |= u64::from(byte & 0x7f) << shift;
+            if byte < 0x80 {
+                return Some(v);
+            }
+        }
+        None
+    }
+    let mut size = None;
+    while !b.is_empty() {
+        let key = varint(&mut b)?;
+        match (key >> 3, key & 7) {
+            (3, 0) => size = Some(varint(&mut b)?),
+            (_, 0) => {
+                varint(&mut b)?;
+            }
+            (_, 2) => {
+                let n = varint(&mut b)? as usize;
+                b = b.get(n..)?;
+            }
+            _ => return None,
+        }
+    }
+    size
+}
+
 /// Pass 1: relations, plus the blob index for the later passes.
 pub fn read_relations(path: &Path) -> Result<(BlobIndex, Vec<RelationData>)> {
     let t = Instant::now();
@@ -223,6 +285,7 @@ pub fn read_relations(path: &Path) -> Result<(BlobIndex, Vec<RelationData>)> {
         ways: Vec::new(),
     };
     let mut relations = Vec::new();
+    let mut last = 0u64;
     drive(
         blocks,
         || (),
@@ -236,6 +299,7 @@ pub fn read_relations(path: &Path) -> Result<(BlobIndex, Vec<RelationData>)> {
             Ok((offset, has_nodes, has_ways, rels))
         },
         |(offset, has_nodes, has_ways, rels)| {
+            last = last.max(offset.0);
             if has_nodes {
                 index.nodes.push(offset);
             }
@@ -247,6 +311,7 @@ pub fn read_relations(path: &Path) -> Result<(BlobIndex, Vec<RelationData>)> {
         },
     )
     .with_context(|| format!("failed reading '{}'", path.display()))?;
+    check_ends_at(path, last)?;
     // Deterministic order regardless of which thread finished first.
     index.nodes.sort_by_key(|o| o.0);
     index.ways.sort_by_key(|o| o.0);
