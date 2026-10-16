@@ -1192,6 +1192,23 @@ mod tests {
     }
 
     #[test]
+    fn truncated_extract_is_rejected() {
+        let dir = tempfile::tempdir().unwrap();
+        let pbf = dir.path().join("cut.osm.pbf");
+        region_extract(&pbf);
+        let bytes = std::fs::read(&pbf).unwrap();
+        // Cut inside the last block (the relations).
+        std::fs::write(&pbf, &bytes[..bytes.len() - 20]).unwrap();
+        let err = import_location(
+            &dir.path().join("data"),
+            pbf.to_str().unwrap(),
+            &AddOptions::default(),
+        )
+        .unwrap_err();
+        assert!(format!("{err:#}").contains("incomplete"), "{err:#}");
+    }
+
+    #[test]
     fn administrative_state_beats_place_areas() {
         let dir = tempfile::tempdir().unwrap();
         let data = dir.path().join("data");
