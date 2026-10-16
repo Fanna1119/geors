@@ -202,6 +202,10 @@ impl Drop for InFlight {
 
 pub struct Engine {
     partitions: Vec<Arc<Partition>>,
+    /// Some country has more than one partition.
+    split: bool,
+    /// Text statistics over all partitions (see [`text::GlobalStats`]).
+    stats: Arc<text::GlobalStats>,
     ranking: RankingConfig,
     synonyms: Synonyms,
     analyzer: TextAnalyzer,
@@ -223,11 +227,16 @@ impl Engine {
                 data_dir.display()
             )));
         }
+        // A country may have several partitions (`ru`, `ru@asia`: one per
+        // source that imports part of it); select all of them.
         let selected: Vec<String> = if countries.is_empty() {
             available.clone()
         } else {
             for cc in countries {
-                if !available.contains(cc) {
+                if !available
+                    .iter()
+                    .any(|n| geors_core::storage::country_of(n) == cc)
+                {
                     return Err(IndexError::Format(format!(
                         "country '{cc}' not found in '{}' (available: {})",
                         data_dir.display(),
@@ -235,7 +244,15 @@ impl Engine {
                     )));
                 }
             }
-            countries.to_vec()
+            available
+                .iter()
+                .filter(|n| {
+                    countries
+                        .iter()
+                        .any(|cc| geors_core::storage::country_of(n) == cc)
+                })
+                .cloned()
+                .collect()
         };
         let mut partitions = Vec::new();
         for cc in selected {
@@ -243,16 +260,26 @@ impl Engine {
             info!(partition = %cc, places = p.len(), source = %p.meta.source, "loaded partition");
             partitions.push(Arc::new(p));
         }
-        Ok(Self::from_partitions(partitions, config))
+        Self::from_partitions(partitions, config)
     }
 
-    pub fn from_partitions(partitions: Vec<Arc<Partition>>, config: EngineConfig) -> Self {
-        Self {
+    pub fn from_partitions(
+        partitions: Vec<Arc<Partition>>,
+        config: EngineConfig,
+    ) -> Result<Self, IndexError> {
+        let mut codes: Vec<&str> = partitions.iter().map(|p| p.code()).collect();
+        codes.sort_unstable();
+        let split = codes.windows(2).any(|w| w[0] == w[1]);
+        let indexes: Vec<&text::TextIndex> = partitions.iter().map(|p| &p.text).collect();
+        let stats = Arc::new(text::GlobalStats::new(&indexes)?);
+        Ok(Self {
             partitions,
+            split,
+            stats,
             ranking: config.ranking,
             synonyms: config.synonyms,
             analyzer: text::analyzer(),
-        }
+        })
     }
 
     pub fn partitions(&self) -> &[Arc<Partition>] {
@@ -263,22 +290,26 @@ impl Engine {
         if countries.is_empty() {
             return Ok((0..self.partitions.len()).collect());
         }
-        countries
-            .iter()
-            .map(|cc| {
-                self.partitions
+        let mut out = Vec::new();
+        for cc in countries {
+            let parts: Vec<usize> = (0..self.partitions.len())
+                .filter(|&i| self.partitions[i].code() == cc)
+                .collect();
+            if parts.is_empty() {
+                let mut loaded: Vec<String> = self
+                    .partitions
                     .iter()
-                    .position(|p| p.code() == cc)
-                    .ok_or_else(|| EngineError::CountryNotLoaded {
-                        requested: cc.clone(),
-                        loaded: self
-                            .partitions
-                            .iter()
-                            .map(|p| p.code().to_string())
-                            .collect(),
-                    })
-            })
-            .collect()
+                    .map(|p| p.code().to_string())
+                    .collect();
+                loaded.dedup();
+                return Err(EngineError::CountryNotLoaded {
+                    requested: cc.clone(),
+                    loaded,
+                });
+            }
+            out.extend(parts);
+        }
+        Ok(out)
     }
 
     pub fn search(&self, req: &SearchRequest) -> Result<Vec<Hit>, EngineError> {
@@ -448,7 +479,7 @@ impl Engine {
                     });
                     let hits = part
                         .text
-                        .search(query.as_ref(), filter.clone(), scorer, fetch)
+                        .search(query.as_ref(), filter.clone(), scorer, fetch, &*self.stats)
                         .map_err(IndexError::from)?;
                     Ok(hits
                         .into_iter()
@@ -636,11 +667,16 @@ impl Engine {
         }
         // Most specific first: lowest layer, then smallest area.
         found.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.total_cmp(&b.1)));
-        self.load(found.into_iter().map(|(_, _, c)| c).collect(), Some(point))
+        let hits = self.load(found.into_iter().map(|(_, _, c)| c).collect(), Some(point))?;
+        Ok(unique_places(hits, usize::MAX))
     }
 
     pub fn nearest(&self, req: &NearestRequest) -> Result<Vec<Hit>, EngineError> {
-        let limit = req.limit.max(1);
+        // Partitions of the same country overlap where their extracts do:
+        // the same place can come from both, so look further and drop the
+        // duplicates.
+        let wanted = req.limit.max(1);
+        let limit = if self.split { wanted * 2 } else { wanted };
         let p = req.point;
         let max = req.max_distance_m.unwrap_or(f64::INFINITY);
         let passes = |layer: Layer| req.layers.is_empty() || req.layers.contains(&layer);
@@ -733,7 +769,8 @@ impl Engine {
                 distance_m: Some(d),
             })
             .collect();
-        self.load(cands, Some(p))
+        let hits = self.load(cands, Some(p))?;
+        Ok(unique_places(hits, wanted))
     }
 
     /// Places by OSM id, in request order. Unknown ids are skipped.
@@ -905,11 +942,12 @@ fn dedup(hits: Vec<Hit>, limit: usize) -> Vec<Hit> {
     let mut kept: Vec<Hit> = Vec::with_capacity(limit);
     for hit in hits {
         let dup = kept.iter().any(|k| {
-            k.place.layer == hit.place.layer
-                && k.place.name.is_some()
-                && k.place.name == hit.place.name
-                && k.place.housenumber == hit.place.housenumber
-                && geors_core::geom::haversine(k.place.center, hit.place.center) < 1_000.0
+            same_place(k, &hit)
+                || k.place.layer == hit.place.layer
+                    && k.place.name.is_some()
+                    && k.place.name == hit.place.name
+                    && k.place.housenumber == hit.place.housenumber
+                    && geors_core::geom::haversine(k.place.center, hit.place.center) < 1_000.0
         });
         if !dup {
             kept.push(hit);
@@ -921,7 +959,28 @@ fn dedup(hits: Vec<Hit>, limit: usize) -> Vec<Hit> {
     kept
 }
 
-/// Partition directory names (lowercase country codes) in `data_dir`.
+/// The same OSM object, from two partitions of one country.
+fn same_place(a: &Hit, b: &Hit) -> bool {
+    a.place.osm_type == b.place.osm_type && a.place.osm_id == b.place.osm_id
+}
+
+/// `hits` without repeats of the same OSM object, at most `limit`.
+fn unique_places(hits: Vec<Hit>, limit: usize) -> Vec<Hit> {
+    let mut kept: Vec<Hit> = Vec::new();
+    for hit in hits {
+        if kept.len() == limit {
+            break;
+        }
+        if !kept.iter().any(|k| same_place(k, &hit)) {
+            kept.push(hit);
+        }
+    }
+    kept
+}
+
+/// Partition directory names in `data_dir`: country codes, and
+/// `<cc>@<source>` for further parts of a country (see
+/// `geors_core::storage::partition_name`).
 pub fn list_partitions(data_dir: &Path) -> Result<Vec<String>, IndexError> {
     let entries = std::fs::read_dir(data_dir).map_err(|e| {
         IndexError::Format(format!(

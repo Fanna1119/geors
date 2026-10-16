@@ -2,6 +2,7 @@
 
 use std::collections::BTreeMap;
 
+use crate::wiki::WikiImportance;
 use geors_core::Layer;
 
 /// Tags retained from an OSM element (only the keys we care about).
@@ -310,7 +311,22 @@ pub fn classify(t: &Tags, kind: ElementKind) -> Option<Class> {
 }
 
 /// Importance prior in `[0, 1]`.
-pub fn importance(c: &Class, t: &Tags) -> f32 {
+/// Weight of a Wikipedia importance (0..1) in a place's importance: across
+/// linked places it adds about 0.09 on average, like the flat bonus for a
+/// `wikidata` tag it replaces, but Berlin gains 0.30 and a village with a
+/// stub article a few hundredths.
+const WIKI_WEIGHT: f32 = 0.35;
+
+/// Above this, importance is compressed towards 1 instead of capped, so
+/// that large cities keep their order (Springfield, Illinois above
+/// Springfield, Massachusetts) rather than all ending at 1.0.
+const SOFT_CAP: f32 = 0.9;
+
+/// Importance of a place, 0..1. With `wiki` (see [`crate::wiki`]), a place
+/// whose `wikidata` article is in it gets a bonus by the article's
+/// importance; a `wikidata` tag without an article gets none. Without it,
+/// any `wikidata` or `wikipedia` tag adds a flat 0.1.
+pub fn importance(c: &Class, t: &Tags, wiki: Option<&WikiImportance>) -> f32 {
     let mut imp = c.layer.base_importance();
     match (c.layer, c.value.as_str()) {
         (Layer::City, "city") => imp = 0.70,
@@ -325,18 +341,73 @@ pub fn importance(c: &Class, t: &Tags) -> f32 {
         ) => imp -= 0.08,
         _ => {}
     }
-    if t.has("wikidata") || t.has("wikipedia") {
-        imp += 0.1;
+    let article = match (wiki, t.get("wikidata")) {
+        (Some(w), Some(q)) => Some(w.get(q).unwrap_or(0.0)),
+        _ => None,
+    };
+    match article {
+        Some(a) => imp += WIKI_WEIGHT * a,
+        None if t.has("wikidata") || t.has("wikipedia") => imp += 0.1,
+        None => {}
     }
     if let Some(pop) = t.population().filter(|&p| p > 0) {
         imp += 0.15 * ((pop as f32).log10() / 7.0).min(1.0);
     }
-    imp.clamp(0.0, 1.0)
+    soft_cap(imp.max(0.0))
+}
+
+/// The identity up to [`SOFT_CAP`], then an exponential approach to 1:
+/// monotonic, so higher stays higher.
+fn soft_cap(x: f32) -> f32 {
+    if x <= SOFT_CAP {
+        x
+    } else {
+        1.0 - (1.0 - SOFT_CAP) * (-(x - SOFT_CAP) / (1.0 - SOFT_CAP)).exp()
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn wikipedia_importance() {
+        let wiki = WikiImportance::from_pairs(vec![
+            (28848, 0.647),
+            (49158, 0.611),
+            (64, 0.852),
+            (5, 0.05),
+        ]);
+        let city = |q: &str, pop: &str| {
+            let t = tags(&[
+                ("place", "city"),
+                ("name", "X"),
+                ("wikidata", q),
+                ("population", pop),
+            ]);
+            let c = classify(&t, ElementKind::Node).unwrap();
+            (importance(&c, &t, Some(&wiki)), importance(&c, &t, None))
+        };
+        // Springfield, Illinois (114k) above Springfield, Massachusetts
+        // (155k): without the file, population decided the other way.
+        let (il, il_plain) = city("Q28848", "114394");
+        let (ma, ma_plain) = city("Q49158", "155929");
+        assert!(
+            il > ma && il_plain < ma_plain,
+            "{il} {ma} {il_plain} {ma_plain}"
+        );
+        // Soft cap: big cities stay below 1 and keep their order.
+        let (berlin, _) = city("Q64", "3600000");
+        assert!(berlin < 1.0 && berlin > il, "{berlin}");
+        // A wikidata item without an article gets no bonus with the file;
+        // without the file, any wikidata tag counts.
+        let (stub, plain) = city("Q999", "1000");
+        let (small, _) = city("Q5", "1000");
+        assert!(
+            stub < plain && small > stub && small < plain,
+            "{stub} {small} {plain}"
+        );
+    }
 
     fn tags(pairs: &[(&str, &str)]) -> Tags {
         Tags::from_osm(pairs.iter().copied())

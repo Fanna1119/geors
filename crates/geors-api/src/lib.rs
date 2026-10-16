@@ -188,6 +188,9 @@ async fn contains(
 
 #[derive(Serialize)]
 struct PartitionStatus {
+    /// Directory name: the country code, or `<cc>@<source>` for a further
+    /// part of a country split between sources.
+    partition: String,
     country_code: String,
     country_name: Option<String>,
     places: u32,
@@ -218,6 +221,7 @@ async fn status(State(state): State<Arc<AppState>>) -> Json<Status> {
         .map(|p| {
             let m = &p.meta;
             PartitionStatus {
+                partition: p.name(),
                 country_code: m.country_code.clone(),
                 country_name: m.country_name.clone(),
                 places: m.num_places,

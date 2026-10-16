@@ -26,7 +26,7 @@ use crate::geom::{BBox, LonLat, from_e7, to_e7};
 use crate::layer::Layer;
 
 /// Bump whenever the layout of any partition file changes.
-pub const FORMAT_VERSION: u32 = 7;
+pub const FORMAT_VERSION: u32 = 8;
 
 pub const META_FILE: &str = "meta.json";
 pub const PLACES_FILE: &str = "places.bin";
@@ -110,11 +110,32 @@ pub struct PartitionMeta {
     pub bbox: BBox,
     pub layers: BTreeMap<String, u32>,
     pub source: String,
+    /// Name of the registered source that wrote this partition (`geors
+    /// sources`); `source` is the file it was read from, which changes
+    /// when diffs are merged into a new base.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_name: Option<String>,
     pub created_unix: u64,
 }
 
-pub fn partition_dir(data_dir: &Path, country_code: &str) -> PathBuf {
-    data_dir.join(country_code)
+/// Directory of the partition named `name` (see [`partition_name`]).
+pub fn partition_dir(data_dir: &Path, name: &str) -> PathBuf {
+    data_dir.join(name)
+}
+
+/// Name of a partition: the country code, or `<cc>@<source>` for a further
+/// part of a country that another source also imports (a country split
+/// between two extracts, such as Russia in Europe and Asia).
+pub fn partition_name(country_code: &str, part_of: Option<&str>) -> String {
+    match part_of {
+        Some(source) => format!("{country_code}@{source}"),
+        None => country_code.to_string(),
+    }
+}
+
+/// The country code of a partition name.
+pub fn country_of(name: &str) -> &str {
+    name.split('@').next().unwrap_or(name)
 }
 
 /// Fixed size per-place record. Everything needed for spatial filtering and

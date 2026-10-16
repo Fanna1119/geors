@@ -7,7 +7,7 @@
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, OnceLock, RwLock};
 
 use geors_core::{Layer, OsmType, Place};
 use levenshtein_automata::{DFA, Distance, LevenshteinAutomatonBuilder};
@@ -20,8 +20,8 @@ use tantivy::directory::{
 use tantivy::index::SegmentId;
 use tantivy::indexer::NoMergePolicy;
 use tantivy::query::{
-    BooleanQuery, BoostQuery, ConstScoreQuery, DisjunctionMaxQuery, FuzzyTermQuery, Occur, Query,
-    TermQuery,
+    Bm25StatisticsProvider, BooleanQuery, BoostQuery, ConstScoreQuery, DisjunctionMaxQuery,
+    FuzzyTermQuery, Occur, Query, TermQuery,
 };
 use tantivy::schema::{
     Field, IndexRecordOption, NumericOptions, STRING, Schema, TextFieldIndexing, TextOptions,
@@ -31,8 +31,8 @@ use tantivy::tokenizer::{
     WhitespaceTokenizer,
 };
 use tantivy::{
-    DocId, Index, IndexReader, IndexWriter, ReloadPolicy, Score, SegmentReader, TantivyDocument,
-    Term,
+    DocId, Index, IndexReader, IndexWriter, ReloadPolicy, Score, Searcher, SegmentReader,
+    TantivyDocument, Term,
 };
 use tantivy_fst::Automaton;
 
@@ -80,6 +80,11 @@ pub struct Fields {
     /// regions, well-known POIs): typing "m" suggests München, not one of
     /// millions of names starting with m.
     pub major_prefix: Field,
+    /// English name of an area (city and up) whose primary name differs:
+    /// "Vienna" for Wien, "Tokyo" for 東京都. Scored like `name`: among
+    /// dozens of translations in `alt_names` it would lose to any place
+    /// that has the word as its only name (a town called Vienna).
+    pub exonym: Field,
 }
 
 pub fn schema() -> (Schema, Fields) {
@@ -98,6 +103,7 @@ pub fn schema() -> (Schema, Fields) {
             .set_index_option(IndexRecordOption::Basic)
             .set_fieldnorms(false),
     );
+    let text_exonym = text.clone();
     let fields = Fields {
         place_id: b.add_u64_field("place_id", NumericOptions::default().set_fast()),
         name: b.add_text_field("name", text.clone()),
@@ -108,6 +114,7 @@ pub fn schema() -> (Schema, Fields) {
         osm: b.add_text_field("osm", STRING),
         name_prefix: b.add_text_field("name_prefix", prefix_options.clone()),
         major_prefix: b.add_text_field("major_prefix", prefix_options),
+        exonym: b.add_text_field("exonym", text_exonym),
     };
     (b.build(), fields)
 }
@@ -262,6 +269,12 @@ impl TextIndexWriter {
         if let Some(name) = &place.name {
             seen.insert(name.to_lowercase());
             doc.add_text(f.name, name);
+        }
+        if place.layer >= Layer::City
+            && let Some(en) = place.names.get("en")
+            && seen.insert(en.to_lowercase())
+        {
+            doc.add_text(f.exonym, en);
         }
         // A place without a Latin name is searchable in Latin letters too
         // ("Москва" as "moskva"). Places that have one (often among many
@@ -572,6 +585,7 @@ impl TextIndex {
         let mut per_field: Vec<Box<dyn Query>> = Vec::new();
         for (field, boost) in [
             (f.name, NAME_BOOST),
+            (f.exonym, NAME_BOOST),
             (f.alt_names, ALT_NAME_BOOST),
             (f.address, ADDRESS_BOOST),
             (f.housenumber, HOUSENUMBER_BOOST),
@@ -611,7 +625,8 @@ impl TextIndex {
                     );
                 }
             }
-            let is_name = field == f.name;
+            // The exonym is scored as a name: same prefix and typo clauses.
+            let is_name = field == f.name || field == f.exonym;
             if prefix && is_name {
                 // Names and alternative names share the n-gram field.
                 if chars <= SHORT_PREFIX {
@@ -985,11 +1000,13 @@ impl TextIndex {
     fn is_known(&self, token: &str) -> bool {
         let searcher = self.reader.searcher();
         let f = self.fields;
-        [f.name, f.alt_names, f.address].into_iter().any(|field| {
-            searcher
-                .doc_freq(&Term::from_field_text(field, token))
-                .is_ok_and(|n| n > 0)
-        })
+        [f.name, f.exonym, f.alt_names, f.address]
+            .into_iter()
+            .any(|field| {
+                searcher
+                    .doc_freq(&Term::from_field_text(field, token))
+                    .is_ok_and(|n| n > 0)
+            })
     }
 
     /// Place ids indexed under any of the given OSM keys (see [`osm_key`]).
@@ -1004,7 +1021,7 @@ impl TextIndex {
         );
         let scorer = Arc::new(|_: u32, s: Score| s);
         Ok(self
-            .search(&query, None, scorer, keys.len() * 4)?
+            .search(&query, None, scorer, keys.len() * 4, &self.searcher())?
             .into_iter()
             .map(|(_, id)| id)
             .collect())
@@ -1023,7 +1040,7 @@ impl TextIndex {
         let all = self.reader.searcher().num_docs() as usize;
         let scorer = Arc::new(|_: u32, s: Score| s);
         let mut ids: Vec<u32> = self
-            .search(&query, None, scorer, all)?
+            .search(&query, None, scorer, all, &self.searcher())?
             .into_iter()
             .map(|(_, id)| id)
             .collect();
@@ -1031,12 +1048,19 @@ impl TextIndex {
         Ok(ids)
     }
 
+    pub fn searcher(&self) -> Searcher {
+        self.reader.searcher()
+    }
+
+    /// Top `limit` matches of `query`, scored with term statistics from
+    /// `stats` (see [`GlobalStats`]) and then by `scorer`.
     pub fn search(
         &self,
         query: &dyn Query,
         filter: Option<Arc<BitSet>>,
         scorer: Arc<dyn Fn(u32, Score) -> Score + Send + Sync>,
         limit: usize,
+        stats: &dyn Bm25StatisticsProvider,
     ) -> tantivy::Result<Vec<(Score, u32)>> {
         let searcher = self.reader.searcher();
         let place_ids = self.place_ids.clone();
@@ -1055,11 +1079,124 @@ impl TextIndex {
             }
         });
         Ok(searcher
-            .search(query, &top)?
+            .search_with_statistics_provider(query, &top, stats)?
             .into_iter()
             .map(|((score, id), _)| (score, id))
             .filter(|(score, _)| *score > Score::NEG_INFINITY)
             .collect())
+    }
+}
+
+/// Term statistics over all loaded partitions, so that text scores are
+/// comparable between them. With each partition's own statistics, a name
+/// that is common in its country ("Paris" in France, in every "Rue de
+/// Paris") scores lower there than in a country where it is rare (a
+/// village called Paris in Nepal), and the small partition wins.
+pub struct GlobalStats {
+    searchers: Vec<Searcher>,
+    fields: Fields,
+    total_docs: u64,
+    total_tokens: HashMap<Field, u64>,
+    /// Documents containing a term, summed over all partitions; filled on
+    /// first use. The data never changes while it is loaded. Sharded: every
+    /// search thread asks for every term of its query in every partition.
+    doc_freqs: Vec<RwLock<HashMap<Term, u64>>>,
+}
+
+/// Terms remembered per shard of [`GlobalStats`] before it starts over.
+const DOC_FREQ_CACHE: usize = 4096;
+const DOC_FREQ_SHARDS: usize = 64;
+
+impl GlobalStats {
+    pub fn new(indexes: &[&TextIndex]) -> tantivy::Result<Self> {
+        let searchers: Vec<Searcher> = indexes.iter().map(|t| t.searcher()).collect();
+        let mut total_docs = 0;
+        for s in &searchers {
+            total_docs += Bm25StatisticsProvider::total_num_docs(s)?;
+        }
+        let (_, f) = schema();
+        let mut total_tokens = HashMap::new();
+        for field in [
+            f.name,
+            f.exonym,
+            f.alt_names,
+            f.address,
+            f.housenumber,
+            f.name_prefix,
+            f.major_prefix,
+        ] {
+            let mut n = 0;
+            for s in &searchers {
+                n += Bm25StatisticsProvider::total_num_tokens(s, field)?;
+            }
+            total_tokens.insert(field, n);
+        }
+        // Few documents have an exonym, so its true average length is a
+        // fraction of a word and any match would count as long. Score it
+        // as a one-word field, like a short name.
+        total_tokens.insert(f.exonym, total_docs);
+        Ok(Self {
+            searchers,
+            fields: f,
+            total_docs,
+            total_tokens,
+            doc_freqs: (0..DOC_FREQ_SHARDS).map(|_| RwLock::default()).collect(),
+        })
+    }
+}
+
+impl Bm25StatisticsProvider for GlobalStats {
+    fn total_num_tokens(&self, field: Field) -> tantivy::Result<u64> {
+        match self.total_tokens.get(&field) {
+            Some(&n) => Ok(n),
+            None => {
+                let mut n = 0;
+                for s in &self.searchers {
+                    n += Bm25StatisticsProvider::total_num_tokens(s, field)?;
+                }
+                Ok(n)
+            }
+        }
+    }
+
+    fn total_num_docs(&self) -> tantivy::Result<u64> {
+        Ok(self.total_docs)
+    }
+
+    fn doc_freq(&self, term: &Term) -> tantivy::Result<u64> {
+        let mut h = std::hash::DefaultHasher::new();
+        std::hash::Hash::hash(term, &mut h);
+        let shard = &self.doc_freqs[std::hash::Hasher::finish(&h) as usize % DOC_FREQ_SHARDS];
+        if let Some(&n) = shard.read().unwrap().get(term) {
+            return Ok(n);
+        }
+        // A primary name and an area's English name count as one field:
+        // otherwise a word is rare among the few English names ("berlin"
+        // as the English name of a Russian village) and outscores the same
+        // word as the primary name of the real Berlin.
+        let (name, exonym) = (self.fields.name, self.fields.exonym);
+        let terms: Vec<Term> = match term.value().as_str() {
+            Some(text) if term.field() == name || term.field() == exonym => vec![
+                Term::from_field_text(name, text),
+                Term::from_field_text(exonym, text),
+            ],
+            _ => vec![term.clone()],
+        };
+        let mut n = 0;
+        for s in &self.searchers {
+            for t in &terms {
+                n += s.doc_freq(t)?;
+            }
+        }
+        // A document with the word in both fields counts twice; tantivy's
+        // IDF asserts the count never exceeds the documents.
+        let n = n.min(self.total_docs);
+        let mut cache = shard.write().unwrap();
+        if cache.len() >= DOC_FREQ_CACHE {
+            cache.clear();
+        }
+        cache.insert(term.clone(), n);
+        Ok(n)
     }
 }
 

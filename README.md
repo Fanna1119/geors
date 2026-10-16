@@ -56,7 +56,16 @@ geors import ./nominatim-export.jsonl.gz
 
 Other extract sources: <https://download.geofabrik.de> (countries, regions) and
 <https://extract.bbbike.org> or <https://protomaps.com/extracts> (cities / custom areas).
-Luxembourg (~40 MB) makes a good next step up from Liechtenstein and Andorra.
+
+For better ranking (well-known places and landmarks before same-named ones
+elsewhere), add Nominatim's Wikipedia importance file when importing:
+
+```sh
+curl -L -A "geors" -o osm/wikimedia-importance.csv.gz https://nominatim.org/data/wikimedia-importance.csv.gz
+geors import geofabrik:europe/austria --importance osm/wikimedia-importance.csv.gz
+```
+
+See [Wikipedia importance](docs/configuration.md#wikipedia-importance).
 
 ## Examples
 
@@ -131,3 +140,8 @@ main ones: every update is a full re-import
 continent takes several GB of RAM (serving it does not).
 
 Supported platforms: Linux and macOS.
+
+Map data © [OpenStreetMap](https://www.openstreetmap.org/copyright)
+contributors (ODbL). The optional Wikipedia importance data is published by
+[Nominatim](https://nominatim.org) and derived from Wikipedia
+([CC BY-SA](https://creativecommons.org/licenses/by-sa/4.0/)).

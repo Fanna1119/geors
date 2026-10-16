@@ -625,3 +625,60 @@ fn derived_files_match_records_and_can_be_added() {
     assert_eq!(add(), [CENTERS_FILE]);
     check();
 }
+
+#[test]
+fn english_names_of_areas_count_like_names() {
+    let dir = tempfile::tempdir().unwrap();
+    let admins = vec![AdminUnit {
+        layer: Layer::Country,
+        name: "Österreich".into(),
+        names: Default::default(),
+    }];
+    // Wien is "Vienna" only as a translation, next to dozens of others.
+    let mut wien = place(1, Layer::City, Some("Wien"), 16.37, 48.21);
+    wien.importance = 0.95;
+    wien.country_code = Some("AT".into());
+    for (lang, name) in [
+        ("en", "Vienna"),
+        ("fr", "Vienne"),
+        ("it", "Vienna"),
+        ("ru", "Вена"),
+        ("ja", "ウィーン"),
+        ("pl", "Wiedeń"),
+        ("cs", "Vídeň"),
+        ("hu", "Bécs"),
+        ("tr", "Viyana"),
+    ] {
+        wien.names.insert(lang.into(), name.into());
+    }
+    write_partition_from_places(
+        dir.path(),
+        "at",
+        Some("Österreich".into()),
+        "test",
+        &[wien],
+        admins.clone(),
+    )
+    .unwrap();
+    // A smaller town whose only name is Vienna.
+    let mut town = place(2, Layer::City, Some("Vienna"), -77.27, 38.90);
+    town.importance = 0.8;
+    town.country_code = Some("US".into());
+    write_partition_from_places(
+        dir.path(),
+        "us",
+        Some("United States".into()),
+        "test",
+        &[town],
+        admins,
+    )
+    .unwrap();
+    let engine = Engine::open(dir.path(), &[], EngineConfig::default()).unwrap();
+    for q in ["vienna", "vienna "] {
+        assert_eq!(
+            search(&engine, |r| r.query = Some(q.into()))[0],
+            "Wien",
+            "{q:?}"
+        );
+    }
+}

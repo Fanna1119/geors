@@ -7,6 +7,8 @@ use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 
 pub const SOURCES_FILE: &str = "sources.json";
+/// Cache of parsed Wikipedia importance files, in the data directory.
+pub const IMPORTANCE_DIR: &str = ".importance";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -154,6 +156,10 @@ pub struct Source {
     /// whole extract again (when the extract publishes diffs).
     #[serde(default = "yes")]
     pub diffs: bool,
+    /// Wikipedia importance file (Nominatim's `wikimedia-importance.csv.gz`)
+    /// used for ranking, absolute path.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub importance: Option<String>,
     #[serde(default)]
     pub state: SourceState,
 }
@@ -167,13 +173,25 @@ impl Source {
         is_url(&self.location)
     }
 
-    pub fn import_options(&self) -> geors_ingest::ImportOptions {
-        geors_ingest::ImportOptions {
+    /// Import settings of this source. Loads its Wikipedia importance file,
+    /// if any (cached in `<data>/.importance`).
+    pub fn import_options(&self, data_dir: &Path) -> anyhow::Result<geors_ingest::ImportOptions> {
+        let importance = match &self.importance {
+            Some(path) => Some(std::sync::Arc::new(
+                geors_ingest::wiki::WikiImportance::load(
+                    Path::new(path),
+                    &data_dir.join(IMPORTANCE_DIR),
+                )?,
+            )),
+            None => None,
+        };
+        Ok(geors_ingest::ImportOptions {
             countries: self.countries.clone(),
             all_countries: self.all_countries,
             default_country: self.default_country.clone(),
+            importance,
             ..Default::default()
-        }
+        })
     }
 }
 

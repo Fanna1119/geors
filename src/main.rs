@@ -79,6 +79,11 @@ enum Command {
         /// downloads it in full (saves the disk space of the extract).
         #[arg(long)]
         no_diffs: bool,
+        /// Rank by Wikipedia importance: Nominatim's
+        /// wikimedia-importance.csv.gz (https://nominatim.org/data/).
+        /// Stored with the source, so `update` uses it too.
+        #[arg(long, value_name = "FILE", env = "GEORS_IMPORTANCE")]
+        importance: Option<PathBuf>,
     },
     /// Check registered sources for new versions and re-import changed ones.
     ///
@@ -102,6 +107,10 @@ enum Command {
         prune_originals: bool,
         #[arg(long)]
         keep_download: bool,
+        /// Use this Wikipedia importance file for the updated sources from
+        /// now on (see `import --importance`).
+        #[arg(long, value_name = "FILE")]
+        importance: Option<PathBuf>,
     },
     /// List registered sources, or remove one.
     Sources {
@@ -307,8 +316,12 @@ fn upgrade_cmd(data: &Path) -> Result<()> {
 
 fn export_cmd(data: &Path, country: &str, every: u32) -> Result<()> {
     use std::io::Write;
-    let cc = country_codes(&[country.to_string()])?.remove(0);
-    let p = geors_index::Partition::open(&data.join(&cc))?;
+    // A country code, or a part of a split country (`ru@asia`).
+    let name = match country.split_once('@') {
+        Some((cc, part)) => format!("{}@{part}", country_codes(&[cc.to_string()])?.remove(0)),
+        None => country_codes(&[country.to_string()])?.remove(0),
+    };
+    let p = geors_index::Partition::open(&data.join(&name))?;
     let mut out = std::io::BufWriter::new(std::io::stdout().lock());
     for id in (0..p.len()).step_by(every.max(1) as usize) {
         let rec = p.record(id).context("corrupt record")?;
@@ -596,6 +609,7 @@ fn main() -> Result<()> {
             no_track,
             keep_download,
             no_diffs,
+            importance,
         } => {
             if name.is_some() && inputs.len() > 1 {
                 bail!("--name can only be used with a single input");
@@ -611,6 +625,7 @@ fn main() -> Result<()> {
                 track: !no_track,
                 keep_download,
                 no_diffs,
+                importance: importance.map(|p| p.to_string_lossy().to_string()),
             };
             for input in &inputs {
                 geors_update::import_location(&data, input, &opts)?;
@@ -624,6 +639,7 @@ fn main() -> Result<()> {
             full,
             prune_originals,
             keep_download,
+            importance,
         } => update_cmd(
             &data,
             &UpdateOptions {
@@ -632,6 +648,7 @@ fn main() -> Result<()> {
                 sources,
                 keep_download,
                 prune_originals,
+                importance: importance.map(|p| p.to_string_lossy().to_string()),
             },
         ),
         Command::Sources { data, remove } => sources_cmd(&data, remove),

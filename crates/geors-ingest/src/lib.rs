@@ -30,6 +30,7 @@ pub mod rings;
 pub mod sink;
 pub mod streets;
 pub mod tags;
+pub mod wiki;
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -74,6 +75,8 @@ pub struct ImportOptions {
     /// The extract's bounding box, for a PBF whose header has none (see
     /// the coverage rules in `import_pbf`).
     pub extent: Option<BBox>,
+    /// Wikipedia importance by Wikidata id ([`wiki`]), for ranking.
+    pub importance: Option<Arc<wiki::WikiImportance>>,
 }
 
 /// How ways get their nodes' coordinates during import.
@@ -157,6 +160,7 @@ impl Default for ImportOptions {
             work_dir: None,
             node_lookup: default_node_lookup(),
             extent: None,
+            importance: None,
         }
     }
 }
@@ -185,7 +189,14 @@ pub(crate) fn work_dir(opts: &ImportOptions) -> Result<WorkDir> {
         .with_context(|| format!("cannot create scratch directory in '{}'", parent.display()))
 }
 
-fn make_place(osm_type: OsmType, osm_id: i64, t: &Tags, c: &Class, center: LonLat) -> Place {
+fn make_place(
+    osm_type: OsmType,
+    osm_id: i64,
+    t: &Tags,
+    c: &Class,
+    center: LonLat,
+    wiki: Option<&wiki::WikiImportance>,
+) -> Place {
     let name = t
         .name()
         .or_else(|| {
@@ -216,7 +227,7 @@ fn make_place(osm_type: OsmType, osm_id: i64, t: &Tags, c: &Class, center: LonLa
             .and_then(geors_core::normalize_country_code),
         center,
         extent: None,
-        importance: tags::importance(c, t),
+        importance: tags::importance(c, t, wiki),
         lines: Vec::new(),
         polygons: Vec::new(),
         merged_ids: Vec::new(),
@@ -415,6 +426,23 @@ struct RelGeometry {
     feature: Option<(Option<LonLat>, Option<BBox>, Vec<u8>)>,
 }
 
+/// Rank of a `place=*` area in the address hierarchy (the highest rank
+/// wins a level; boundaries rank by `admin_level`), or `None` if it takes
+/// no part in addresses.
+///
+/// `place=*` areas are more specific than boundaries for cities and below
+/// (a `place=suburb` polygon inside a city), but at county level and above
+/// they rank below every boundary: they only fill the slot where no
+/// administrative area does. `place=region` is a loose label (a landscape,
+/// "Contiguous United States") and never part of an address, as in
+/// Nominatim; it stays searchable.
+fn place_area_rank(class: &tags::Class) -> Option<u8> {
+    if class.value == "region" {
+        return None;
+    }
+    Some(if class.layer >= Layer::County { 1 } else { 11 })
+}
+
 fn relation_geometry(
     r: &reader::RelationData,
     member_refs: &HashMap<i64, Vec<i64>>,
@@ -435,7 +463,7 @@ fn relation_geometry(
         r.class
             .as_ref()
             .filter(|c| c.key == "place" && c.layer.is_admin())
-            .map(|c| (c.layer, 11))
+            .and_then(|c| place_area_rank(c).map(|rank| (c.layer, rank)))
     };
     let admin = match (admin_kind, &mp, bbox) {
         (Some((layer, rank)), Some(mp), Some(b)) => Some((layer, rank, BandedPolygon::new(mp), b)),
@@ -546,19 +574,26 @@ fn read_outline(
 }
 
 /// Build the place for a way feature (geometry from `coords`).
-fn way_place(id: i64, refs: &[i64], pts: Vec<LonLat>, t: &Tags, c: &Class) -> Option<Place> {
+fn way_place(
+    id: i64,
+    refs: &[i64],
+    pts: Vec<LonLat>,
+    t: &Tags,
+    c: &Class,
+    wiki: Option<&wiki::WikiImportance>,
+) -> Option<Place> {
     let first = *pts.first()?;
     let linear = !reader::is_closed(refs) || c.layer == Layer::Street || c.key == "waterway";
     if linear {
         let line = simplify(&pts);
         let center = streets::line_midpoint(&line).unwrap_or(first);
-        let mut p = make_place(OsmType::Way, id, t, c, center);
+        let mut p = make_place(OsmType::Way, id, t, c, center, wiki);
         p.lines = vec![line];
         Some(p)
     } else {
         let polygon = geo::Polygon::new(rings::to_linestring(&pts), vec![]);
         let mp = MultiPolygon::new(vec![polygon]);
-        let mut p = make_place(OsmType::Way, id, t, c, interior(&mp).unwrap_or(first));
+        let mut p = make_place(OsmType::Way, id, t, c, interior(&mp).unwrap_or(first), wiki);
         p.extent = bbox_of(&mp);
         p.polygons = polygon_rings(&mp);
         Some(p)
@@ -566,6 +601,7 @@ fn way_place(id: i64, refs: &[i64], pts: Vec<LonLat>, t: &Tags, c: &Class) -> Op
 }
 
 pub fn import_pbf(path: &Path, opts: &ImportOptions) -> Result<Import> {
+    let wiki = opts.importance.as_deref();
     let started = Instant::now();
     let work = work_dir(opts)?;
 
@@ -672,14 +708,14 @@ pub fn import_pbf(path: &Path, opts: &ImportOptions) -> Result<Import> {
         })
         .collect();
     for (w, poly) in scan.area_ways.iter().zip(way_polys) {
-        if let Some((polygon, bbox)) = poly {
+        if let (Some((polygon, bbox)), Some(rank)) = (poly, place_area_rank(&w.class)) {
             let polygon = admin_store.push(polygon)?;
             let u = add_area(
                 &mut units,
                 &mut admin_areas,
                 &w.tags,
                 w.class.layer,
-                11,
+                rank,
                 polygon,
                 bbox,
             );
@@ -888,7 +924,7 @@ pub fn import_pbf(path: &Path, opts: &ImportOptions) -> Result<Import> {
                 Some(geoms) => geoms.line(cursor, id),
                 None => coords.line(refs),
             };
-            Ok(way_place(id, refs, pts, &t, &c)
+            Ok(way_place(id, refs, pts, &t, &c, wiki)
                 .map(|p| finish(cache, p, way_units.get(&id).copied())))
         },
         |(p, city)| router.route(p, city),
@@ -902,7 +938,7 @@ pub fn import_pbf(path: &Path, opts: &ImportOptions) -> Result<Import> {
         &index,
         HierCache::default,
         |cache, id, point, t, c| {
-            let p = make_place(OsmType::Node, id, &t, &c, point);
+            let p = make_place(OsmType::Node, id, &t, &c, point, wiki);
             Ok(Some(finish(cache, p, node_units.get(&id).copied())))
         },
         |(mut place, city)| {
@@ -947,7 +983,7 @@ pub fn import_pbf(path: &Path, opts: &ImportOptions) -> Result<Import> {
     for f in rel_features.into_iter().filter(|f| !f.absorbed) {
         let Some(center) = f.center else { continue };
         let r = &relations[f.rel];
-        let mut place = make_place(OsmType::Relation, r.id, &r.tags, &f.class, center);
+        let mut place = make_place(OsmType::Relation, r.id, &r.tags, &f.class, center, wiki);
         place.extent = f.extent;
         if let Some(o) = f.outline {
             place.polygons = read_outline(&outlines, o)?;

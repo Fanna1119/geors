@@ -63,8 +63,11 @@ bench/           load, accuracy and ambiguity benchmarks (wrk + Python)
    Linux, because `log10` differs slightly between their maths libraries.)
 2. **Classification** turns OSM tags into layers: `place=*`, admin boundaries,
    named highways (`street`), named amenities/shops/tourism/… (`poi`), and
-   `addr:housenumber` (`house`). Each place also gets an importance prior from
-   its layer, place type, population and wikidata.
+   `addr:housenumber` (`house`). Each place also gets an importance (0–1)
+   from its layer, place type and population, plus a bonus for a Wikidata
+   link: with the Wikipedia importance file (`--importance`), 0.35 × the
+   linked article's importance, otherwise a flat 0.1. Above 0.9 it
+   approaches 1 smoothly, so large places keep their order.
    **House-number interpolation:** an `addr:interpolation` line
    (`odd`/`even`/`all`) between numbered address nodes stands for the
    numbers in between; they become `house` places (`osm_key`
@@ -110,7 +113,7 @@ bench/           load, accuracy and ambiguity benchmarks (wrk + Python)
 | `tags.json`   | Interned `(osm_key, osm_value)` pairs referenced by documents            |
 | `spatial.idx` | Packed Hilbert R-tree over place bboxes ([geo-index](https://github.com/kylebarron/geo-index), flatbush ABI) |
 | `admin.json`  | Admin units with localised names, referenced by places                   |
-| `text/`       | tantivy index, one segment: names, address context, house numbers, edge n-grams for autocomplete, OSM ids, a `place_id` fast field; no stored documents |
+| `text/`       | tantivy index, one segment: names, English names of areas, address context, house numbers, edge n-grams for autocomplete, OSM ids, a `place_id` fast field; no stored documents |
 
 `data/` also holds `GENERATION` (the reload marker), `sources.json` (the source
 registry) and `.lock`. Everything except the small JSON files is
@@ -145,8 +148,11 @@ memory-mapped, so the OS page cache holds the data instead of the heap.
      cannot match (not in the term dictionary as typed, as a synonym, split,
      prefix or within the typo distance) are skipped, so a query naming a
      city searches only the countries that have it.
-   - The fields are name, alternative/translated names, address context and
-     house number. Per word, only the best-matching field counts (dis-max).
+   - The fields are name, the English name of an area (city and up, when it
+     differs: "Vienna" for Wien, scored like the name), alternative and
+     translated names, address context and house number. Per word, only the
+     best-matching field counts (dis-max). Term statistics (BM25) are summed
+     over all partitions, so scores compare across countries.
    - tantivy filters on the bitset and scores
      `text × (1 + importance) × proximity` while collecting. Importance and
      centre come from `importance.bin` and `centers.bin`, small enough to

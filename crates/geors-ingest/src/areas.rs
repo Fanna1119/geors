@@ -19,7 +19,8 @@ const CELL: f64 = 0.02;
 pub struct Area {
     pub unit: u32,
     pub layer: Layer,
-    /// admin_level, or 11 for `place=*` areas (more specific than boundaries).
+    /// admin_level; for `place=*` areas 11 at city level and below (more
+    /// specific than boundaries), 1 above (less specific). Highest wins.
     pub rank: u8,
     /// Arrays in the owning [`AreaIndex`]'s store.
     pub polygon: StoredPolygon,
