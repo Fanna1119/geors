@@ -180,6 +180,8 @@ pub struct AddOptions {
     pub countries: Vec<String>,
     pub all_countries: bool,
     pub default_country: Option<String>,
+    /// Wikipedia importance file for ranking (see `geors_ingest::wiki`).
+    pub importance: Option<String>,
     /// Remember the source so `update` keeps it current.
     pub track: bool,
     /// Keep downloaded files in `<data>/.downloads`.
@@ -220,6 +222,7 @@ pub fn import_location(data_dir: &Path, input: &str, opts: &AddOptions) -> Resul
         all_countries: opts.all_countries,
         default_country: opts.default_country.clone(),
         diffs: !opts.no_diffs,
+        importance: absolute(opts.importance.as_deref())?,
         state: SourceState {
             partitions: previous,
             ..SourceState::default()
@@ -241,6 +244,15 @@ pub fn import_location(data_dir: &Path, input: &str, opts: &AddOptions) -> Resul
     Ok(partitions)
 }
 
+/// `path` made absolute (so updates work from any directory), after
+/// checking that it exists.
+fn absolute(path: Option<&str>) -> Result<Option<String>> {
+    let Some(path) = path else { return Ok(None) };
+    let abs = std::fs::canonicalize(path)
+        .with_context(|| format!("importance file '{path}' not found"))?;
+    Ok(Some(abs.to_string_lossy().to_string()))
+}
+
 /// Fetch the source's current version (if remote) and import it.
 fn fetch_and_import(
     http: &Http,
@@ -249,7 +261,7 @@ fn fetch_and_import(
     known: Option<Version>,
     keep_download: bool,
 ) -> Result<Vec<String>> {
-    let opts = source.import_options();
+    let opts = source.import_options(data_dir)?;
     let (partitions, version) = if source.is_remote() {
         let dir = data_dir.join(DOWNLOAD_DIR);
         std::fs::create_dir_all(&dir)?;
@@ -510,7 +522,7 @@ fn diff_update(
         .unwrap_or_default();
     let opts = geors_ingest::ImportOptions {
         extent: bbox,
-        ..source.import_options()
+        ..source.import_options(data_dir)?
     };
     let partitions = import_file(
         &path,
@@ -693,6 +705,9 @@ pub struct UpdateOptions {
     /// After a diff update of a source imported from a local file, delete
     /// that file: the newer managed copy in `<data>/.base` replaces it.
     pub prune_originals: bool,
+    /// Use this Wikipedia importance file from now on for the updated
+    /// sources (stored with them).
+    pub importance: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -739,9 +754,13 @@ pub fn update(data_dir: &Path, opts: &UpdateOptions) -> Result<Vec<SourceReport>
         .map(|s| s.name.clone())
         .filter(|n| opts.sources.is_empty() || opts.sources.contains(n))
         .collect();
+    let importance = absolute(opts.importance.as_deref())?;
     let mut reports = Vec::new();
     for name in names {
         let source = reg.get_mut(&name).unwrap();
+        if importance.is_some() {
+            source.importance = importance.clone();
+        }
         source.state.checked_at = Some(now());
         let diffed = if opts.full {
             Ok(None)
@@ -1063,7 +1082,9 @@ mod tests {
     fn region_extract(path: &Path) {
         use crate::osm::{Elem, Kind, Member};
         let tags = |kv: &[(&str, &str)]| -> Vec<(String, String)> {
-            kv.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
+            kv.iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect()
         };
         let e7 = |d: f64| (d * 1e7).round() as i32;
         let mut nodes = Vec::new();
@@ -1072,15 +1093,27 @@ mod tests {
         // One closed way per area: a rectangle.
         let mut rect = |id: i64, (x0, x1): (f64, f64)| {
             let base = id * 10;
-            for (i, (x, y)) in [(x0, 0.0), (x1, 0.0), (x1, 10.0), (x0, 10.0)].iter().enumerate() {
-                nodes.push(Elem::Node { id: base + i as i64, lon: e7(*x), lat: e7(*y), tags: vec![] });
+            for (i, (x, y)) in [(x0, 0.0), (x1, 0.0), (x1, 10.0), (x0, 10.0)]
+                .iter()
+                .enumerate()
+            {
+                nodes.push(Elem::Node {
+                    id: base + i as i64,
+                    lon: e7(*x),
+                    lat: e7(*y),
+                    tags: vec![],
+                });
             }
             ways.push(Elem::Way {
                 id,
                 refs: vec![base, base + 1, base + 2, base + 3, base],
                 tags: vec![],
             });
-            vec![Member { kind: Kind::Way, id, role: "outer".into() }]
+            vec![Member {
+                kind: Kind::Way,
+                id,
+                role: "outer".into(),
+            }]
         };
         let country = rect(1, (0.0, 10.0));
         let state = rect(2, (0.0, 5.0));
@@ -1089,28 +1122,53 @@ mod tests {
         relations.push(Elem::Relation {
             id: 1,
             members: country,
-            tags: tags(&[("type", "boundary"), ("boundary", "administrative"), ("admin_level", "2"),
-                ("name", "Testland"), ("ISO3166-1:alpha2", "LI")]),
+            tags: tags(&[
+                ("type", "boundary"),
+                ("boundary", "administrative"),
+                ("admin_level", "2"),
+                ("name", "Testland"),
+                ("ISO3166-1:alpha2", "LI"),
+            ]),
         });
         relations.push(Elem::Relation {
             id: 2,
             members: state,
-            tags: tags(&[("type", "boundary"), ("boundary", "administrative"), ("admin_level", "4"),
-                ("name", "Real State")]),
+            tags: tags(&[
+                ("type", "boundary"),
+                ("boundary", "administrative"),
+                ("admin_level", "4"),
+                ("name", "Real State"),
+            ]),
         });
         relations.push(Elem::Relation {
             id: 3,
             members: region,
-            tags: tags(&[("type", "multipolygon"), ("place", "region"), ("name", "Loose Region")]),
+            tags: tags(&[
+                ("type", "multipolygon"),
+                ("place", "region"),
+                ("name", "Loose Region"),
+            ]),
         });
         relations.push(Elem::Relation {
             id: 4,
             members: place_state,
-            tags: tags(&[("type", "multipolygon"), ("place", "state"), ("name", "Place State")]),
+            tags: tags(&[
+                ("type", "multipolygon"),
+                ("place", "state"),
+                ("name", "Place State"),
+            ]),
         });
         // A region drawn as a closed way (no relation), around the cafe.
-        for (i, (x, y)) in [(2.5, 4.5), (3.5, 4.5), (3.5, 5.5), (2.5, 5.5)].iter().enumerate() {
-            nodes.push(Elem::Node { id: 900 + i as i64, lon: e7(*x), lat: e7(*y), tags: vec![] });
+        for (i, (x, y)) in [(2.5, 4.5), (3.5, 4.5), (3.5, 5.5), (2.5, 5.5)]
+            .iter()
+            .enumerate()
+        {
+            nodes.push(Elem::Node {
+                id: 900 + i as i64,
+                lon: e7(*x),
+                lat: e7(*y),
+                tags: vec![],
+            });
         }
         ways.push(Elem::Way {
             id: 9,
@@ -1125,7 +1183,8 @@ mod tests {
         });
         nodes.sort_by_key(Elem::id);
         let bbox = geors_core::geom::BBox::new(-1.0, -1.0, 11.0, 11.0);
-        let mut file = pbf_write::blob("OSMHeader", &pbf_write::header_block(None, Some(&bbox))).unwrap();
+        let mut file =
+            pbf_write::blob("OSMHeader", &pbf_write::header_block(None, Some(&bbox))).unwrap();
         for block in [nodes, ways, relations] {
             file.extend(pbf_write::blob("OSMData", &pbf_write::primitive_block(&block)).unwrap());
         }
@@ -1162,7 +1221,10 @@ mod tests {
             .collect();
         assert_eq!(state, ["Real State"]);
         // The region itself is still a searchable place.
-        assert_eq!(search("loose region")[0].place.name.as_deref(), Some("Loose Region"));
+        assert_eq!(
+            search("loose region")[0].place.name.as_deref(),
+            Some("Loose Region")
+        );
     }
 
     fn pbf(path: &Path, seq: Option<u64>) {
@@ -1187,6 +1249,7 @@ mod tests {
             all_countries: false,
             default_country: None,
             diffs: true,
+            importance: None,
             state: SourceState::default(),
         }
     }

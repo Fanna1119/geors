@@ -65,6 +65,7 @@ RUST_LOG=debug geors serve                      # logging to stderr (default: in
 | `--no-track`           | Import once, without registering the source for updates.                        |
 | `--keep-download`      | Keep downloaded files in `<data>/.downloads`.                                   |
 | `--no-diffs`           | Keep no base PBF; `update` always downloads the extract in full.                |
+| `--importance FILE`    | Rank with Wikipedia importance (see below). Also `geors update --importance FILE`. |
 
 These flags are stored with the source, so `geors update` re-imports it the
 same way.
@@ -130,6 +131,38 @@ skipped instead: it would only duplicate places. If the existing partition
 is the strip, the larger import takes it over. `--countries` always
 replaces the `<cc>` partition. `geors info` and `/status` list each part;
 `geors export ru@asia` exports one.
+
+## Wikipedia importance
+
+Ranking leans on each place's importance (0–1). Without extra data it comes
+from the place type, population and whether the object links to Wikidata at
+all. With Nominatim's Wikipedia importance file, a place linked to Wikidata
+is ranked by how prominent its Wikipedia article is (computed from the links
+pointing to it): Springfield, Illinois before Springfield, Massachusetts,
+Portland, Oregon before Portland, Maine, and well-known landmarks before
+same-named shops.
+
+```sh
+curl -LO -A "geors" https://nominatim.org/data/wikimedia-importance.csv.gz   # ~320 MB
+geors import geofabrik:europe/austria --importance wikimedia-importance.csv.gz
+# existing sources: set it and re-import them
+geors update --force --importance wikimedia-importance.csv.gz
+```
+
+- The file is stored with each source, so `geors update` keeps using it
+  (`GEORS_IMPORTANCE` sets it for `import` too).
+- The first import parses it (about a minute) and caches the highest
+  importance per Wikidata id in `<data>/.importance/` (about 30 MB); later
+  imports load the cache in a fraction of a second.
+- It only changes importances, so it needs a re-import to take effect. Use it
+  for all sources of a data directory, or none, so countries stay comparable.
+- A `wikidata` tag without a Wikipedia article gets no bonus with the file
+  (about 0.1 without it); a `wikipedia` tag without `wikidata` keeps the flat
+  bonus.
+
+The importance data is derived from Wikipedia and published by the
+[Nominatim](https://nominatim.org) project; Wikipedia content is available
+under [CC BY-SA](https://creativecommons.org/licenses/by-sa/4.0/).
 
 ## Nominatim / Photon dumps
 
