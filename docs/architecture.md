@@ -63,8 +63,11 @@ bench/           load, accuracy and ambiguity benchmarks (wrk + Python)
    Linux, because `log10` differs slightly between their maths libraries.)
 2. **Classification** turns OSM tags into layers: `place=*`, admin boundaries,
    named highways (`street`), named amenities/shops/tourism/… (`poi`), and
-   `addr:housenumber` (`house`). Each place also gets an importance prior from
-   its layer, place type, population and wikidata.
+   `addr:housenumber` (`house`). Each place also gets an importance (0–1)
+   from its layer, place type and population, plus a bonus for a Wikidata
+   link: with the Wikipedia importance file (`--importance`), 0.35 × the
+   linked article's importance, otherwise a flat 0.1. Above 0.9 it
+   approaches 1 smoothly, so large places keep their order.
    **House-number interpolation:** an `addr:interpolation` line
    (`odd`/`even`/`all`) between numbered address nodes stands for the
    numbers in between; they become `house` places (`osm_key`
