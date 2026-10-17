@@ -27,7 +27,7 @@ times include writing the index.
 > **Import memory is not serving memory.** The "Import memory" column is
 > what *building* the index takes, once per import or update. Serving the
 > finished index needs far less: all of Europe runs in about 230 MB at idle
-> and 380 MB under load, Asia + Europe + North America in 650 MB and 840 MB
+> and 380 MB under load, Asia + Europe + North America in 713 MB and 1.0 GB
 > (see below). You can build the index on a larger
 > machine and serve it from a small one. High import memory for continent
 > extracts is a known limitation that I'm still working on (see
@@ -63,33 +63,34 @@ the limit.
 
 ## Serving
 
-**Serving Asia + Europe + North America** (105 partitions, 203 M places,
-46 GB index) on the same laptop, 32 concurrent connections, queries sampled
-from every 500th place (`EVERY=500 bench/run.sh data 20s 32`). The index is
-almost three times the laptop's RAM:
+**Serving Asia + Europe + North America** (105 countries in 107 partitions,
+263 M places, 59 GB index, imported with Wikipedia importance) on the same
+laptop, 32 concurrent connections, queries sampled from every 500th place
+(`EVERY=500 bench/run.sh data 20s 32`). The index is almost four times the
+laptop's RAM:
 
 | Query mix | req/s | p50 | p99 |
 |---|---|---|---|
-| full address | 1,379 | 20 ms | 280 ms |
-| autocomplete prefix | 206 | 141 ms | 436 ms |
-| with typos | 65 | 457 ms | 1.6 s |
-| name + location bias | 634 | 43 ms | 449 ms |
-| category within 2 km radius | 1,554 | 18 ms | 66 ms |
-| reverse | 37,093 | 0.8 ms | 2.9 ms |
-| 10 nearest | 20,305 | 1.5 ms | 4.2 ms |
+| full address | 961 | 28 ms | 266 ms |
+| autocomplete prefix | 175 | 167 ms | 559 ms |
+| with typos | 67 | 441 ms | 1.3 s |
+| name + location bias | 287 | 95 ms | 493 ms |
+| category within 2 km radius | 1,279 | 23 ms | 73 ms |
+| reverse | 29,010 | 1.0 ms | 3.8 ms |
+| 10 nearest | 16,758 | 1.8 ms | 5.9 ms |
 
-- **Memory:** **654 MB** physical footprint at start and **836 MB** after
+- **Memory:** **713 MB** physical footprint at start and **1.0 GB** after
   the load test (Europe alone: 232 MB and 380 MB). For comparison, Photon's
   README recommends "at least 64GB RAM" for its planet-wide database (about
   95 GB on disk). These three continents hold most of OSM's addresses, but
   not all.
-- **Page cache:** RSS reached 7.1 GB. These are cached index pages, which
+- **Page cache:** RSS reached 8.3 GB. These are cached index pages, which
   the OS drops under pressure.
 - **Errors:** none.
 - **Spatial queries** (reverse, nearest) are as fast as on a single country.
 - **Text search** depends on how much of the index stays cached. Queries
   without `country=` search every partition that can match. Ranking reads
-  one importance value per match from `importance.bin` (0.8 GB for all 105
+  one importance value per match from `importance.bin` (about 1 GB for all
   partitions), so that file stays cached. Before it existed, reading
   `places.bin` (8.1 GB) for every match made prefix searches 5x slower.
   Searches with a location read each match's centre from `centers.bin`
@@ -98,8 +99,10 @@ almost three times the laptop's RAM:
 - **Typos:** words are first matched with one typo, with two (words of 8+
   letters) only if that finds nothing. Typo searches remain the slowest:
   every misspelled word expands to all similar words in every partition.
-- **Before #18–#25:** on the same data, full address 143 req/s, prefix 17,
-  typos 23, location bias 87 (sampling every 20th place).
+- **Earlier runs** (before 2026-10-16) used data in which the United States
+  partition held only 707 places (fixed in #27), 203 M places in total; their
+  numbers are not comparable. On that data, the search changes #18–#25 took
+  full address from 143 to 1,379 req/s and prefix from 17 to 206.
 - **Single client:** a lone search uses all cores, one partition per core.
   Under load, each search uses one core: splitting searches when all cores
   are busy only adds overhead (measured: 20 % fewer req/s at 32 connections).
