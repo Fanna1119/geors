@@ -4,7 +4,7 @@ A lightweight, fast geocoder for OpenStreetMap data, written in Rust and
 inspired by [Photon](https://github.com/komoot/photon). It imports country,
 region or continent extracts into per-country partitions and serves them
 from memory-mapped files: Asia, Europe and North America together run in
-under 1 GB of memory on a laptop.
+about 1 GB of memory on a laptop.
 
 - Full-text search with search-as-you-type, typo tolerance and abbreviation
   expansion (`hauptstr.` → `hauptstrasse`), using [tantivy](https://github.com/quickwit-oss/tantivy)
@@ -104,21 +104,21 @@ Details, more data sets and search quality: [docs/benchmarks.md](docs/benchmarks
 ¹ Peak heap while building the index, not while serving it. South Africa
 also imports in a 256 MB / 1 CPU container (70 s).
 
-**Geocoding** Asia + Europe + North America: 105 partitions, 203 M places,
-46 GB index (almost three times the laptop's RAM), 32 concurrent
-connections (`EVERY=500 bench/run.sh data 20s 32`):
+**Geocoding** Asia + Europe + North America: 105 countries, 263 M places,
+59 GB index (almost four times the laptop's RAM), imported with Wikipedia
+importance, 32 concurrent connections (`EVERY=500 bench/run.sh data 20s 32`):
 
 | Query | req/s | p50 | p99 |
 |---|---|---|---|
-| full address | 1,379 | 20 ms | 280 ms |
-| autocomplete prefix | 206 | 141 ms | 436 ms |
-| with typos | 65 | 457 ms | 1.6 s |
-| name + location bias | 634 | 43 ms | 449 ms |
-| category within 2 km radius | 1,554 | 18 ms | 66 ms |
-| reverse | 37,093 | 0.8 ms | 2.9 ms |
-| 10 nearest | 20,305 | 1.5 ms | 4.2 ms |
+| full address | 961 | 28 ms | 266 ms |
+| autocomplete prefix | 175 | 167 ms | 559 ms |
+| with typos | 67 | 441 ms | 1.3 s |
+| name + location bias | 287 | 95 ms | 493 ms |
+| category within 2 km radius | 1,279 | 23 ms | 73 ms |
+| reverse | 29,010 | 1.0 ms | 3.8 ms |
+| 10 nearest | 16,758 | 1.8 ms | 5.9 ms |
 
-Server memory: **654 MB** at start, **836 MB** after the load test (the
+Server memory: **713 MB** at start, **1.0 GB** after the load test (the
 index itself stays in the OS page cache). For comparison, Photon's README
 recommends "at least 64GB RAM" for its planet-wide database.
 
