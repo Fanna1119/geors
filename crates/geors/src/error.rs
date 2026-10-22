@@ -17,6 +17,10 @@ pub enum Error {
     /// The data directory or a partition could not be read.
     #[error(transparent)]
     Data(#[from] IndexError),
+    /// An import or update failed (unreadable or incomplete file, download
+    /// error, data directory locked by another import, ...).
+    #[error("{0}")]
+    Import(String),
 }
 
 impl From<EngineError> for Error {

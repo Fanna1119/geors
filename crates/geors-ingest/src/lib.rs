@@ -51,6 +51,7 @@ use crate::join::{RefSink, WayCursor};
 use crate::nodes::{IdSink, NodeCoords};
 use crate::pip::{BandedPolygon, PolygonStore, StoredPolygon};
 use crate::sink::CountrySink;
+pub use crate::sink::SkippedCountry;
 use crate::streets::StreetStore;
 use crate::tags::{Class, Tags};
 
@@ -180,6 +181,8 @@ pub struct CountryData {
 /// deleted when this is dropped, so write the partitions first.
 pub struct Import {
     pub countries: Vec<CountryData>,
+    /// Countries found but not kept (border slivers, not requested).
+    pub skipped: Vec<SkippedCountry>,
     pub(crate) _work: WorkDir,
 }
 
@@ -1021,9 +1024,10 @@ pub fn import_pbf(path: &Path, opts: &ImportOptions) -> Result<Import> {
         elapsed = ?started.elapsed(),
         "features extracted"
     );
-    let countries = sink.finish(opts, units, &country_names, &covered)?;
+    let (countries, skipped) = sink.finish(opts, units, &country_names, &covered)?;
     Ok(Import {
         countries,
+        skipped,
         _work: work,
     })
 }

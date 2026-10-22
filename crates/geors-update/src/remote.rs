@@ -7,20 +7,33 @@
 //!   sidecar when the server has one.
 //! - Local files: modification time and size.
 
-use std::fs::File;
-use std::io::{BufWriter, Read, Write};
 use std::path::Path;
-use std::time::{Duration, Instant, UNIX_EPOCH};
+use std::time::UNIX_EPOCH;
+#[cfg(feature = "download")]
+use std::{
+    fs::File,
+    io::{BufWriter, Read, Write},
+    time::{Duration, Instant},
+};
 
 use anyhow::{Context, Result, bail};
+#[cfg(feature = "download")]
 use md5::{Digest, Md5};
+#[cfg(feature = "download")]
 use tracing::{debug, info};
 
 use crate::source::Version;
 
+/// HTTP client for checking and downloading extracts and diffs. Without
+/// the `download` feature it is a stand-in whose requests fail: local
+/// files can still be imported and registered.
+#[cfg(feature = "download")]
 pub struct Http {
     agent: ureq::Agent,
 }
+
+#[cfg(not(feature = "download"))]
+pub struct Http;
 
 impl Default for Http {
     fn default() -> Self {
@@ -28,6 +41,34 @@ impl Default for Http {
     }
 }
 
+#[cfg(not(feature = "download"))]
+impl Http {
+    pub fn new() -> Self {
+        Http
+    }
+
+    fn disabled<T>(&self, url: &str) -> Result<T> {
+        bail!("cannot fetch {url}: geors was built without downloads (feature `download`)")
+    }
+
+    pub fn get_text_required(&self, url: &str) -> Result<String> {
+        self.disabled(url)
+    }
+
+    pub fn get_bytes(&self, url: &str) -> Result<Vec<u8>> {
+        self.disabled(url)
+    }
+
+    pub fn check(&self, url: &str) -> Result<Version> {
+        self.disabled(url)
+    }
+
+    pub fn download(&self, url: &str, _dest: &Path, _expected_md5: Option<&str>) -> Result<String> {
+        self.disabled(url)
+    }
+}
+
+#[cfg_attr(not(feature = "download"), allow(dead_code))]
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
@@ -57,6 +98,7 @@ pub fn parse_state(text: &str) -> (Option<u64>, Option<String>) {
 }
 
 /// First token of a `.md5` file, if it looks like an MD5 hash.
+#[cfg_attr(not(feature = "download"), allow(dead_code))]
 fn parse_md5(text: &str) -> Option<String> {
     let h = text.split_whitespace().next()?.to_ascii_lowercase();
     (h.len() == 32 && h.chars().all(|c| c.is_ascii_hexdigit())).then_some(h)
@@ -77,6 +119,7 @@ pub fn check_local(path: &Path) -> Result<Version> {
     })
 }
 
+#[cfg(feature = "download")]
 impl Http {
     pub fn new() -> Self {
         let config = ureq::Agent::config_builder()

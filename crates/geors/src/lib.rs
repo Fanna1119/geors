@@ -16,13 +16,19 @@
 //! # Ok::<(), geors::Error>(())
 //! ```
 //!
-//! Work in progress (issue #42): importing and updating move here next.
+//! Features: `geojson` (results as GeoJSON), `import` (import local
+//! extracts, no network code), `update` (registered sources, downloads and
+//! replication-diff updates).
 
 mod error;
 mod geocoder;
 #[cfg(feature = "geojson")]
 pub mod geojson;
+#[cfg(feature = "import")]
+pub mod import;
 pub mod request;
+#[cfg(feature = "update")]
+pub mod update;
 
 pub use error::{Error, Result};
 pub use geocoder::{Geocoder, GeocoderConfig, PartitionInfo, Status};

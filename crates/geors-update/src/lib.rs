@@ -64,8 +64,19 @@ pub fn lock(data_dir: &Path) -> Result<DataLock> {
     }
 }
 
-/// Import a local file and write its country partitions. Returns the
-/// partition codes written. Caller must hold the [`DataLock`].
+/// What an import wrote and left out.
+#[derive(Debug, Clone, Default)]
+pub struct ImportReport {
+    /// Partitions written: country codes, or `<cc>@<source>` for a further
+    /// part of a country another source imports.
+    pub partitions: Vec<String>,
+    /// Countries found but not written, with the reason: border slivers,
+    /// countries not requested, strips of a country another source owns.
+    pub skipped: Vec<geors_ingest::SkippedCountry>,
+}
+
+/// Import a local file and write its country partitions. Caller must hold
+/// the [`DataLock`].
 ///
 /// With `discard_input` the input file is deleted as soon as it has been
 /// read, before the partitions are written, so a large download and the
@@ -82,7 +93,7 @@ pub fn import_file(
     source_label: &str,
     source_name: &str,
     discard_input: bool,
-) -> Result<Vec<String>> {
+) -> Result<ImportReport> {
     let t = Instant::now();
     info!(input = %path.display(), ?format, "importing");
     // Scratch files go next to the data (usually the roomiest disk).
@@ -108,7 +119,8 @@ pub fn import_file(
     geors_ingest::mem::mark("import done, writing partitions");
     let registry = Registry::load(data_dir)?;
     let mut written = Vec::new();
-    let mut skipped: Vec<String> = Vec::new();
+    let mut skipped = import.skipped.clone();
+    let mut strips: Vec<String> = Vec::new();
     for c in &import.countries {
         let code = c.country_code.clone();
         let name = match other_owner(data_dir, &code, source_label, source_name, &registry) {
@@ -135,10 +147,18 @@ pub fn import_file(
                     owner = %owner,
                     "skipping what looks like a strip of a country another source imports; name the country with --countries to replace that partition"
                 );
-                skipped.push(format!(
+                strips.push(format!(
                     "{code} ({} places; {owner} has {})",
                     c.places.count, existing.num_places
                 ));
+                skipped.push(geors_ingest::SkippedCountry {
+                    country_code: code.clone(),
+                    places: c.places.count,
+                    reason: format!(
+                        "strip of a country source '{owner}' imports ({} places there); name it with --countries to replace that partition",
+                        existing.num_places
+                    ),
+                });
                 continue;
             }
             // A substantial part of a country another source also imports
@@ -166,11 +186,14 @@ pub fn import_file(
     }
     drop(import); // removes the scratch files
     geors_core::storage::bump_generation(data_dir)?;
-    if !skipped.is_empty() {
-        warn!(input = %source_label, skipped = %skipped.join(", "), "strips of countries other sources import were not written");
+    if !strips.is_empty() {
+        warn!(input = %source_label, skipped = %strips.join(", "), "strips of countries other sources import were not written");
     }
     info!(input = %source_label, partitions = %written.join(","), elapsed = ?t.elapsed(), "import finished");
-    Ok(written)
+    Ok(ImportReport {
+        partitions: written,
+        skipped,
+    })
 }
 
 /// Settings for registering a new source with [`import_location`].
@@ -306,7 +329,8 @@ fn fetch_and_import(
             &label,
             &source.name,
             discard,
-        )?;
+        )?
+        .partitions;
         set_base(source, replication.map(|r| (path, r)));
         (partitions, version)
     } else {
@@ -324,7 +348,8 @@ fn fetch_and_import(
             &label,
             &source.name,
             false,
-        )?;
+        )?
+        .partitions;
         // A local Geofabrik extract can be kept current with diffs too; the
         // user's file itself is never modified (see `diff_update`).
         set_base(
@@ -532,7 +557,8 @@ fn diff_update(
         &label,
         &source.name,
         false,
-    )?;
+    )?
+    .partitions;
     remove_stale_partitions(data_dir, source, &partitions)?;
     let rep = replicate::read_replication(&path)?.context("base lost its replication header")?;
     let iso = (rep.timestamp > 0).then(|| unix_to_iso(rep.timestamp));
