@@ -131,6 +131,7 @@ recommends "at least 64GB RAM" for its planet-wide database.
 - [Benchmarks](docs/benchmarks.md): import and serving numbers, search quality
 - [Architecture](docs/architecture.md): ingestion, partition layout, query path
 - [Development](docs/development.md): tests, benchmark scripts, static binary, Docker
+- [Rust library](crates/geors/README.md): geocode from your own program, without the HTTP server
 
 ## Known issues
 
