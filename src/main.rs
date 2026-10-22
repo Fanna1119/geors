@@ -10,8 +10,8 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 use geors_api::{ApiConfig, AppState};
-use geors_index::synonyms::{SynonymConfig, Synonyms};
-use geors_update::{AddOptions, Outcome, Registry, UpdateOptions};
+use geors::synonyms::{SynonymConfig, Synonyms};
+use geors::update::{AddOptions, Outcome, UpdateOptions};
 use serde::Deserialize;
 use tracing::{error, info, warn};
 use tracing_subscriber::EnvFilter;
@@ -40,7 +40,7 @@ struct Cli {
     /// fastest when they fit in RAM), `sorted` (sequential sort-merge join,
     /// for extracts larger than RAM) or `auto`.
     #[arg(long, global = true, env = "GEORS_NODE_LOOKUP", default_value = "auto")]
-    node_lookup: geors_ingest::NodeLookup,
+    node_lookup: geors::import::NodeLookup,
 }
 
 #[derive(Subcommand)]
@@ -182,9 +182,9 @@ struct ServeConfig {
     bind: Option<SocketAddr>,
     countries: Vec<String>,
     api: ApiConfig,
-    ranking: geors_rank::RankingConfig,
+    ranking: geors::RankingConfig,
     /// Abbreviation / synonym rules: built-in languages, extra rule files,
-    /// inline rules (see synonyms/README.md).
+    /// inline rules (see crates/geors-index/synonyms/README.md).
     synonyms: SynonymConfig,
     updates: UpdatesConfig,
 }
@@ -257,7 +257,7 @@ fn country_codes(raw: &[String]) -> Result<Vec<String>> {
     raw.iter()
         .filter(|c| !c.trim().is_empty())
         .map(|c| {
-            geors_core::normalize_country_code(c).with_context(|| {
+            geors::normalize_country_code(c).with_context(|| {
                 format!("invalid country code '{c}' (expected ISO 3166-1 alpha-2, e.g. LI)")
             })
         })
@@ -265,23 +265,23 @@ fn country_codes(raw: &[String]) -> Result<Vec<String>> {
 }
 
 fn info_cmd(data: &Path) -> Result<()> {
-    let codes = geors_index::engine::list_partitions(data)?;
-    if codes.is_empty() {
+    let partitions = geors::data::partitions(data)?;
+    if partitions.is_empty() {
         println!("no partitions in {}", data.display());
     }
-    for cc in codes {
-        let p = match geors_index::Partition::open(&data.join(&cc)) {
-            Ok(p) => p,
+    for p in partitions {
+        let cc = &p.name;
+        let m = match &p.info {
+            Ok(m) => m,
             Err(e) => {
                 println!("{cc}  unusable: {e}");
                 continue;
             }
         };
-        let m = &p.meta;
         println!(
             "{cc}  {:<20} {:>9} places  {:>8.1} MiB  source={}  bbox=[{:.4},{:.4},{:.4},{:.4}]",
             m.country_name.as_deref().unwrap_or("-"),
-            m.num_places,
+            m.places,
             dir_size(&p.dir) as f64 / 1_048_576.0,
             m.source,
             m.bbox.min_lon,
@@ -296,20 +296,16 @@ fn info_cmd(data: &Path) -> Result<()> {
 }
 
 fn upgrade_cmd(data: &Path) -> Result<()> {
-    let mut changed = 0;
-    for cc in geors_index::engine::list_partitions(data)? {
-        let t = std::time::Instant::now();
-        let added = geors_index::partition::add_derived_files(&data.join(&cc))?;
-        if !added.is_empty() {
-            println!("{cc}  added {} ({:.1?})", added.join(", "), t.elapsed());
-            changed += 1;
-        }
+    let t = Instant::now();
+    let changed = geors::data::upgrade(data)?;
+    for (cc, added) in &changed {
+        println!("{cc}  added {}", added.join(", "));
     }
-    if changed > 0 {
-        // A running server reopens its partitions.
-        geors_core::storage::bump_generation(data)?;
-    }
-    println!("{changed} partition(s) upgraded");
+    println!(
+        "{} partition(s) upgraded ({:.1?})",
+        changed.len(),
+        t.elapsed()
+    );
     Ok(())
 }
 
@@ -320,23 +316,15 @@ fn export_cmd(data: &Path, country: &str, every: u32) -> Result<()> {
         Some((cc, part)) => format!("{}@{part}", country_codes(&[cc.to_string()])?.remove(0)),
         None => country_codes(&[country.to_string()])?.remove(0),
     };
-    let p = geors_index::Partition::open(&data.join(&name))?;
     let mut out = std::io::BufWriter::new(std::io::stdout().lock());
-    for id in (0..p.len()).step_by(every.max(1) as usize) {
-        let rec = p.record(id).context("corrupt record")?;
-        let place = p.doc(&rec, false)?;
+    geors::data::export(data, &name, every, |place, parents| {
+        // Admin indices are partition-specific: write the resolved names.
         let mut v = serde_json::to_value(&place)?;
-        // Resolve admin indices, which are partition-specific.
-        let parents: Vec<String> = place
-            .parents
-            .iter()
-            .filter_map(|&u| p.admins.get(u as usize))
-            .map(|a| format!("{}:{}", a.layer, a.name))
-            .collect();
         v["parents"] = serde_json::json!(parents);
         serde_json::to_writer(&mut out, &v)?;
         out.write_all(b"\n")?;
-    }
+        anyhow::Ok(())
+    })?;
     out.flush()?;
     Ok(())
 }
@@ -351,16 +339,15 @@ fn synonyms_cmd(words: &[String], config: Option<PathBuf>, country: Option<&str>
         .map_err(|e| anyhow::anyhow!("invalid synonym rules: {e}"))?;
     println!(
         "built-in languages: {}",
-        geors_index::synonyms::builtin_languages().join(", ")
+        geors::synonyms::builtin_languages().join(", ")
     );
     let country = country.map(|c| c.to_ascii_lowercase());
     match &country {
         Some(cc) => println!("rules for partitions of: {cc}"),
         None => println!("rules of all countries (use --country to pick one)"),
     }
-    let mut analyzer = geors_index::text::analyzer();
     for word in words {
-        for token in geors_index::text::tokenize(&mut analyzer, word) {
+        for token in geors::synonyms::normalize(word) {
             let alts = synonyms.expand(&token, country.as_deref());
             if alts.is_empty() {
                 println!("{token}  (no expansion)");
@@ -374,13 +361,13 @@ fn synonyms_cmd(words: &[String], config: Option<PathBuf>, country: Option<&str>
 
 fn sources_cmd(data: &Path, remove: Option<String>) -> Result<()> {
     if let Some(name) = remove {
-        if !geors_update::remove_source(data, &name)? {
+        if !geors::update::remove_source(data, &name)? {
             bail!("no source named '{name}'");
         }
         println!("removed source '{name}' and its base file (its partitions were kept)");
         return Ok(());
     }
-    let reg = Registry::load(data)?;
+    let reg = geors::update::sources(data)?;
     if reg.sources.is_empty() {
         println!("no sources registered in {}", data.display());
     }
@@ -417,7 +404,7 @@ fn sources_cmd(data: &Path, remove: Option<String>) -> Result<()> {
 }
 
 fn update_cmd(data: &Path, opts: &UpdateOptions) -> Result<()> {
-    let reports = geors_update::update(data, opts)?;
+    let reports = geors::update::update(data, opts)?;
     let mut failed = 0;
     for r in &reports {
         match &r.outcome {
@@ -460,7 +447,7 @@ fn spawn_updater(state: Arc<AppState>, every: Duration, opts: UpdateOptions) {
             let s = state.clone();
             let opts = opts.clone();
             let result = tokio::task::spawn_blocking(move || {
-                let reports = geors_update::update(s.geocoder.data_dir(), &opts)?;
+                let reports = geors::update::update(s.geocoder.data_dir(), &opts)?;
                 if reports.iter().any(|r| r.updated()) {
                     s.geocoder.reload_if_changed()?;
                 }
@@ -558,7 +545,7 @@ async fn serve(
 
 #[cfg(feature = "mem-stats")]
 #[global_allocator]
-static ALLOC: geors_ingest::mem::Counting = geors_ingest::mem::Counting;
+static ALLOC: geors::mem::Counting = geors::mem::Counting;
 
 fn main() -> Result<()> {
     tracing_subscriber::fmt()
@@ -579,22 +566,11 @@ fn main() -> Result<()> {
         .num_threads(threads)
         .build_global()
         .context("cannot configure thread pool")?;
-    geors_ingest::set_default_node_lookup(cli.node_lookup);
-    // Spill files up to a quarter of the memory are read in place while
-    // writing; larger ones are regrouped for sequential reads.
-    let memory = geors_ingest::memory_limit();
-    geors_index::writer::set_writer_memory(
-        memory.map_or(u64::MAX, |m| m / 4),
-        geors_ingest::extsort::buffer_bytes() / 2,
-    );
-    match (cli.index_memory_mb, memory) {
-        (Some(mb), _) => geors_index::text::set_index_memory(mb * 1024 * 1024),
-        // Default: 48 MB per indexing thread, at most an eighth of memory.
-        (None, Some(m)) => {
-            geors_index::text::set_index_memory(((m / 8) as usize).min(threads.min(4) * (48 << 20)))
-        }
-        (None, None) => {}
-    }
+    geors::import::configure(&geors::import::Tuning {
+        threads: Some(threads),
+        index_memory_mb: cli.index_memory_mb,
+        node_lookup: cli.node_lookup,
+    });
     match cli.command {
         Command::Import {
             inputs,
@@ -625,7 +601,7 @@ fn main() -> Result<()> {
                 importance: importance.map(|p| p.to_string_lossy().to_string()),
             };
             for input in &inputs {
-                geors_update::import_location(&data, input, &opts)?;
+                geors::update::add_source(&data, input, &opts)?;
             }
             Ok(())
         }

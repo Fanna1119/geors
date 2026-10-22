@@ -1,6 +1,9 @@
 //! Data management: importing extracts (local files or URLs), remembering
 //! where they came from, and keeping them up to date.
 //!
+//! Internal crate of [geors](https://docs.rs/geors): its API changes
+//! between releases without notice. Use the `geors` crate instead.
+//!
 //! Every import registers a [`Source`] in `<data>/sources.json`. `update`
 //! checks each source for a newer published version (Geofabrik replication
 //! sequence, MD5, ETag, or file mtime), downloads and re-imports changed ones,

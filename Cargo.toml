@@ -14,18 +14,13 @@ members = ["crates/*"]
 
 [features]
 # Log heap use per import step (diagnostics; see crates/geors-ingest/src/mem.rs).
-mem-stats = ["geors-ingest/mem-stats"]
+mem-stats = ["geors/mem-stats"]
 
 [dependencies]
 anyhow = "1.0.104"
 clap = { version = "4.6.7", features = ["derive", "env"] }
-geors = { version = "0.1.0", path = "crates/geors" }
+geors = { version = "0.1.0", path = "crates/geors", features = ["update"] }
 geors-api = { version = "0.1.0", path = "crates/geors-api" }
-geors-core = { version = "0.1.0", path = "crates/geors-core" }
-geors-index = { version = "0.1.0", path = "crates/geors-index" }
-geors-ingest = { version = "0.1.0", path = "crates/geors-ingest" }
-geors-rank = { version = "0.1.0", path = "crates/geors-rank" }
-geors-update = { version = "0.1.0", path = "crates/geors-update" }
 rayon = "1.12.0"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"

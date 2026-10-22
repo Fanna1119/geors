@@ -3,6 +3,8 @@ name = "geors-api"
 version = "0.1.0"
 edition = "2024"
 license = "MIT"
+description = "HTTP API of the geors geocoder"
+repository = "https://github.com/Fanna1119/geors"
 
 [dependencies]
 axum = "0.8.9"

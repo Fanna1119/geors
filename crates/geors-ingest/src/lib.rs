@@ -1,6 +1,9 @@
 //! Ingestion: turns an OSM extract (or a Nominatim dump) into per-country
 //! streams of [`Place`]s with an address hierarchy, ready to be indexed.
 //!
+//! Internal crate of [geors](https://docs.rs/geors): its API changes
+//! between releases without notice. Use the `geors` crate instead.
+//!
 //! The PBF pipeline is streaming, so memory does not grow with the number
 //! of places:
 //!

@@ -29,7 +29,14 @@ geojson = ["dep:geojson", "dep:serde_json"]
 import = ["dep:geors-ingest", "dep:geors-update", "dep:anyhow"]
 # Registered sources, downloads and replication-diff updates (HTTP client).
 update = ["import", "geors-update/download"]
+# Report allocator statistics during imports (needs `geors::mem::Counting`
+# as the global allocator).
+mem-stats = ["import", "geors-ingest/mem-stats"]
 
 [dev-dependencies]
 tempfile = "3.27.0"
 serde_json = "1.0.151"
+
+[[example]]
+name = "import"
+required-features = ["import"]

@@ -1,6 +1,9 @@
 //! Ranking: combines text relevance, place importance and distance into one
 //! score.
 //!
+//! Internal crate of [geors](https://docs.rs/geors): its API changes
+//! between releases without notice. Use the `geors` crate instead.
+//!
 //! The model is deliberately multiplicative so that raw BM25 scores never have
 //! to be normalised across a result set:
 //!

@@ -171,19 +171,7 @@ impl Geocoder {
             partitions: engine
                 .partitions()
                 .iter()
-                .map(|p| {
-                    let m = &p.meta;
-                    PartitionInfo {
-                        name: p.name(),
-                        country_code: m.country_code.clone(),
-                        country_name: m.country_name.clone(),
-                        places: m.num_places,
-                        layers: m.layers.clone(),
-                        bbox: m.bbox,
-                        source: m.source.clone(),
-                        created_unix: m.created_unix,
-                    }
-                })
+                .map(|p| PartitionInfo::of(p))
                 .collect(),
         }
     }

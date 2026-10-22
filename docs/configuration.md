@@ -12,10 +12,10 @@ and synonym rules.
 Rules such as `str` → `strasse`, `st` → `street` / `saint` / `sankt`, and
 suffix rules (`kerkstr` → `kerkstraat`) are **data, not code**:
 
-- **Built-in rules:** one TOML file per language in [`synonyms/`](../synonyms/),
+- **Built-in rules:** one TOML file per language in [`crates/geors-index/synonyms/`](../crates/geors-index/synonyms/),
   currently af, ca, de, en, es, fr, it and nl. Every file there is embedded in
   the binary at build time, so adding a language means adding a file. The
-  test suite validates each file; see [`synonyms/README.md`](../synonyms/README.md)
+  test suite validates each file; see [`synonyms/README.md`](../crates/geors-index/synonyms/README.md)
   for the format.
 - **Per country:** each file lists the countries whose partitions use it
   (German: de, at, ch, li, lu, be, it; English: everywhere), so in South
