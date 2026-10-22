@@ -20,6 +20,8 @@
 
 mod error;
 mod geocoder;
+#[cfg(feature = "geojson")]
+pub mod geojson;
 pub mod request;
 
 pub use error::{Error, Result};

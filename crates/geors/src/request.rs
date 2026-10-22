@@ -356,7 +356,7 @@ fn check_limit(limit: usize) -> Result<usize> {
 }
 
 /// Lowercase ISO codes; an error for anything that is not one.
-fn countries(codes: &[String]) -> Result<Vec<String>> {
+pub(crate) fn countries(codes: &[String]) -> Result<Vec<String>> {
     codes
         .iter()
         .map(|c| {

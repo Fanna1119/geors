@@ -146,9 +146,12 @@ impl Geocoder {
     /// Places by OSM id (`"N123".parse()`, `"W456"`, `"R789"`) or Nominatim
     /// `place_id` (`"P123"`), in request order; unknown ids are skipped.
     /// A merged street is found by the id of any of its OSM ways.
-    /// `countries` (lowercase ISO codes) restricts where to look.
-    pub fn lookup(&self, ids: &[PlaceRef], countries: &[String]) -> Result<Vec<Hit>> {
-        Ok(self.engine.load().lookup(ids, countries)?)
+    /// `countries` (ISO 3166-1 alpha-2, any case; empty: all) restricts
+    /// where to look.
+    pub fn lookup<S: AsRef<str>>(&self, ids: &[PlaceRef], countries: &[S]) -> Result<Vec<Hit>> {
+        let codes: Vec<String> = countries.iter().map(|c| c.as_ref().to_string()).collect();
+        let countries = crate::request::countries(&codes)?;
+        Ok(self.engine.load().lookup(ids, &countries)?)
     }
 
     /// Areas containing a point (see [`Contains`]).

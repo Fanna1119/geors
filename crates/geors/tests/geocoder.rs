@@ -92,7 +92,9 @@ fn every_query_type() {
     assert_eq!(g.nearest(&Nearest::to(vaduz).limit(3)).unwrap().len(), 3);
 
     let id: PlaceRef = "N2".parse().unwrap();
-    assert_eq!(g.lookup(&[id], &[]).unwrap()[0].place.osm_id, 2);
+    assert_eq!(g.lookup::<&str>(&[id], &[]).unwrap()[0].place.osm_id, 2);
+    assert_eq!(g.lookup(&[id], &["LI"]).unwrap().len(), 1);
+    assert!(g.lookup(&[id], &["XYZ"]).is_err());
     assert!("X2".parse::<PlaceRef>().is_err());
 
     assert!(g.contains(&Contains::at(vaduz)).unwrap().is_empty());

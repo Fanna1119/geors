@@ -7,7 +7,6 @@
 mod error;
 mod metrics;
 mod params;
-mod render;
 mod state;
 
 use std::sync::Arc;
@@ -19,7 +18,7 @@ use axum::extract::{Query, RawQuery, Request, State};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Json, Response};
 use axum::routing::get;
-use geors_index::NearestRequest;
+use geors::geojson::{FeatureCollection, collection};
 use serde::{Deserialize, Serialize};
 use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
@@ -27,7 +26,7 @@ use tracing::debug;
 
 pub use error::ApiError;
 use params::{ContainsParams, LookupParams, PointParams, SearchParams};
-pub use state::{AppState, DataConfig, LoadInfo, spawn_watcher};
+pub use state::{AppState, spawn_watcher};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -105,7 +104,7 @@ async fn blocking<T: Send + 'static>(
         .map_err(|e| ApiError::internal(format!("worker failed: {e}")))?
 }
 
-type GeoJson = Result<Json<geojson::FeatureCollection>, ApiError>;
+type GeoJson = Result<Json<FeatureCollection>, ApiError>;
 
 async fn search(
     State(state): State<Arc<AppState>>,
@@ -114,12 +113,11 @@ async fn search(
 ) -> GeoJson {
     let Query(params) = params?;
     let out = params.output()?;
-    let mut req = params.into_request(&state.config)?;
-    req.tags = params::osm_tags(raw.as_deref())?;
+    let search = params.into_search(&state.config, params::osm_tags(raw.as_deref())?)?;
     let t = Instant::now();
     let fc = blocking(move || {
-        let hits = state.engine().search(&req)?;
-        Ok(render::collection(&hits, &out))
+        let hits = state.geocoder.search(&search)?;
+        Ok(collection(&hits, &out))
     })
     .await?;
     debug!(elapsed = ?t.elapsed(), results = fc.features.len(), "search");
@@ -133,9 +131,8 @@ async fn reverse(
 ) -> GeoJson {
     let Query(params) = params?;
     let out = params.output()?;
-    let mut req = params.into_reverse(&state.config)?;
-    req.tags = params::osm_tags(raw.as_deref())?;
-    run_nearest(state, req, out).await
+    let reverse = params.into_reverse(&state.config, params::osm_tags(raw.as_deref())?)?;
+    blocking(move || Ok(Json(collection(&state.geocoder.reverse(&reverse)?, &out)))).await
 }
 
 async fn nearest(
@@ -145,17 +142,8 @@ async fn nearest(
 ) -> GeoJson {
     let Query(params) = params?;
     let out = params.output()?;
-    let mut req = params.into_nearest(&state.config)?;
-    req.tags = params::osm_tags(raw.as_deref())?;
-    run_nearest(state, req, out).await
-}
-
-async fn run_nearest(state: Arc<AppState>, req: NearestRequest, out: render::Output) -> GeoJson {
-    blocking(move || {
-        let hits = state.engine().nearest(&req)?;
-        Ok(Json(render::collection(&hits, &out)))
-    })
-    .await
+    let nearest = params.into_nearest(&state.config, params::osm_tags(raw.as_deref())?)?;
+    blocking(move || Ok(Json(collection(&state.geocoder.nearest(&nearest)?, &out)))).await
 }
 
 async fn lookup(
@@ -166,8 +154,10 @@ async fn lookup(
     let out = params.output()?;
     let (ids, countries) = params.into_ids(&state.config)?;
     blocking(move || {
-        let hits = state.engine().lookup(&ids, &countries)?;
-        Ok(Json(render::collection(&hits, &out)))
+        Ok(Json(collection(
+            &state.geocoder.lookup(&ids, &countries)?,
+            &out,
+        )))
     })
     .await
 }
@@ -178,12 +168,8 @@ async fn contains(
 ) -> GeoJson {
     let Query(params) = params?;
     let out = params.output()?;
-    let (point, countries, layers) = params.into_query()?;
-    blocking(move || {
-        let hits = state.engine().containing(point, &countries, &layers)?;
-        Ok(Json(render::collection(&hits, &out)))
-    })
-    .await
+    let contains = params.into_contains()?;
+    blocking(move || Ok(Json(collection(&state.geocoder.contains(&contains)?, &out)))).await
 }
 
 #[derive(Serialize)]
@@ -214,39 +200,35 @@ struct Status {
 }
 
 async fn status(State(state): State<Arc<AppState>>) -> Json<Status> {
-    let engine = state.engine();
-    let partitions = engine
-        .partitions()
-        .iter()
-        .map(|p| {
-            let m = &p.meta;
-            PartitionStatus {
-                partition: p.name(),
-                country_code: m.country_code.clone(),
-                country_name: m.country_name.clone(),
-                places: m.num_places,
-                layers: m.layers.clone(),
-                bbox: [
-                    m.bbox.min_lon,
-                    m.bbox.min_lat,
-                    m.bbox.max_lon,
-                    m.bbox.max_lat,
-                ],
-                source: m.source.clone(),
-                created_unix: m.created_unix,
-            }
+    let s = state.geocoder.status();
+    let partitions = s
+        .partitions
+        .into_iter()
+        .map(|p| PartitionStatus {
+            partition: p.name,
+            country_code: p.country_code,
+            country_name: p.country_name,
+            places: p.places,
+            layers: p.layers,
+            bbox: [
+                p.bbox.min_lon,
+                p.bbox.min_lat,
+                p.bbox.max_lon,
+                p.bbox.max_lat,
+            ],
+            source: p.source,
+            created_unix: p.created_unix,
         })
         .collect();
-    let sources = std::fs::read(state.data.data_dir.join("sources.json"))
+    let sources = std::fs::read(s.data_dir.join("sources.json"))
         .ok()
         .and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok())
         .and_then(|mut v| v.get_mut("sources").map(serde_json::Value::take));
-    let info = state.load_info();
     Json(Status {
         status: "ok",
         version: env!("CARGO_PKG_VERSION"),
-        generation: info.generation,
-        loaded_unix: info.loaded_unix,
+        generation: s.generation,
+        loaded_unix: s.loaded_unix,
         partitions,
         sources,
     })

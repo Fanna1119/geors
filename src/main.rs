@@ -9,8 +9,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
-use geors_api::{ApiConfig, AppState, DataConfig};
-use geors_index::EngineConfig;
+use geors_api::{ApiConfig, AppState};
 use geors_index::synonyms::{SynonymConfig, Synonyms};
 use geors_update::{AddOptions, Outcome, Registry, UpdateOptions};
 use serde::Deserialize;
@@ -461,9 +460,9 @@ fn spawn_updater(state: Arc<AppState>, every: Duration, opts: UpdateOptions) {
             let s = state.clone();
             let opts = opts.clone();
             let result = tokio::task::spawn_blocking(move || {
-                let reports = geors_update::update(&s.data.data_dir, &opts)?;
+                let reports = geors_update::update(s.geocoder.data_dir(), &opts)?;
                 if reports.iter().any(|r| r.updated()) {
-                    s.reload_if_changed()?;
+                    s.geocoder.reload_if_changed()?;
                 }
                 anyhow::Ok(reports)
             })
@@ -522,18 +521,16 @@ async fn serve(
     let watch_every = parse_duration(&file.updates.watch_interval)?;
 
     let t = Instant::now();
-    let engine = EngineConfig {
+    let config = geors::GeocoderConfig {
+        countries,
         ranking: file.ranking,
         synonyms: Synonyms::load(&file.synonyms)
             .map_err(|e| anyhow::anyhow!("invalid synonym rules: {e}"))?,
     };
-    let data = DataConfig {
-        data_dir,
-        countries,
-        engine,
-    };
-    let state = Arc::new(AppState::open(data, file.api)?);
-    info!(partitions = state.engine().partitions().len(), elapsed = ?t.elapsed(), "engine ready");
+    let geocoder = geors::Geocoder::open(&data_dir, config)?;
+    let partitions = geocoder.status().partitions.len();
+    let state = Arc::new(AppState::new(geocoder, file.api));
+    info!(partitions, elapsed = ?t.elapsed(), "engine ready");
 
     if !watch_every.is_zero() {
         geors_api::spawn_watcher(state.clone(), watch_every);
