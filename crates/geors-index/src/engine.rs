@@ -75,6 +75,33 @@ pub enum PlaceRef {
     Nominatim(i64),
 }
 
+impl std::str::FromStr for PlaceRef {
+    type Err = String;
+
+    /// `N123`, `W456`, `R789` (OSM node / way / relation, case-insensitive)
+    /// or `P123` (a Nominatim `place_id`, for data imported from a dump).
+    fn from_str(s: &str) -> Result<Self, String> {
+        let bad = || {
+            format!(
+                "invalid id '{s}' (expected e.g. N123, W456, R789, or P123 for a Nominatim place_id)"
+            )
+        };
+        let s = s.trim();
+        if !s.is_char_boundary(1) {
+            return Err(bad());
+        }
+        let (t, n) = s.split_at(1);
+        let n = n.parse::<i64>().map_err(|_| bad())?;
+        Ok(match t.to_ascii_uppercase().as_str() {
+            "N" => PlaceRef::Osm(OsmType::Node, n),
+            "W" => PlaceRef::Osm(OsmType::Way, n),
+            "R" => PlaceRef::Osm(OsmType::Relation, n),
+            "P" => PlaceRef::Nominatim(n),
+            _ => return Err(bad()),
+        })
+    }
+}
+
 /// A ranked result with its document loaded.
 #[derive(Clone)]
 pub struct Hit {

@@ -13,3 +13,9 @@ categories = ["science::geo", "database-implementations"]
 geors-core = { version = "0.1.0", path = "../geors-core" }
 geors-index = { version = "0.1.0", path = "../geors-index" }
 geors-rank = { version = "0.1.0", path = "../geors-rank" }
+arc-swap = "1.9.2"
+thiserror = "2.0.21"
+tracing = "0.1.44"
+
+[dev-dependencies]
+tempfile = "3.27.0"

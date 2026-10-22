@@ -776,9 +776,13 @@ dependencies = [
 name = "geors"
 version = "0.1.0"
 dependencies = [
+ "arc-swap",
  "geors-core",
  "geors-index",
  "geors-rank",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tracing",
 ]
 
 [[package]]
