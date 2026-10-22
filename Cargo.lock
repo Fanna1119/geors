@@ -776,21 +776,9 @@ dependencies = [
 name = "geors"
 version = "0.1.0"
 dependencies = [
- "anyhow",
- "clap",
- "geors-api",
  "geors-core",
  "geors-index",
- "geors-ingest",
  "geors-rank",
- "geors-update",
- "rayon",
- "serde",
- "serde_json",
- "tokio",
- "toml",
- "tracing",
- "tracing-subscriber",
 ]
 
 [[package]]
@@ -809,6 +797,28 @@ dependencies = [
  "tokio",
  "tower-http",
  "tracing",
+]
+
+[[package]]
+name = "geors-cli"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "geors",
+ "geors-api",
+ "geors-core",
+ "geors-index",
+ "geors-ingest",
+ "geors-rank",
+ "geors-update",
+ "rayon",
+ "serde",
+ "serde_json",
+ "tokio",
+ "toml",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

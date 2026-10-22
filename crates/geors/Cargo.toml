@@ -1,0 +1,15 @@
+[package]
+name = "geors"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "Fast, lightweight geocoder for OpenStreetMap data: search, reverse geocoding and nearest places from memory-mapped per-country indexes"
+repository = "https://github.com/Fanna1119/geors"
+readme = "README.md"
+keywords = ["geocoding", "openstreetmap", "osm", "search", "reverse-geocoding"]
+categories = ["science::geo", "database-implementations"]
+
+[dependencies]
+geors-core = { version = "0.1.0", path = "../geors-core" }
+geors-index = { version = "0.1.0", path = "../geors-index" }
+geors-rank = { version = "0.1.0", path = "../geors-rank" }

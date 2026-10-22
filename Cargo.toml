@@ -1,8 +1,13 @@
 [package]
-name = "geors"
+name = "geors-cli"
 version = "0.1.0"
 edition = "2024"
 license = "MIT"
+description = "Command line and HTTP server for the geors geocoder"
+
+[[bin]]
+name = "geors"
+path = "src/main.rs"
 
 [workspace]
 members = ["crates/*"]
@@ -14,6 +19,7 @@ mem-stats = ["geors-ingest/mem-stats"]
 [dependencies]
 anyhow = "1.0.104"
 clap = { version = "4.6.7", features = ["derive", "env"] }
+geors = { version = "0.1.0", path = "crates/geors" }
 geors-api = { version = "0.1.0", path = "crates/geors-api" }
 geors-core = { version = "0.1.0", path = "crates/geors-core" }
 geors-index = { version = "0.1.0", path = "crates/geors-index" }
