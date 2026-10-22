@@ -2,6 +2,7 @@
 name = "geors-core"
 version = "0.1.0"
 edition = "2024"
+license = "MIT"
 
 [dependencies]
 bytemuck = "1.25.2"

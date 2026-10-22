@@ -141,7 +141,12 @@ continent takes several GB of RAM (serving it does not).
 
 Supported platforms: Linux and macOS.
 
-Map data © [OpenStreetMap](https://www.openstreetmap.org/copyright)
-contributors (ODbL). The optional Wikipedia importance data is published by
+## License
+
+geors is licensed under the [MIT License](LICENSE).
+
+The license covers the code. Data you import keeps its own license: map data
+© [OpenStreetMap](https://www.openstreetmap.org/copyright) contributors
+(ODbL), and the optional Wikipedia importance data is published by
 [Nominatim](https://nominatim.org) and derived from Wikipedia
 ([CC BY-SA](https://creativecommons.org/licenses/by-sa/4.0/)).
