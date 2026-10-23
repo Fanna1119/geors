@@ -777,13 +777,42 @@ name = "geors"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "clap",
- "geors-api",
+ "arc-swap",
+ "geojson",
  "geors-core",
  "geors-index",
  "geors-ingest",
  "geors-rank",
  "geors-update",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tracing",
+]
+
+[[package]]
+name = "geors-api"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "form_urlencoded",
+ "geors",
+ "serde",
+ "serde_json",
+ "serde_urlencoded",
+ "tokio",
+ "tower-http",
+ "tracing",
+]
+
+[[package]]
+name = "geors-cli"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "geors",
+ "geors-api",
  "rayon",
  "serde",
  "serde_json",
@@ -791,24 +820,6 @@ dependencies = [
  "toml",
  "tracing",
  "tracing-subscriber",
-]
-
-[[package]]
-name = "geors-api"
-version = "0.1.0"
-dependencies = [
- "arc-swap",
- "axum",
- "form_urlencoded",
- "geojson",
- "geors-core",
- "geors-index",
- "serde",
- "serde_json",
- "serde_urlencoded",
- "tokio",
- "tower-http",
- "tracing",
 ]
 
 [[package]]

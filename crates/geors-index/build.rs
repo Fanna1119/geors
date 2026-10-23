@@ -1,10 +1,10 @@
-//! Embed every synonym rule file from `<workspace>/synonyms/*.toml`, so new
+//! Embed every synonym rule file from `synonyms/*.toml` (in this crate), so new
 //! languages need no Rust changes.
 
 use std::path::PathBuf;
 
 fn main() {
-    let dir = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap()).join("../../synonyms");
+    let dir = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap()).join("synonyms");
     println!("cargo:rerun-if-changed={}", dir.display());
     let mut files: Vec<PathBuf> = std::fs::read_dir(&dir)
         .unwrap_or_else(|e| panic!("cannot read {}: {e}", dir.display()))

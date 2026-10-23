@@ -1,7 +1,7 @@
 //! Query-time abbreviation and synonym expansion ("str" -> "strasse").
 //!
 //! The rules are data, not code: one TOML file per language in
-//! `<workspace>/synonyms/` (embedded at build time, see `build.rs`), plus
+//! `crates/geors-index/synonyms/` (embedded at build time, see `build.rs`), plus
 //! optional rule files and inline rules from the server configuration.
 //! See `synonyms/README.md` for the file format.
 

@@ -1,6 +1,6 @@
 # Keeping data up to date
 
-[README](../README.md) · [API](api.md) · [Configuration](configuration.md) · [Updates](updates.md) · [Benchmarks](benchmarks.md) · [Architecture](architecture.md) · [Development](development.md)
+[README](../README.md) · [API](api.md) · [Configuration](configuration.md) · [Updates](updates.md) · [Benchmarks](benchmarks.md) · [Architecture](architecture.md) · [Development](development.md) · [Library](library.md)
 
 Photon gets continuous updates by running on a Nominatim PostgreSQL database
 that applies OSM replication diffs. geors has no database: each partition is an

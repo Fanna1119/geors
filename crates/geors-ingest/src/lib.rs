@@ -1,6 +1,9 @@
 //! Ingestion: turns an OSM extract (or a Nominatim dump) into per-country
 //! streams of [`Place`]s with an address hierarchy, ready to be indexed.
 //!
+//! Internal crate of [geors](https://docs.rs/geors): its API changes
+//! between releases without notice. Use the `geors` crate instead.
+//!
 //! The PBF pipeline is streaming, so memory does not grow with the number
 //! of places:
 //!
@@ -51,6 +54,7 @@ use crate::join::{RefSink, WayCursor};
 use crate::nodes::{IdSink, NodeCoords};
 use crate::pip::{BandedPolygon, PolygonStore, StoredPolygon};
 use crate::sink::CountrySink;
+pub use crate::sink::SkippedCountry;
 use crate::streets::StreetStore;
 use crate::tags::{Class, Tags};
 
@@ -180,6 +184,8 @@ pub struct CountryData {
 /// deleted when this is dropped, so write the partitions first.
 pub struct Import {
     pub countries: Vec<CountryData>,
+    /// Countries found but not kept (border slivers, not requested).
+    pub skipped: Vec<SkippedCountry>,
     pub(crate) _work: WorkDir,
 }
 
@@ -1021,9 +1027,10 @@ pub fn import_pbf(path: &Path, opts: &ImportOptions) -> Result<Import> {
         elapsed = ?started.elapsed(),
         "features extracted"
     );
-    let countries = sink.finish(opts, units, &country_names, &covered)?;
+    let (countries, skipped) = sink.finish(opts, units, &country_names, &covered)?;
     Ok(Import {
         countries,
+        skipped,
         _work: work,
     })
 }

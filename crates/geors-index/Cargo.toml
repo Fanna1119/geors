@@ -3,6 +3,8 @@ name = "geors-index"
 version = "0.1.0"
 edition = "2024"
 license = "MIT"
+description = "Spatial and text indexes of the geors geocoder (internal crate)"
+repository = "https://github.com/Fanna1119/geors"
 
 [dependencies]
 bytemuck = "1.25.2"

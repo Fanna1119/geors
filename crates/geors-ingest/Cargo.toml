@@ -3,6 +3,8 @@ name = "geors-ingest"
 version = "0.1.0"
 edition = "2024"
 license = "MIT"
+description = "OpenStreetMap and Nominatim dump ingestion for the geors geocoder (internal crate)"
+repository = "https://github.com/Fanna1119/geors"
 
 [dependencies]
 anyhow = "1.0.104"

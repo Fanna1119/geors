@@ -3,6 +3,8 @@ name = "geors-update"
 version = "0.1.0"
 edition = "2024"
 license = "MIT"
+description = "Imports, sources and diff updates of the geors geocoder (internal crate)"
+repository = "https://github.com/Fanna1119/geors"
 
 [dependencies]
 anyhow = "1.0.104"
@@ -10,14 +12,19 @@ flate2 = "1.1.10"
 geors-core = { version = "0.1.0", path = "../geors-core" }
 geors-index = { version = "0.1.0", path = "../geors-index" }
 geors-ingest = { version = "0.1.0", path = "../geors-ingest" }
-md-5 = "0.11.0"
+md-5 = { version = "0.11.0", optional = true }
 osmpbf = "0.3.8"
 quick-xml = "0.42.0"
 rayon = "1.12.0"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 tracing = "0.1.44"
-ureq = "3.4.2"
+ureq = { version = "3.4.2", optional = true }
+
+[features]
+default = ["download"]
+# Fetch extracts, replication diffs and version checks over HTTP.
+download = ["dep:ureq", "dep:md-5"]
 
 [dev-dependencies]
 tempfile = "3.27.0"

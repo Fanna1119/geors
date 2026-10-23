@@ -83,7 +83,7 @@ impl CountrySink {
         admins: Vec<AdminUnit>,
         country_names: &HashMap<String, String>,
         covered: &HashMap<String, Coverage>,
-    ) -> io::Result<Vec<CountryData>> {
+    ) -> io::Result<(Vec<CountryData>, Vec<SkippedCountry>)> {
         if self.unknown > 0 {
             warn!(
                 unknown = self.unknown,
@@ -104,12 +104,16 @@ impl CountrySink {
         }
         let admins = Arc::new(admins);
         let mut out = Vec::new();
-        let mut skipped: Vec<String> = Vec::new();
+        let mut skipped: Vec<SkippedCountry> = Vec::new();
         for (cc, w) in self.writers {
             let keep = if !opts.countries.is_empty() {
                 let keep = opts.countries.contains(&cc);
                 if !keep {
-                    skipped.push(format!("{cc} ({} places, not in --countries)", w.count()));
+                    skipped.push(SkippedCountry {
+                        country_code: cc.clone(),
+                        places: w.count(),
+                        reason: "not among the requested countries".into(),
+                    });
                 }
                 keep
             } else if opts.all_countries {
@@ -135,11 +139,14 @@ impl CountrySink {
                         rule,
                         "skipping border sliver (use --all-countries or --countries to keep it)"
                     );
-                    skipped.push(format!(
-                        "{cc} ({} places, {:.3} %)",
-                        w.count(),
-                        share * 100.0
-                    ));
+                    skipped.push(SkippedCountry {
+                        country_code: cc.clone(),
+                        places: w.count(),
+                        reason: format!(
+                            "border sliver: {:.3} % of the places; {rule}",
+                            share * 100.0
+                        ),
+                    });
                 }
                 keep
             };
@@ -158,12 +165,26 @@ impl CountrySink {
         if !skipped.is_empty() {
             info!(
                 kept = %out.iter().map(|c| c.country_code.as_str()).collect::<Vec<_>>().join(" "),
-                skipped = %skipped.join(", "),
+                skipped = %skipped
+                    .iter()
+                    .map(|s| format!("{} ({} places, {})", s.country_code, s.places, s.reason))
+                    .collect::<Vec<_>>()
+                    .join(", "),
                 "countries skipped by the country rules"
             );
         }
-        Ok(out)
+        Ok((out, skipped))
     }
+}
+
+/// A country found in an extract but not written as a partition.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SkippedCountry {
+    /// Lowercase ISO code.
+    pub country_code: String,
+    pub places: u64,
+    /// Why, in words ("border sliver: 0.006 % of the places; ...").
+    pub reason: String,
 }
 
 #[cfg(test)]
@@ -222,17 +243,18 @@ mod tests {
             ("ru".to_string(), Coverage::Regions),
             ("li".to_string(), Coverage::Regions),
         ]);
-        let kept: Vec<String> = sink
+        let (kept, skipped) = sink
             .finish(
                 &ImportOptions::default(),
                 Vec::new(),
                 &HashMap::new(),
                 &covered,
             )
-            .unwrap()
-            .into_iter()
-            .map(|c| c.country_code)
-            .collect();
+            .unwrap();
+        let kept: Vec<String> = kept.into_iter().map(|c| c.country_code).collect();
         assert_eq!(kept, ["at", "de", "ru", "va"]);
+        // The rest is reported with a reason.
+        assert!(!skipped.is_empty());
+        assert!(skipped.iter().all(|s| s.reason.starts_with("border sliver")));
     }
 }

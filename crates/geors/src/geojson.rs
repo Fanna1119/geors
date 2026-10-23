@@ -1,17 +1,30 @@
-//! Hits -> GeoJSON.
+//! Results as GeoJSON (feature `geojson`), in the format of the HTTP API
+//! (Photon-compatible properties).
+//!
+//! ```no_run
+//! # use geors::{Geocoder, GeocoderConfig, Search};
+//! # let geocoder = Geocoder::open("data", GeocoderConfig::default())?;
+//! use geors::geojson::{Output, collection};
+//!
+//! let hits = geocoder.search(&Search::text("Vaduz"))?;
+//! let json = serde_json::to_string(&collection(&hits, &Output::default())).unwrap();
+//! # Ok::<(), geors::Error>(())
+//! ```
 
-use geojson::{
-    Feature, FeatureCollection, Geometry, GeometryValue, JsonObject, JsonValue, Position,
-};
-use geors_core::LonLat;
-use geors_index::{Hit, Shape};
+pub use ::geojson::{Feature, FeatureCollection};
+use ::geojson::{Geometry, GeometryValue, JsonObject, JsonValue, Position};
 use serde_json::json;
 
-/// Response options shared by all endpoints.
+use crate::{Hit, LonLat, Shape};
+
+/// Output options.
 #[derive(Debug, Clone, Default)]
 pub struct Output {
+    /// Language for names and the address (`"de"`); falls back to the
+    /// default name.
     pub lang: Option<String>,
-    /// `geometry=full`: return lines / polygons instead of the centre point.
+    /// Lines and polygons instead of the centre point (which then moves to
+    /// the `center` property).
     pub full_geometry: bool,
 }
 
@@ -42,6 +55,7 @@ fn geometry(shape: Shape) -> Geometry {
     })
 }
 
+/// One result as a GeoJSON feature.
 pub fn feature(hit: &Hit, out: &Output) -> Feature {
     let lang = out.lang.as_deref();
     let p = &hit.place;
@@ -89,6 +103,7 @@ pub fn feature(hit: &Hit, out: &Output) -> Feature {
     }
 }
 
+/// Results as a feature collection.
 pub fn collection(hits: &[Hit], out: &Output) -> FeatureCollection {
     FeatureCollection {
         features: hits.iter().map(|h| feature(h, out)).collect(),
