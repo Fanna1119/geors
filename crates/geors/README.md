@@ -39,6 +39,13 @@ without interrupting queries that are already running.
 | `import`  | import `.osm.pbf` files and Nominatim/Photon dumps (no network code) |
 | `update`  | registered sources, Geofabrik/URL downloads, replication diff updates |
 
+## Documentation
+
+- [Guide](https://github.com/Fanna1119/geors/blob/main/docs/library.md):
+  every query type and its options, reading results, GeoJSON, errors,
+  embedding in a web server, importing and updating from code
+- API reference: `cargo doc -p geors --all-features --open`
+
 ## Examples
 
 ```sh

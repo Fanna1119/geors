@@ -200,7 +200,7 @@ pub fn import_file(
 }
 
 /// Settings for registering a new source with [`import_location`].
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct AddOptions {
     pub name: Option<String>,
     pub countries: Vec<String>,
@@ -208,12 +208,27 @@ pub struct AddOptions {
     pub default_country: Option<String>,
     /// Wikipedia importance file for ranking (see `geors_ingest::wiki`).
     pub importance: Option<String>,
-    /// Remember the source so `update` keeps it current.
+    /// Remember the source so `update` keeps it current (default `true`).
     pub track: bool,
     /// Keep downloaded files in `<data>/.downloads`.
     pub keep_download: bool,
     /// Do not keep the PBF for diff updates; always download in full.
     pub no_diffs: bool,
+}
+
+impl Default for AddOptions {
+    fn default() -> Self {
+        Self {
+            name: None,
+            countries: Vec::new(),
+            all_countries: false,
+            default_country: None,
+            importance: None,
+            track: true,
+            keep_download: false,
+            no_diffs: false,
+        }
+    }
 }
 
 /// `geors import`: download (for URLs), import, and register the source.

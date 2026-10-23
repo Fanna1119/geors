@@ -1,6 +1,6 @@
 # Configuration and commands
 
-[README](../README.md) · [API](api.md) · [Configuration](configuration.md) · [Updates](updates.md) · [Benchmarks](benchmarks.md) · [Architecture](architecture.md) · [Development](development.md)
+[README](../README.md) · [API](api.md) · [Configuration](configuration.md) · [Updates](updates.md) · [Benchmarks](benchmarks.md) · [Architecture](architecture.md) · [Development](development.md) · [Library](library.md)
 
 Everything works with CLI flags. For the server you can also use a TOML file;
 CLI flags override it. See [`geors.example.toml`](../geors.example.toml) for
