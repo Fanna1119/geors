@@ -1,6 +1,6 @@
 # Architecture
 
-[README](../README.md) · [API](api.md) · [Configuration](configuration.md) · [Updates](updates.md) · [Benchmarks](benchmarks.md) · [Architecture](architecture.md) · [Development](development.md)
+[README](../README.md) · [API](api.md) · [Configuration](configuration.md) · [Updates](updates.md) · [Benchmarks](benchmarks.md) · [Architecture](architecture.md) · [Development](development.md) · [Library](library.md)
 
 ```
 crates/
@@ -10,8 +10,12 @@ crates/
   geors-rank     scoring model (text x importance x proximity x name match)
   geors-update   import pipeline, source registry, change detection, downloads,
                  replication diffs (OSC parser, PBF writer, streaming merge), data-dir lock
-  geors-api      axum HTTP server, hot-reloadable state, validation, GeoJSON rendering
-src/main.rs      CLI: import / update / sources / serve / info / export
+  geors          the public library: Geocoder (hot reload), request builders and
+                 validation, Error, GeoJSON output; import / update / data behind features
+  geors-api      axum HTTP server on the geors library: HTTP parameters, limits, metrics
+src/main.rs      CLI (package geors-cli) on the geors library: import / update / sources / serve / info / export
+
+geors-core ... geors-update are internal; their APIs can change in any release.
 bench/           load, accuracy and ambiguity benchmarks (wrk + Python)
 ```
 

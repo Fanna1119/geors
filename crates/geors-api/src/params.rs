@@ -1,11 +1,13 @@
-//! Query-string parameters and their validation.
+//! Query-string parameters: parsed here, turned into library requests.
+//!
+//! Domain rules (coordinates in range, a radius needs a point, area-only
+//! layers for `/contains`, ...) live in the `geors` request builders; this
+//! module adds what is HTTP policy: limits and defaults from [`ApiConfig`].
 
-use geors_core::geom::{BBox, LonLat};
-use geors_core::{Layer, OsmType, normalize_country_code};
-use geors_index::{NearestRequest, PlaceRef, SearchRequest, TagFilter};
+use geors::geojson::Output;
+use geors::{BBox, Contains, Layer, LonLat, Nearest, PlaceRef, Reverse, Search, TagFilter};
 use serde::Deserialize;
 
-use crate::render::Output;
 use crate::{ApiConfig, ApiError};
 
 #[derive(Debug, Deserialize)]
@@ -46,30 +48,6 @@ pub struct ContainsParams {
     pub geometry: Option<String>,
 }
 
-impl ContainsParams {
-    pub fn output(&self) -> Result<Output, ApiError> {
-        output(&self.lang, &self.geometry)
-    }
-
-    /// The point, country filter and area layers (locality .. country).
-    pub fn into_query(self) -> Result<(LonLat, Vec<String>, Vec<Layer>), ApiError> {
-        let layers = layers(&self.layers)?;
-        if let Some(l) = layers.iter().find(|l| **l < Layer::Locality) {
-            return Err(ApiError::bad_request(format!(
-                "'{}' is not an area layer (locality, district, city, county, state, country)",
-                l.as_str()
-            )));
-        }
-        Ok((
-            required_point(self.lat, self.lon)?,
-            countries(&self.country)?,
-            layers,
-        ))
-    }
-}
-
-pub type OsmIds = Vec<PlaceRef>;
-
 #[derive(Debug, Deserialize)]
 pub struct LookupParams {
     pub osm_ids: Option<String>,
@@ -94,51 +72,6 @@ fn output(lang: &Option<String>, geometry: &Option<String>) -> Result<Output, Ap
     })
 }
 
-impl LookupParams {
-    pub fn output(&self) -> Result<Output, ApiError> {
-        output(&self.lang, &self.geometry)
-    }
-
-    /// Parse `osm_ids=N123,W456,R789` (OSM ids) and `P123` (Nominatim
-    /// `place_id`, for data imported from a Nominatim dump).
-    /// Returns the requested ids and country filter.
-    pub fn into_ids(self, cfg: &ApiConfig) -> Result<(OsmIds, Vec<String>), ApiError> {
-        let ids: Vec<PlaceRef> = comma_list(&self.osm_ids)
-            .map(|s| {
-                let bad = || {
-                    ApiError::bad_request(format!(
-                        "invalid id '{s}' (expected e.g. N123, W456, R789, or P123 for a Nominatim place_id)"
-                    ))
-                };
-                if !s.is_char_boundary(1) {
-                    return Err(bad());
-                }
-                let (t, n) = s.split_at(1);
-                let n = n.parse::<i64>().map_err(|_| bad())?;
-                Ok(match t.to_ascii_uppercase().as_str() {
-                    "N" => PlaceRef::Osm(OsmType::Node, n),
-                    "W" => PlaceRef::Osm(OsmType::Way, n),
-                    "R" => PlaceRef::Osm(OsmType::Relation, n),
-                    "P" => PlaceRef::Nominatim(n),
-                    _ => return Err(bad()),
-                })
-            })
-            .collect::<Result<_, _>>()?;
-        if ids.is_empty() {
-            return Err(ApiError::bad_request(
-                "'osm_ids' is required, e.g. osm_ids=N123,W456",
-            ));
-        }
-        if ids.len() > cfg.max_limit {
-            return Err(ApiError::bad_request(format!(
-                "at most {} ids per request",
-                cfg.max_limit
-            )));
-        }
-        Ok((ids, countries(&self.country)?))
-    }
-}
-
 /// `osm_tag` filters from the raw query string: repeated (Photon style,
 /// `osm_tag=amenity:cafe&osm_tag=!amenity:parking`) or comma-separated.
 pub fn osm_tags(raw: Option<&str>) -> Result<TagFilter, ApiError> {
@@ -149,19 +82,11 @@ pub fn osm_tags(raw: Option<&str>) -> Result<TagFilter, ApiError> {
     TagFilter::parse(values.iter().map(String::as_str)).map_err(ApiError::bad_request)
 }
 
+/// `lat` and `lon` together, or neither. Range checks happen in the library.
 fn point(lat: Option<f64>, lon: Option<f64>) -> Result<Option<LonLat>, ApiError> {
     match (lat, lon) {
         (None, None) => Ok(None),
-        (Some(lat), Some(lon)) => {
-            let p = LonLat::new(lon, lat);
-            if p.is_valid() {
-                Ok(Some(p))
-            } else {
-                Err(ApiError::bad_request(format!(
-                    "coordinates out of range: lat={lat} must be in [-90, 90], lon={lon} in [-180, 180]"
-                )))
-            }
-        }
+        (Some(lat), Some(lon)) => Ok(Some(LonLat::new(lon, lat))),
         _ => Err(ApiError::bad_request(
             "'lat' and 'lon' must be given together",
         )),
@@ -185,15 +110,11 @@ fn limit(v: Option<usize>, default: usize, cfg: &ApiConfig) -> Result<usize, Api
 
 fn radius(v: Option<f64>, cfg: &ApiConfig) -> Result<Option<f64>, ApiError> {
     match v {
-        None => Ok(None),
-        Some(r) if !(r.is_finite() && r > 0.0) => Err(ApiError::bad_request(
-            "'radius' must be a positive number of metres",
-        )),
         Some(r) if r > cfg.max_radius_m => Err(ApiError::bad_request(format!(
             "'radius' must be at most {} metres",
             cfg.max_radius_m
         ))),
-        Some(r) => Ok(Some(r)),
+        r => Ok(r),
     }
 }
 
@@ -211,16 +132,8 @@ fn layers(v: &Option<String>) -> Result<Vec<Layer>, ApiError> {
         .collect()
 }
 
-fn countries(v: &Option<String>) -> Result<Vec<String>, ApiError> {
-    comma_list(v)
-        .map(|s| {
-            normalize_country_code(s).ok_or_else(|| {
-                ApiError::bad_request(format!(
-                    "invalid country code '{s}' (expected ISO 3166-1 alpha-2, e.g. DE)"
-                ))
-            })
-        })
-        .collect()
+fn countries(v: &Option<String>) -> Vec<&str> {
+    comma_list(v).collect()
 }
 
 impl SearchParams {
@@ -228,35 +141,43 @@ impl SearchParams {
         output(&self.lang, &self.geometry)
     }
 
-    pub fn into_request(self, cfg: &ApiConfig) -> Result<SearchRequest, ApiError> {
+    pub fn into_search(self, cfg: &ApiConfig, tags: TagFilter) -> Result<Search, ApiError> {
         let focus = point(self.lat, self.lon)?;
-        let radius = radius(self.radius, cfg)?;
-        if radius.is_some() && focus.is_none() {
-            return Err(ApiError::bad_request("'radius' requires 'lat' and 'lon'"));
-        }
         let bbox = self
             .bbox
             .as_deref()
             .map(BBox::parse)
             .transpose()
             .map_err(ApiError::bad_request)?;
-        let query = self.q.filter(|q| !q.trim().is_empty());
-        if query.is_none() && focus.is_none() && bbox.is_none() {
-            return Err(ApiError::bad_request(
-                "provide a query 'q', a location ('lat'/'lon'), or a 'bbox'",
-            ));
+        let query = self.q.as_deref().filter(|q| !q.trim().is_empty());
+        let mut search = match (query, focus, bbox) {
+            (Some(q), _, _) => Search::text(q),
+            (None, Some(p), _) => Search::around(p),
+            (None, None, Some(b)) => Search::within(b),
+            (None, None, None) => {
+                return Err(ApiError::bad_request(
+                    "provide a query 'q', a location ('lat'/'lon'), or a 'bbox'",
+                ));
+            }
+        };
+        if let Some(p) = focus {
+            search = search.near(p);
         }
-        Ok(SearchRequest {
-            query,
-            focus,
-            radius_m: radius,
-            bbox,
-            countries: countries(&self.country)?,
-            layers: layers(&self.layers)?,
-            limit: limit(self.limit, cfg.default_limit, cfg)?,
-            autocomplete: self.autocomplete.unwrap_or(true),
-            tags: TagFilter::default(),
-        })
+        if let Some(r) = radius(self.radius, cfg)? {
+            if focus.is_none() {
+                return Err(ApiError::bad_request("'radius' requires 'lat' and 'lon'"));
+            }
+            search = search.radius_m(r);
+        }
+        if let Some(b) = bbox {
+            search = search.bbox(b);
+        }
+        Ok(search
+            .countries(countries(&self.country))
+            .layers(layers(&self.layers)?)
+            .limit(limit(self.limit, cfg.default_limit, cfg)?)
+            .autocomplete(self.autocomplete.unwrap_or(true))
+            .tags(tags))
     }
 }
 
@@ -265,33 +186,70 @@ impl PointParams {
         output(&self.lang, &self.geometry)
     }
 
-    /// `/reverse`: what is at this point? Defaults to one result within
-    /// `reverse_radius_m`, restricted to address-like layers.
-    pub fn into_reverse(self, cfg: &ApiConfig) -> Result<NearestRequest, ApiError> {
-        let mut layers = layers(&self.layers)?;
-        if layers.is_empty() {
-            layers = vec![Layer::House, Layer::Poi, Layer::Street, Layer::Locality];
-        }
-        Ok(NearestRequest {
-            point: required_point(self.lat, self.lon)?,
-            max_distance_m: Some(radius(self.radius, cfg)?.unwrap_or(cfg.reverse_radius_m)),
-            countries: countries(&self.country)?,
-            layers,
-            limit: limit(self.limit, 1, cfg)?,
-            tags: TagFilter::default(),
-        })
+    /// `/reverse`: what is at this point. Defaults to one result within
+    /// the configured radius, restricted to address-like layers.
+    pub fn into_reverse(self, cfg: &ApiConfig, tags: TagFilter) -> Result<Reverse, ApiError> {
+        Ok(Reverse::at(required_point(self.lat, self.lon)?)
+            .radius_m(radius(self.radius, cfg)?.unwrap_or(cfg.reverse_radius_m))
+            .layers(layers(&self.layers)?)
+            .countries(countries(&self.country))
+            .limit(limit(self.limit, 1, cfg)?)
+            .tags(tags))
     }
 
     /// `/nearest`: no default radius or layer filter.
-    pub fn into_nearest(self, cfg: &ApiConfig) -> Result<NearestRequest, ApiError> {
-        Ok(NearestRequest {
-            point: required_point(self.lat, self.lon)?,
-            max_distance_m: radius(self.radius, cfg)?,
-            countries: countries(&self.country)?,
-            layers: layers(&self.layers)?,
-            limit: limit(self.limit, 5, cfg)?,
-            tags: TagFilter::default(),
-        })
+    pub fn into_nearest(self, cfg: &ApiConfig, tags: TagFilter) -> Result<Nearest, ApiError> {
+        let mut nearest = Nearest::to(required_point(self.lat, self.lon)?)
+            .layers(layers(&self.layers)?)
+            .countries(countries(&self.country))
+            .limit(limit(self.limit, 5, cfg)?)
+            .tags(tags);
+        if let Some(r) = radius(self.radius, cfg)? {
+            nearest = nearest.max_distance_m(r);
+        }
+        Ok(nearest)
+    }
+}
+
+impl ContainsParams {
+    pub fn output(&self) -> Result<Output, ApiError> {
+        output(&self.lang, &self.geometry)
+    }
+
+    pub fn into_contains(self) -> Result<Contains, ApiError> {
+        Ok(Contains::at(required_point(self.lat, self.lon)?)
+            .layers(layers(&self.layers)?)
+            .countries(countries(&self.country)))
+    }
+}
+
+impl LookupParams {
+    pub fn output(&self) -> Result<Output, ApiError> {
+        output(&self.lang, &self.geometry)
+    }
+
+    /// `osm_ids=N123,W456,R789` (OSM ids) and `P123` (Nominatim
+    /// `place_id`). Returns the ids and the country filter.
+    pub fn into_ids(self, cfg: &ApiConfig) -> Result<(Vec<PlaceRef>, Vec<String>), ApiError> {
+        let ids: Vec<PlaceRef> = comma_list(&self.osm_ids)
+            .map(|s| s.parse().map_err(ApiError::bad_request))
+            .collect::<Result<_, _>>()?;
+        if ids.is_empty() {
+            return Err(ApiError::bad_request(
+                "'osm_ids' is required, e.g. osm_ids=N123,W456",
+            ));
+        }
+        if ids.len() > cfg.max_limit {
+            return Err(ApiError::bad_request(format!(
+                "at most {} ids per request",
+                cfg.max_limit
+            )));
+        }
+        let countries = countries(&self.country)
+            .into_iter()
+            .map(String::from)
+            .collect();
+        Ok((ids, countries))
     }
 }
 
@@ -299,39 +257,20 @@ impl PointParams {
 mod tests {
     use super::*;
 
-    fn search(q: &str) -> Result<SearchRequest, ApiError> {
+    fn search(q: &str) -> Result<Search, ApiError> {
         let p: SearchParams = serde_urlencoded::from_str(q).unwrap();
-        p.into_request(&ApiConfig::default())
+        p.into_search(&ApiConfig::default(), TagFilter::default())
     }
 
     #[test]
-    fn validation() {
+    fn http_policy() {
         assert!(search("q=vaduz").is_ok());
         assert!(search("").is_err());
         assert!(search("q=x&lat=47").is_err());
-        assert!(search("q=x&radius=100").is_err());
-        assert!(search("q=x&lat=47&lon=9.5&radius=-1").is_err());
-        assert!(search("q=x&lat=99&lon=9.5").is_err());
-        assert!(search("q=x&limit=0").is_err());
         assert!(search("q=x&limit=1000").is_err());
         assert!(search("q=x&layers=city,planet").is_err());
-        assert!(search("q=x&country=DEU").is_err());
-        let r = search("lat=47.1&lon=9.5&radius=500&country=li,AT&layers=house,street").unwrap();
-        assert_eq!(r.countries, vec!["li", "at"]);
-        assert_eq!(r.layers, vec![Layer::House, Layer::Street]);
-        assert_eq!(r.radius_m, Some(500.0));
-    }
-
-    #[test]
-    fn contains_params() {
-        let parse = |q: &str| {
-            let p: ContainsParams = serde_urlencoded::from_str(q).unwrap();
-            p.into_query()
-        };
-        let (p, _, layers) = parse("lat=47.14&lon=9.52&layers=city,country").unwrap();
-        assert_eq!((p.lat, layers.len()), (47.14, 2));
-        assert!(parse("lat=47.14&lon=9.52&layers=house").is_err());
-        assert!(parse("lat=47.14").is_err());
+        assert!(search("q=x&lat=47.1&lon=9.5&radius=600000").is_err());
+        assert!(search("lat=47.1&lon=9.5&radius=500&country=li,AT&layers=house,street").is_ok());
     }
 
     #[test]
@@ -356,9 +295,9 @@ mod tests {
         assert_eq!(
             ids,
             vec![
-                PlaceRef::Osm(OsmType::Node, 1),
-                PlaceRef::Osm(OsmType::Way, 22),
-                PlaceRef::Osm(OsmType::Relation, 333),
+                PlaceRef::Osm(geors::OsmType::Node, 1),
+                PlaceRef::Osm(geors::OsmType::Way, 22),
+                PlaceRef::Osm(geors::OsmType::Relation, 333),
                 PlaceRef::Nominatim(44),
             ]
         );

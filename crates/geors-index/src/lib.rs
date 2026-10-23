@@ -1,5 +1,8 @@
 //! Spatial (packed Hilbert R-tree) and text (tantivy) indexing for geors,
 //! organised as one self-contained partition per country.
+//!
+//! Internal crate of [geors](https://docs.rs/geors): its API changes
+//! between releases without notice. Use the `geors` crate instead.
 
 pub mod bitset;
 pub mod engine;

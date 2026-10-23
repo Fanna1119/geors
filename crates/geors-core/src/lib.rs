@@ -1,6 +1,9 @@
 //! Shared types for geors: layers, place models, geometry helpers and the
 //! on-disk partition format.
 //!
+//! Internal crate of [geors](https://docs.rs/geors): its API changes
+//! between releases without notice. Use the `geors` crate instead.
+//!
 //! This crate has no heavy dependencies so that every other crate (ingestion,
 //! indexing, ranking, HTTP) can agree on the same vocabulary.
 

@@ -1,7 +1,6 @@
 use axum::extract::rejection::QueryRejection;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Json, Response};
-use geors_index::EngineError;
 use serde_json::json;
 use tracing::error;
 
@@ -33,15 +32,15 @@ impl From<QueryRejection> for ApiError {
     }
 }
 
-impl From<EngineError> for ApiError {
-    fn from(e: EngineError) -> Self {
+impl From<geors::Error> for ApiError {
+    fn from(e: geors::Error) -> Self {
         match e {
-            EngineError::BadRequest(_) | EngineError::CountryNotLoaded { .. } => {
+            geors::Error::InvalidRequest(_) | geors::Error::CountryNotLoaded { .. } => {
                 Self::bad_request(e.to_string())
             }
-            EngineError::Index(inner) => {
-                error!(error = %inner, "index error");
-                Self::internal(format!("internal error: {inner}"))
+            other => {
+                error!(error = %other, "index error");
+                Self::internal(format!("internal error: {other}"))
             }
         }
     }

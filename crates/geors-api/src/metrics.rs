@@ -131,28 +131,29 @@ impl Metrics {
             );
         }
 
-        let engine = state.engine();
+        let status = state.geocoder.status();
         header(
             &mut out,
             "geors_partitions",
             "gauge",
             "Loaded country partitions.",
         );
-        let _ = writeln!(out, "geors_partitions {}", engine.partitions().len());
+        let _ = writeln!(out, "geors_partitions {}", status.partitions.len());
         header(
             &mut out,
             "geors_places",
             "gauge",
             "Places per loaded partition.",
         );
-        for p in engine.partitions() {
+        // A country split between sources has several partitions.
+        for p in &status.partitions {
             let _ = writeln!(
                 out,
-                "geors_places{{country=\"{}\"}} {}",
-                p.meta.country_code, p.meta.num_places
+                "geors_places{{country=\"{}\",partition=\"{}\"}} {}",
+                p.country_code, p.name, p.places
             );
         }
-        let info = state.load_info();
+        let info = &status;
         header(
             &mut out,
             "geors_data_loaded_timestamp_seconds",
@@ -175,6 +176,7 @@ impl Metrics {
             "geors_build_info{{version=\"{}\",generation=\"{}\"}} 1",
             env!("CARGO_PKG_VERSION"),
             info.generation
+                .clone()
                 .unwrap_or_default()
                 .replace(['"', '\\', '\n'], "")
         );
