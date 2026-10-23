@@ -44,12 +44,13 @@ watch_interval = "30s"
 prune_originals = false
 
 # Abbreviation / synonym expansion ("hauptstr" -> "hauptstrasse").
-# Built-in rules: one file per language in the repository's synonyms/
-# directory (see synonyms/README.md). Check with: geors synonyms kerkstr cres
+# Built-in rules: one file per language in the repository's
+# crates/geors-index/synonyms/ directory (see its README.md).
+# Check with: geors synonyms kerkstr cres
 [synonyms]
 # Built-in languages to use; empty = all (de, en, fr, nl, af, ...).
 languages = []
-# Directory with extra rule files (*.toml, same format as synonyms/*.toml).
+# Directory with extra rule files (*.toml, same format as the built-in files).
 # dir = "/etc/geors/synonyms"
 # Each language applies to the countries listed in its file (English: all).
 # true = every language in every country, as before files named countries.
